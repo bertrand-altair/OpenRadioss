@@ -833,6 +833,10 @@ c tab IBUFSSG_IO specific inlet/outlet
       INTEGER, DIMENSION(:), ALLOCATABLE :: IBUFSSG_IO, RESERVEP
 
       INTEGER, DIMENSION(:), ALLOCATABLE :: IXR_KJ,R_SKEW
+C      
+C  intial direction for beams   
+      INTEGER, DIMENSION(:), ALLOCATABLE :: IBEAM_VECTOR   
+      my_real, DIMENSION(:,:), ALLOCATABLE :: RBEAM_VECTOR 
 C
 C Sol2sph
       INTEGER, DIMENSION(:), ALLOCATABLE :: SOL2SPH_TYP
@@ -1716,6 +1720,15 @@ C---  Allocations
       IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
      .                           MSGTYPE=MSGERROR,
      .                           C1='R_SKEW')
+C     
+      ALLOCATE(IBEAM_VECTOR(NUMELP) ,STAT=stat)
+      IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
+     .                          MSGTYPE=MSGERROR,
+     .                          C1='IBEAM_VECTOR') 
+      ALLOCATE(RBEAM_VECTOR(3,NUMELP) ,STAT=stat)
+      IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
+     .                          MSGTYPE=MSGERROR,
+     .                          C1='RBEAM_VECTOR')     
 C
       IF(ABS(ISIGI)==3.OR.ABS(ISIGI)== 4.OR.ABS(ISIGI)==5)THEN
          ALLOCATE (PTSHEL(NUMELC)   ,STAT=stat) 
@@ -1742,6 +1755,8 @@ C --- Initialisations
       IF(NUMELR > 0) IXR_KJ = 0
       IF(NUMELC+NUMELTG > 0) IWORKSH = 0
       IF(NUMELR > 0) R_SKEW = 0
+      IF(NUMELP > 0) IBEAM_VECTOR(1:NUMELP) = ZERO
+      IF(NUMELP > 0) RBEAM_VECTOR(1:3,1:NUMELP) = ZERO
 C
 C---  Pointeurs : sous-tableaux
       IF(SISKWN-SIFRAME<SISKWN) THEN
@@ -2509,7 +2524,7 @@ C--------------------------------------------
       IF(NUMELP/=0)THEN
        WRITE(ISTDO,'(A)')TITRE(19)
        CALL HM_READ_BEAM(IXP    ,ITAB   ,ITABM1 ,IPART  ,IPARTP  ,
-     .             IPM    ,IGEO    ,LSUBMODEL)
+     .                   IPM    ,IGEO   ,LSUBMODEL,IBEAM_VECTOR,RBEAM_VECTOR,X)
       ENDIF
 C--------------------------------------------
 C     LECTURE DES RESSORTS
@@ -5881,7 +5896,7 @@ C---------------------------
       NUMSPHK8     =    NUMSPH
 ! working int8 to avoid integer overflow for large models
       EMAX = MAX(23*NUMELCK8,24*NUMELTGK8+1,29*NUMELSK8+1,19*NUMELRK8,
-     .           18*NUMELPK8+1,17*NUMELTK8,19*NUMELQK8,
+     .           19*NUMELPK8+1,17*NUMELTK8,19*NUMELQK8,
      .           15*NUMELXK8+1,24*NUMELIG3DK8+1,NUMSPHK8) + 1
 
       ALLOCATE(IPARGTMP(NPARG,NUMEL)    ,STAT=stat)
@@ -6158,32 +6173,36 @@ C
 C
 C-----
       IF(NUMELP > 0) THEN
-       K1 = 8*NUMELP
-       K2 = 9*NUMELP
-       K3 = 10*NUMELP+1
-       K4 = 12*NUMELP+1
-       K5 = 17*NUMELP+1
-       K6 = 18*NUMELP+1
+       K1 = 9*NUMELP
+       K2 = 10*NUMELP
+       K3 = 11*NUMELP+1
+       K4 = 13*NUMELP+1
+       K5 = 18*NUMELP+1
+       K6 = 19*NUMELP+1
       !warning: please also update any index change
       !         for MODIF option (MODIF_SPMD.F)
-       IWORK  = 0
-       INUM   => IWORK(1:K1)
-       ITR1   => IWORK(K1+1:K2)
-       EADD   => IWORK(K2+1:K3)
-       INDEX1 => IWORK(K3+1:K4)
-       ITRI1  => IWORK(K4+1:K5)
-       XEP    => IWORK(K5+1:K6)
-       CALL PGRHEAD(
+        IWORK  = 0
+        INUM   => IWORK(1:K1)
+        ITR1   => IWORK(K1+1:K2)
+        EADD   => IWORK(K2+1:K3)
+        INDEX1 => IWORK(K3+1:K4)
+        ITRI1  => IWORK(K4+1:K5)
+        XEP    => IWORK(K5+1:K6)
+C      
+        ALLOCATE(XNUM(3*NUMELP) ,STAT=stat)
+        XNUM(1:3*NUMELP) = ZERO
+C
+        CALL PGRHEAD(
      1   IXP      ,PM       ,GEO      ,INUM     ,
      2   ITR1     ,EADD     ,INDEX1   ,ITRI1    ,IPARTP   ,
      3   ND       ,IGRSURF  ,IGRBEAM  ,CEP(OFF) ,
      4   XEP      ,IGEO     ,IPOUOFF  ,TAGPRT_SMS , IPM   ,
-     5   ITAGPRLD_BEAM)
+     5   ITAGPRLD_BEAM,IBEAM_VECTOR,RBEAM_VECTOR,XNUM)
 C---------------------------------
 C-  GROUPAGE SPMD
 C---------------------------------
 C test non depassement de LDD_IAD
-          IF(IDX+ND*(NSPMD+1)>LDD_IAD)THEN
+        IF(IDX+ND*(NSPMD+1)>LDD_IAD)THEN
             ALLOCATE(DD_TMP2(IDX-1))
             DO I = 1, IDX-1
               DD_TMP2(I)=DD_TMP(I)
@@ -6194,18 +6213,21 @@ C test non depassement de LDD_IAD
               DD_TMP(I)=DD_TMP2(I)
             END DO
             DEALLOCATE(DD_TMP2)
-          END IF
+        END IF
 C
-          CALL PGRTAILS(MAT_ELEM%MAT_PARAM,
+        CALL PGRTAILS(MAT_ELEM%MAT_PARAM,
      1      IXP    ,IPARGTMP,PM         ,GEO     ,
      2      EADD   ,ND      ,DD_TMP     ,IDX     ,
      3      INUM   ,INDEX1  ,CEP(OFF)   ,IPARTP  ,
      4      ITR1   ,IGRSURF ,IGRBEAM    ,IGEO    ,
      5      IPM    ,IPOUOFF ,TAGPRT_SMS,
      6      NOD2EL1D, IPRI  ,ITAGPRLD_BEAM,PRELOAD_A,
-     7      NPRELOAD_A)
-          OFF = OFF + NUMELP
-        ENDIF
+     7      NPRELOAD_A,IBEAM_VECTOR,RBEAM_VECTOR,XNUM)
+C    
+        OFF = OFF + NUMELP
+C          
+        DEALLOCATE(XNUM)
+      ENDIF
 C
 C-----
 C
@@ -8654,7 +8676,8 @@ C
      &            KNOD2EL1D  , NOD2EL1D       , EBCS_TAB         , RBY_INIAXIS        , ALEA     ,
      &            KNOD2ELC   , NOD2ELC        , DR               , SLRBODY            , DRAPEG   ,
      &            IPARI      , INTBUF_TAB     , INTERFACES       , MAT_ELEM%MAT_PARAM ,
-     &            NPRELOAD_A , PRELOAD_A      , FAIL_FRACTAL     ,FAIL_BROKMANN       ,DEFAULTS  )
+     &            NPRELOAD_A , PRELOAD_A      , FAIL_FRACTAL     ,FAIL_BROKMANN       ,DEFAULTS  ,
+     &            IBEAM_VECTOR,RBEAM_VECTOR)
 
 
       IF(NINTER>0.AND.NUMELIG3D>0) THEN
@@ -8746,7 +8769,6 @@ C
         DEALLOCATE(ITAGOSET)
         DEALLOCATE(XYZ)
       END IF
-
 C
 C XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 C
@@ -10555,7 +10577,7 @@ C----------------------------------------------
      K        SIGI        ,NSIGBEAM   ,SIGBEAM         ,NSIGTRUSS     ,SIGTRUSS         ,
      L        NSIGRS      ,SIGRS      ,MERGE_NODE_TAB  ,MERGE_NODE_TOL,
      M        IMERGE      ,NMERGE_TOT ,IEXLNK ,DRAPEG  ,USER_WINDOWS  ,OUTPUT           ,
-     N        DEFAULTS    ,GLOB_THERM ,PBLAST)
+     N        DEFAULTS    ,GLOB_THERM ,PBLAST ,IBEAM_VECTOR,RBEAM_VECTOR)
 !
       DEALLOCATE(SIGI)
       DEALLOCATE(SIGSH)
@@ -10563,6 +10585,8 @@ C----------------------------------------------
       DEALLOCATE(SIGRS)
       DEALLOCATE(SIGBEAM)
       DEALLOCATE(SIGTRUSS)
+      DEALLOCATE(IBEAM_VECTOR)
+      DEALLOCATE(RBEAM_VECTOR)
 C--------------------------------------------
 C     DELETE HM_MODEL IN MEMORY
 C--------------------------------------------

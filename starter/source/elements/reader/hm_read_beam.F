@@ -36,7 +36,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
       !||    submodel_mod     ../starter/share/modules1/submodel_mod.F
       !||====================================================================
       SUBROUTINE HM_READ_BEAM(IXP    ,ITAB ,ITABM1,IPART,IPARTP,
-     .                  IPM    ,IGEO   ,LSUBMODEL)
+     .                  IPM    ,IGEO   ,LSUBMODEL,IBEAM_VECTOR,RBEAM_VECTOR,X)
 C-----------------------------------------------
 C   ROUTINE DESCRIPTION :
 C   ===================
@@ -86,17 +86,20 @@ C INPUT ARGUMENTS
       INTEGER,INTENT(IN)::IPART(LIPART1,*)
       INTEGER,INTENT(IN)::IGEO(NPROPGI,*)
       INTEGER,INTENT(IN)::IPM(NPROPMI,*)
-      TYPE(SUBMODEL_DATA),INTENT(IN)::LSUBMODEL(NSUBMOD)
+      TYPE(SUBMODEL_DATA),INTENT(IN)::LSUBMODEL(NSUBMOD)     
 C OUTPUT ARGUMENTS
       INTEGER,INTENT(OUT)::IXP(NIXP,*)
       INTEGER,INTENT(OUT)::IPARTP(*)
+      INTEGER,INTENT(OUT)::IBEAM_VECTOR(NUMELP) 
+      my_real,INTENT(OUT)::RBEAM_VECTOR(3,NUMELP)
+      my_real,INTENT(IN) :: X(3,*)
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
       INTEGER I, I1, I2, MID, PID,MT,IPID,ID,IDS,J,N,JC,STAT
       INTEGER CPT,INDEX_PART
       CHARACTER MESS*40, MESS2*40
-      my_real BID
+      my_real BID,NORM
       INTEGER, DIMENSION(:), ALLOCATABLE :: SUB_BEAM
       INTEGER N2,N3,N4
 C-----------------------------------------------
@@ -183,6 +186,19 @@ C-------------------------------------
         IF(N3>0)N3=ITAB(N3)
         IF(N4>0)N4=ITAB(N4)                
         WRITE (IOUT,'(7(I10,1X))')I,IXP(6,I),MID,PID,N2,N3,N4
+C----------------------------------------------------------------------------------
+        N2=IXP(2,I)
+        N4=IXP(4,I) 
+        IBEAM_VECTOR(I) = 1
+        RBEAM_VECTOR(1,I) = X(1,N4) - X(1,N2)
+        RBEAM_VECTOR(2,I) = X(2,N4) - X(2,N2)
+        RBEAM_VECTOR(3,I) = X(3,N4) - X(3,N2)
+        NORM = SQRT(RBEAM_VECTOR(1,I)**2 + RBEAM_VECTOR(2,I)**2 + RBEAM_VECTOR(3,I)**2)
+        RBEAM_VECTOR(1,I) = RBEAM_VECTOR(1,I) / NORM
+        RBEAM_VECTOR(2,I) = RBEAM_VECTOR(2,I) / NORM
+        RBEAM_VECTOR(3,I) = RBEAM_VECTOR(3,I) / NORM
+        IXP(4,I)=IXP(3,I)
+C----------------------------------------------------------------------------------
       ENDDO
       IF(I2==NUMELP)GOTO 200
       I1=I1+50

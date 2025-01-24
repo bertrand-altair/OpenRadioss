@@ -177,7 +177,8 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      K                  KNOD2EL1D  ,NOD2EL1D      ,EBCS_TAB         ,RBY_INIAXIS    ,ALEA      ,
      L                  KNOD2ELC   ,NOD2ELC       ,DR               ,SLRBODY        ,DRAPEG    ,
      M                  IPARI      ,INTBUF_TAB    ,INTERFACES       ,MAT_PARAM      ,NPRELOAD_A,
-     N                  PRELOAD_A  ,FAIL_FRACTAL  ,FAIL_BROKMANN    ,DEFAULTS )
+     N                  PRELOAD_A  ,FAIL_FRACTAL  ,FAIL_BROKMANN    ,DEFAULTS       ,IBEAM_VECTOR,
+     O                  RBEAM_VECTOR)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------                     
@@ -311,6 +312,8 @@ C
       INTEGER NOM_OPT(LNOPT1,*),PTR_NOPT_RBE2,PTR_NOPT_ADM,PTR_NOPT_FUN,IOPT
       INTEGER FXBNOD(*), FXANI(2,*),ITAGND(*)
       INTEGER,INTENT(IN) :: NPRELOAD_A
+      INTEGER,INTENT(IN) :: IBEAM_VECTOR(NUMELP)
+      my_real,INTENT(IN) :: RBEAM_VECTOR(3,NUMELP)
 C
       TYPE (ELBUF_STRUCT_), TARGET, DIMENSION(NGROUP) :: ELBUF_TAB
       TYPE (ELBUF_STRUCT_), TARGET, DIMENSION(NGROUP,NXEL) :: XFEM_TAB
@@ -891,7 +894,7 @@ C
           IHBE=IPARG(23,NG)
           ISOLNOD = IPARG(28,NG)
           ILEV=IPARG(45,NG)
-C
+C  
           CALL INIVOID(ELBUF_TAB(NG),
      1        IXC        ,IXS        ,IXTG       ,X         ,V        ,
      2        PM         ,GEO        ,MS         ,IN        ,PTG      ,
@@ -909,7 +912,7 @@ C
      E        STRP       ,INP        ,STIFINT    ,MCPP      ,INR       ,
      F        MSR        ,MSRT       ,STR        ,IPART(I15F),ITAB     ,
      G        IXR       , IMERGE2    ,IADMERGE2  ,NEL       ,DEFAULTS  ,
-     H        GLOB_THERM )
+     H        GLOB_THERM,IBEAM_VECTOR,RBEAM_VECTOR)
 C
        ELSEIF( MTN == 13) THEN
 C Rigid material
@@ -1365,7 +1368,7 @@ C 2D multifluid law
      4                MSP        ,INP      ,IGEO    ,STIFINT ,STRP       ,
      5                NSIGBEAM   ,SIGBEAM  ,PTBEAM  ,IUSER   ,MCP        ,
      6                MCPP       ,TEMP     ,PRELOAD_A,IBOLTP ,NPRELOAD_A ,
-     7                GLOB_THERM)
+     7                GLOB_THERM ,IBEAM_VECTOR,RBEAM_VECTOR)
         !----------------------------------------!
         !   ITY == 6                      SPRING !
         !----------------------------------------!
@@ -1864,7 +1867,7 @@ C
      .         NBNO        , IXS         , IXC , IXTG        , GEO  ,
      .         FXBRPM(ARPM), I   , FXBIPM(29,I), LVSIG ,FXBIPM(18,I),
      .         NME         , IRCS, FXBIPM(30,I), NELT,         NELP ,
-     .         IXT         , IXP )
+     .         IXT         , IXP ,IBEAM_VECTOR,RBEAM_VECTOR)
 C
             FXBIPM(33,I)=IRCS
             ADRRPM=FXBIPM(14,I)
