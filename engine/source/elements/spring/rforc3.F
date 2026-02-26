@@ -508,7 +508,8 @@ C
      3   MS,       IN,       MSRT,     DMELRT,
      4   GBUF%G_DT,GBUF%DT,  NGL,      XCR,
      5   XIN,      XM,       XKM,      XCM,
-     6   XKR,      NC1,      NC2,      JSMS)
+     6   XKR,      NC1,      NC2,      JSMS,
+     7   GBUF%RBODY_MASS)
         CALL RBILAN(
      1   GBUF%EINT,PARTSAV,  IXR,      GEO,
      2   V,        IPARTR,   BID,      GRESAV,
@@ -692,7 +693,8 @@ C
      3   MS,       IN,       MSRT,     DMELRT,
      4   GBUF%G_DT,GBUF%DT,  NGL,      XCR,
      5   XIN,      XM,       XKM,      XCM,
-     6   XKR,      NC1,      NC2,      JSMS)
+     6   XKR,      NC1,      NC2,      JSMS,
+     7   GBUF%RBODY_MASS)
         CALL RBILAN(
      1   GBUF%EINT,         PARTSAV,           IXR,               GEO,
      2   V,                 IPARTR,            GBUF%LENGTH(II(1)),GRESAV,
@@ -813,7 +815,8 @@ C
      3   MS,       IN,       MSRT,     DMELRT,
      4   GBUF%G_DT,GBUF%DT,  NGL,      XCR,
      5   XIN,      XM,       XKM,      XCM,
-     6   XKR,      NC1,      NC2,      JSMS)
+     6   XKR,      NC1,      NC2,      JSMS,
+     7   GBUF%RBODY_MASS)
         CALL RBILAN(
      1   GBUF%EINT,         PARTSAV,           IXR,               GEO,
      2   V,                 IPARTR,            GBUF%LENGTH(II(1)),GRESAV,

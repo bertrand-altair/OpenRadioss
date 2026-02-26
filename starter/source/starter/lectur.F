@@ -8838,7 +8838,7 @@ C
      &            NDAMP_FREQ_RANGE,DAMPR      , IBEAM_VECTOR     , RBEAM_VECTOR       ,D         ,
      &            LSIGI      ,LSIGSP          , SRNOISE2         ,NPRW               ,LPRW       ,
      &            RWSTIF_PEN ,SLN_PEN         ,ROOTLEN           ,ROOTNAM          ,NGUIDED_CABLE,
-     &            TOTMAS1   )
+     &            TOTMAS1    ,S_NOD2EL1D)
 
 
       IF(NINTER>0.AND.NUMELIG3D>0) THEN
