@@ -179,6 +179,7 @@ C-----------------------------------------------
       LOGICAL :: ISS1,ISS2,IMS1,IMS2
       INTEGER JSUB,KSUB,JJ,KK,IN,NSUB
       INTEGER LUX_NTS
+      INTEGER USER_NODE_ID_NTS
       LOGICAL FILE_EXISTS_NTS, NTS_CSV_INIT
       LOGICAL, PARAMETER :: ENABLE_NTS_CSV_EXPORT = .FALSE.
       my_real
@@ -216,6 +217,7 @@ C-----------------------------------------------
       my_real
      .   FSAVSUB1(24,NISUB),IMPX,IMPY,IMPZ,BB,GAPR,DGAP,GAPP
       my_real FORCE_NORM_NTS, FT_MAG_NTS
+      my_real NTS_FN_MAG, NTS_FT_MAG
       my_real  DISTP(MVSIZ)
       SAVE NTS_CSV_INIT
       DATA NTS_CSV_INIT /.FALSE./
@@ -3096,35 +3098,6 @@ C      if type7 sym of type19 opposite sign for tangential force -> forc_sign = 
       FSAV(28) = FSAV(28) + ECONTDT
 #include "lockoff.inc"
 C
-      IF (ENABLE_NTS_CSV_EXPORT) THEN
-        IF (.NOT.NTS_CSV_INIT) THEN
-          INQUIRE(FILE='nts_contact_forces.csv', EXIST=FILE_EXISTS_NTS)
-          IF (FILE_EXISTS_NTS) THEN
-            OPEN(NEWUNIT=LUX_NTS, FILE='nts_contact_forces.csv',
-     .           STATUS='REPLACE', ACTION='WRITE')
-          ELSE
-            OPEN(NEWUNIT=LUX_NTS, FILE='nts_contact_forces.csv',
-     .           STATUS='NEW', ACTION='WRITE')
-          ENDIF
-          WRITE(LUX_NTS,'(A)')
-     .    'cycle,time,interface_id,entity_id,fx,fy,fz,force_norm,fn,ft,n_pairs,max_penetration'
-          NTS_CSV_INIT = .TRUE.
-        ELSE
-          OPEN(NEWUNIT=LUX_NTS, FILE='nts_contact_forces.csv',
-     .         STATUS='OLD', ACTION='WRITE', POSITION='APPEND')
-        ENDIF
-        DO I=1,JLT
-          FORCE_NORM_NTS = SQRT(FXI(I)*FXI(I) + FYI(I)*FYI(I) + FZI(I)*FZI(I))
-          FT_MAG_NTS = SQRT(MAX(ZERO,FXT(I)*FXT(I)+FYT(I)*FYT(I)+FZT(I)*FZT(I)))
-          WRITE(LUX_NTS,'(I0,'','',ES23.15,'','',I0,'','',I0)',ADVANCE='NO')
-     .      NCYCLE, TT, -ABS(NOINT), INDEX(I)
-          WRITE(LUX_NTS,
-     .    '('','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',I0,'','',ES23.15)')
-     .      FXI(I), FYI(I), FZI(I), FORCE_NORM_NTS, ABS(FNI(I)), FT_MAG_NTS, 1, PENE(I)
-        ENDDO
-        CLOSE(LUX_NTS)
-      ENDIF
-C
       IF(ISENSINT(1)/=0) THEN
         DO I=1,JLT
           FSAVPARIT(1,4,I+NFT) =  FORC_SIGN*FXT(I)
@@ -4150,6 +4123,112 @@ C
         FY4(I)=FYI(I)*H4(I)
         FZ4(I)=FZI(I)*H4(I)
       ENDDO
+C
+C---- NTS CSV: one row per loaded node (main segment + secondary), matches I7ASS0.
+      IF (ENABLE_NTS_CSV_EXPORT) THEN
+        IF (.NOT.NTS_CSV_INIT) THEN
+          INQUIRE(FILE='nts_contact_forces.csv', EXIST=FILE_EXISTS_NTS)
+          IF (FILE_EXISTS_NTS) THEN
+            OPEN(NEWUNIT=LUX_NTS, FILE='nts_contact_forces.csv',
+     .           STATUS='REPLACE', ACTION='WRITE')
+          ELSE
+            OPEN(NEWUNIT=LUX_NTS, FILE='nts_contact_forces.csv',
+     .           STATUS='NEW', ACTION='WRITE')
+          ENDIF
+          WRITE(LUX_NTS,'(A)')
+     .    'cycle,time,interface_id,entity_id,user_node_id,fx,fy,fz,force_norm,'//
+     .    'fn,ft,n_pairs,max_penetration'
+          NTS_CSV_INIT = .TRUE.
+        ELSE
+          OPEN(NEWUNIT=LUX_NTS, FILE='nts_contact_forces.csv',
+     .         STATUS='OLD', ACTION='WRITE', POSITION='APPEND')
+        ENDIF
+        DO I=1,JLT
+          IF (ABS(FX1(I))+ABS(FY1(I))+ABS(FZ1(I)) > ZERO) THEN
+            FORCE_NORM_NTS = SQRT(FX1(I)*FX1(I)+FY1(I)*FY1(I)+FZ1(I)*FZ1(I))
+            NTS_FN_MAG = SQRT(MAX(ZERO,
+     . (N1(I)*FNI(I)*H1(I))*(N1(I)*FNI(I)*H1(I))+
+     . (N2(I)*FNI(I)*H1(I))*(N2(I)*FNI(I)*H1(I))+
+     . (N3(I)*FNI(I)*H1(I))*(N3(I)*FNI(I)*H1(I))))
+            NTS_FT_MAG = SQRT(MAX(ZERO,
+     . (FXT(I)*H1(I))*(FXT(I)*H1(I))+(FYT(I)*H1(I))*(FYT(I)*H1(I))+
+     . (FZT(I)*H1(I))*(FZT(I)*H1(I))))
+            WRITE(LUX_NTS,'(I0,'','',ES23.15,'','',I0,'','',I0,'','',I0)',ADVANCE='NO')
+     .           NCYCLE, TT, ABS(NOINT), IX1(I), ITAB(IX1(I))
+            WRITE(LUX_NTS,
+     . '('','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',I0,'','',ES23.15)')
+     . FX1(I), FY1(I), FZ1(I), FORCE_NORM_NTS, NTS_FN_MAG, NTS_FT_MAG, 1,
+     . PENE(I)
+          ENDIF
+          IF (ABS(FX2(I))+ABS(FY2(I))+ABS(FZ2(I)) > ZERO) THEN
+            FORCE_NORM_NTS = SQRT(FX2(I)*FX2(I)+FY2(I)*FY2(I)+FZ2(I)*FZ2(I))
+            NTS_FN_MAG = SQRT(MAX(ZERO,
+     . (N1(I)*FNI(I)*H2(I))*(N1(I)*FNI(I)*H2(I))+
+     . (N2(I)*FNI(I)*H2(I))*(N2(I)*FNI(I)*H2(I))+
+     . (N3(I)*FNI(I)*H2(I))*(N3(I)*FNI(I)*H2(I))))
+            NTS_FT_MAG = SQRT(MAX(ZERO,
+     . (FXT(I)*H2(I))*(FXT(I)*H2(I))+(FYT(I)*H2(I))*(FYT(I)*H2(I))+
+     . (FZT(I)*H2(I))*(FZT(I)*H2(I))))
+            WRITE(LUX_NTS,'(I0,'','',ES23.15,'','',I0,'','',I0,'','',I0)',ADVANCE='NO')
+     .           NCYCLE, TT, ABS(NOINT), IX2(I), ITAB(IX2(I))
+            WRITE(LUX_NTS,
+     . '('','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',I0,'','',ES23.15)')
+     . FX2(I), FY2(I), FZ2(I), FORCE_NORM_NTS, NTS_FN_MAG, NTS_FT_MAG, 1,
+     . PENE(I)
+          ENDIF
+          IF (ABS(FX3(I))+ABS(FY3(I))+ABS(FZ3(I)) > ZERO) THEN
+            FORCE_NORM_NTS = SQRT(FX3(I)*FX3(I)+FY3(I)*FY3(I)+FZ3(I)*FZ3(I))
+            NTS_FN_MAG = SQRT(MAX(ZERO,
+     . (N1(I)*FNI(I)*H3(I))*(N1(I)*FNI(I)*H3(I))+
+     . (N2(I)*FNI(I)*H3(I))*(N2(I)*FNI(I)*H3(I))+
+     . (N3(I)*FNI(I)*H3(I))*(N3(I)*FNI(I)*H3(I))))
+            NTS_FT_MAG = SQRT(MAX(ZERO,
+     . (FXT(I)*H3(I))*(FXT(I)*H3(I))+(FYT(I)*H3(I))*(FYT(I)*H3(I))+
+     . (FZT(I)*H3(I))*(FZT(I)*H3(I))))
+            WRITE(LUX_NTS,'(I0,'','',ES23.15,'','',I0,'','',I0,'','',I0)',ADVANCE='NO')
+     .           NCYCLE, TT, ABS(NOINT), IX3(I), ITAB(IX3(I))
+            WRITE(LUX_NTS,
+     . '('','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',I0,'','',ES23.15)')
+     . FX3(I), FY3(I), FZ3(I), FORCE_NORM_NTS, NTS_FN_MAG, NTS_FT_MAG, 1,
+     . PENE(I)
+          ENDIF
+          IF (ABS(FX4(I))+ABS(FY4(I))+ABS(FZ4(I)) > ZERO) THEN
+            FORCE_NORM_NTS = SQRT(FX4(I)*FX4(I)+FY4(I)*FY4(I)+FZ4(I)*FZ4(I))
+            NTS_FN_MAG = SQRT(MAX(ZERO,
+     . (N1(I)*FNI(I)*H4(I))*(N1(I)*FNI(I)*H4(I))+
+     . (N2(I)*FNI(I)*H4(I))*(N2(I)*FNI(I)*H4(I))+
+     . (N3(I)*FNI(I)*H4(I))*(N3(I)*FNI(I)*H4(I))))
+            NTS_FT_MAG = SQRT(MAX(ZERO,
+     . (FXT(I)*H4(I))*(FXT(I)*H4(I))+(FYT(I)*H4(I))*(FYT(I)*H4(I))+
+     . (FZT(I)*H4(I))*(FZT(I)*H4(I))))
+            WRITE(LUX_NTS,'(I0,'','',ES23.15,'','',I0,'','',I0,'','',I0)',ADVANCE='NO')
+     .           NCYCLE, TT, ABS(NOINT), IX4(I), ITAB(IX4(I))
+            WRITE(LUX_NTS,
+     . '('','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',I0,'','',ES23.15)')
+     . FX4(I), FY4(I), FZ4(I), FORCE_NORM_NTS, NTS_FN_MAG, NTS_FT_MAG, 1,
+     . PENE(I)
+          ENDIF
+          IF (ABS(FXI(I))+ABS(FYI(I))+ABS(FZI(I)) > ZERO) THEN
+            FORCE_NORM_NTS = SQRT(FXI(I)*FXI(I)+FYI(I)*FYI(I)+FZI(I)*FZI(I))
+            FT_MAG_NTS = SQRT(MAX(ZERO,
+     . FXT(I)*FXT(I)+FYT(I)*FYT(I)+FZT(I)*FZT(I)))
+            NN = NSVG(I)
+            IF (NN > 0) THEN
+              USER_NODE_ID_NTS = ITAB(NN)
+            ELSE
+              USER_NODE_ID_NTS = ITAFI(NIN)%P(-NN)
+            ENDIF
+            IF (NN < 0) NN = -NN
+            WRITE(LUX_NTS,'(I0,'','',ES23.15,'','',I0,'','',I0,'','',I0)',ADVANCE='NO')
+     .           NCYCLE, TT, -ABS(NOINT), NN, USER_NODE_ID_NTS
+            WRITE(LUX_NTS,
+     . '('','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',ES23.15,'','',I0,'','',ES23.15)')
+     . -FXI(I), -FYI(I), -FZI(I), FORCE_NORM_NTS, ABS(FNI(I)), FT_MAG_NTS,
+     . 1, PENE(I)
+          ENDIF
+        ENDDO
+        CLOSE(LUX_NTS)
+      ENDIF
 C
 C SPMD: Identification of interf nodes.useful to send
       IF (NSPMD>1) THEN

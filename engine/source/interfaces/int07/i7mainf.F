@@ -106,6 +106,7 @@ C-----------------------------------------------
       USE Q1NP_CONTACT_DRIVER_MOD, ONLY: Q1NP_CONTACT_DATA_READY, Q1NP_CONTACT_DRIVER_INT7
       USE STS_VOXEL_DRIVER_MOD, ONLY: STS_VOXEL_DRIVER_DATA_READY
       USE STS_BROAD_PHASE_VOXEL_MOD, ONLY: STS_VOXEL_BROAD_PHASE
+      USE STS_CONTACT_STIFFNESS_MOD, ONLY: STS_CONTACT_STIFFNESS
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -167,8 +168,9 @@ C-----------------------------------------------
 C-----------------------------------------------
 C     N E W   V a r i a b l e s
 C-----------------------------------------------
-      my_real, DIMENSION(:,:,:), ALLOCATABLE :: CONT_ELEMENT  !contact element array
-      my_real, DIMENSION(:,:,:), ALLOCATABLE :: load_arr     !load array
+      my_real, DIMENSION(:,:,:), ALLOCATABLE :: CONT_ELEMENT        !contact element array
+      my_real, DIMENSION(:,:,:), ALLOCATABLE :: load_arr            !load array
+      my_real, DIMENSION(:),     ALLOCATABLE :: STS_STIF            !STS pair stiffness
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_SEC_SEG_ID   !secondary segment nodes
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_MST_SEG_ID   !primary segment nodes
       INTEGER, DIMENSION(:),       ALLOCATABLE :: node_id_load      !node id array (8 nodes per element)
@@ -286,8 +288,8 @@ C-----------------------------------------------
         ASS_FLAG = 2  ! New STS assembly algorithm
       ELSE
         ASS_FLAG = 0  ! Old NTS assembly algorithm
-      ENDIF
-      
+             ENDIF
+
       TYPE18 = .FALSE.
       NRTM = IPARI(4,NIN)
       NSN = IPARI(5,NIN)
@@ -328,12 +330,9 @@ C-----------------------------------------------
         IF (ABS(TT) <= 1.0E-20 .OR. NCYCLE <= 0) THEN
           IF (Q1NP_CONTACT_DATA_READY()) THEN
             WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = Q1NP (NURBS)'
-          ELSE IF (STS_ACTIVE .AND.
-     &             STS_VOXEL_DRIVER_DATA_READY(IGRSURF, NSURF, NOINT,
+          ELSE IF (STS_ACTIVE .AND. STS_VOXEL_DRIVER_DATA_READY(IGRSURF, NSURF, NOINT,
      &                .FALSE., SEC_SURF_ID_STS, MST_SURF_ID_STS)) THEN
             WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = STS (voxel broad-phase)'
-          ELSE IF (STS_ACTIVE) THEN
-            WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = STS (segment-to-segment)'
           ELSE
             WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = NTS (node-to-surface)'
           ENDIF
@@ -346,9 +345,13 @@ C-----------------------------------------------
       GAP = INTBUF_TAB%VARIABLES(2)
       IF (NTY == 7) THEN
         IF (Q1NP_CONTACT_DATA_READY()) THEN
+          KMIN   = INTBUF_TAB%VARIABLES(17)
+          KMAX   = INTBUF_TAB%VARIABLES(18)
           CALL MY_BARRIER()
           IF (JTASK == 1) THEN
-            CALL Q1NP_CONTACT_DRIVER_INT7(NCYCLE, NUMNOD, X, A, STIFN, GAP)
+            CALL Q1NP_CONTACT_DRIVER_INT7(NCYCLE, NUMNOD, X, A, STIFN,
+     &        GAP, IGSTI, KMIN, KMAX, INTBUF_TAB%IRECTM,
+     &        INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, INTBUF_TAB%STFM, NRTM)
           ENDIF
           CALL MY_BARRIER()
           RETURN
@@ -382,7 +385,7 @@ C     Scalar gap consistent with I7COR3:
         DRAD  = INTBUF_TAB%VARIABLES(32)
         DRAD2 = DRAD*DRAD
       ENDIF
-      
+
 C--- Corresponding Friction model  
       INTFRIC=IPARI(72,NIN)
       IORTHFRIC = 0
@@ -424,7 +427,7 @@ C-----------------------------------------------
           IF (JTASK == 1) THEN
 C           Set storage capacity for the candidate arrays. 
             MAX_STS_SIZE_ACTUAL = MAX(1, MIN(
-     &          IGRSURF(SEC_SURF_ID_STS)%NSEG * 32,
+     &          IGRSURF(SEC_SURF_ID_STS)%NSEG * 128,
      &          IGRSURF(SEC_SURF_ID_STS)%NSEG *
      &          IGRSURF(MST_SURF_ID_STS)%NSEG))
 
@@ -432,16 +435,19 @@ C           Allocate / refresh the working arrays consumed by
 C           STS_CONTACTS_ASSEMBLE and I7ASS33 (ASS_FLAG = 2).
             IF (ALLOCATED(CONT_ELEMENT))    DEALLOCATE(CONT_ELEMENT)
             IF (ALLOCATED(load_arr))        DEALLOCATE(load_arr)
+            IF (ALLOCATED(STS_STIF))        DEALLOCATE(STS_STIF)
             IF (ALLOCATED(CAND_SEC_SEG_ID)) DEALLOCATE(CAND_SEC_SEG_ID)
             IF (ALLOCATED(CAND_MST_SEG_ID)) DEALLOCATE(CAND_MST_SEG_ID)
             IF (ALLOCATED(node_id_load))    DEALLOCATE(node_id_load)
             ALLOCATE(CONT_ELEMENT(MAX_STS_SIZE_ACTUAL,3,8))
             ALLOCATE(load_arr(MAX_STS_SIZE_ACTUAL,8,4))
+            ALLOCATE(STS_STIF(MAX_STS_SIZE_ACTUAL))
             ALLOCATE(CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
             ALLOCATE(CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
             ALLOCATE(node_id_load(MAX_STS_SIZE_ACTUAL*8))
             CONT_ELEMENT  = ZERO
             load_arr      = ZERO
+            STS_STIF      = ZERO
             CAND_SEC_SEG_ID = 0
             CAND_MST_SEG_ID = 0
             node_id_load    = 0
@@ -472,6 +478,16 @@ C           Voxel broad phase populates CAND_*_SEG_ID and CONT_ELEMENT.
      &          X, NUMNOD, GAP_FOR_STS, MAX_STS_SIZE_ACTUAL,
      &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
      &          COUNT, STS_VOXEL_OVERFLOW)
+            IF (STS_VOXEL_OVERFLOW) THEN
+              WRITE(*,'(A,I8,A,I10,A,I10)') 
+     &          ' WARNING INTERFACE ', NOINT, 
+     &          ': STS voxel pair overflow, kept ', COUNT, 
+     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
+              WRITE(* ,'(A,I8,A,I10,A,I10)') 
+     &          ' WARNING INTERFACE ', NOINT, 
+     &          ': STS voxel pair overflow, kept ', COUNT, 
+     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
+            END IF
 
 C           Friction model 
 C           TODO: placeholder part-ID mapping; proper part-ID resolution is a separate task.
@@ -498,21 +514,25 @@ C           TODO: placeholder part-ID mapping; proper part-ID resolution is a se
      D               IX1,            IX2,              IX3,
      E               IX4,            IFORM)
               ENDIF
-            ENDIF
+
+C     	    Calculate Contact Stiffness for STS pairs.
+            CALL STS_CONTACT_STIFFNESS(
+     &        CAND_MST_SEG_ID, CAND_SEC_SEG_ID, COUNT,
+     &        MAX_STS_SIZE_ACTUAL,
+     &        INTBUF_TAB%IRECTM, INTBUF_TAB%STFM, NRTM,
+     &        INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, NUMNOD,
+     &        IGSTI, KMIN, KMAX, STIGLO, STS_STIF)
 
 C           STS Gauss contact search.
-            IF (ABS(STIF(1)) <= 1.0D-30) THEN
-              STIF(1) = MAX(ABS(STIGLO), MAXVAL(ABS(INTBUF_TAB%STFNS)))
-              IF (ABS(STIF(1)) <= 1.0D-30) STIF(1) = 1.0D0
-            ENDIF
             OPTION = 0
             QFRICT = 0.d0
             ALPHA0 = XFILTR_FRIC
             CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
      &        NOINT, NCYCLE, TT,
      &        CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
-     &        load_arr, node_id_load, L, IMPACT_glob, STIF, 
+     &        load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &        MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
+
 
 C           Fall back to Lobatto contact search if Gauss contact search reported no contact.
             IF (IMPACT_glob == 0) THEN
@@ -522,7 +542,7 @@ C           Fall back to Lobatto contact search if Gauss contact search reported
               CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
      &          NOINT, NCYCLE, TT,
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
-     &          load_arr, node_id_load, L, IMPACT_glob, STIF,
+     &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
             ENDIF
 
@@ -533,6 +553,7 @@ C           Scatter the per-pair load_arr / node_id_load directly into A / STIFN
               CALL I7ASS0_STS(A, STIFN, load_arr, node_id_load, L,
      &          MAX_STS_SIZE_ACTUAL)
             ENDIF
+            ENDIF ! COUNT > 0
           ENDIF
           CALL MY_BARRIER()
           RETURN

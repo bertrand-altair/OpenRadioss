@@ -64,44 +64,43 @@
 !       Broad-phase trigger tolerance (voxel-search).
 !       Runtime trigger tolerance is derived from the interface GAP value.
         REAL(KIND=WP), PARAMETER, PUBLIC :: Q1NP_CONTACT_VOXEL_TRIGGER_FACTOR = 1.0_WP
-!       Keep voxel cells wider than the minimum 2*tolerance rule so the
-!       broad phase remains robust when the sampled B-cloud is sparse.
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_VOXEL_CELL_SIZE_FACTOR = 4.0_WP
 !       Conservative cap for voxel-derived A-candidates stored per B point.
 !       If the local neighborhood exceeds this cap, narrow phase falls back
 !       to the original global nearest search for that B point.
         INTEGER, PARAMETER :: Q1NP_CONTACT_MAX_CANDIDATES_PER_B = 32
-        LOGICAL, PARAMETER :: Q1NP_CONTACT_DEBUG_CANDIDATES = .FALSE.
 
 !       Number of sample points per parametric direction on each element surface.
 !       These samples are used as interior quadrature-style points, not
 !       nodal/end-point samples, to avoid duplicate contact pairs on
 !       shared element edges and corners.
-        INTEGER, PARAMETER :: Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_U = 3
-        INTEGER, PARAMETER :: Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_V = 3
+        INTEGER, PARAMETER :: Q1NP_CONTACT_BP_NGP_U = 3
+        INTEGER, PARAMETER :: Q1NP_CONTACT_BP_NGP_V = 3
 
-!       STS-style penalty tuning for NURBS contact:
-!       pair stiffness is derived from both sides' nodal STIFN, then
-!       blended, clamped, and scaled by a gap factor.
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_PENALTY_SCALE = 1.0_WP
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_PENALTY_KMIN  = 1.0E+2_WP
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_PENALTY_KMAX  = 1.0E+4_WP
-
-!       Additional stabilizers for contact law.
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_FAC_MAX = 3.0_WP
+!       Gap-dependent penalty tuning for NURBS contact.
 !       Lower bound used when interface GAP is zero/too small.
         REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_GAP_FALLBACK = 1.0E-6_WP
-!       Effective penetration clipping ratio relative to GAP_REFERENCE.
-!       Set <= 0 to disable clipping.
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_PENETRATION_RATIO_MAX = -ONE
-!       Optional force cap per contact pair (set <= 0 to disable).
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_FORCE_CAP = -ONE
-!       Broad-phase scheduling: keep disabled by default while tuning
-!       contact response to avoid delayed re-activation.
+!       Temporary debug switch: if enabled, only control-point based
+!       secondary stiffness is used (no bulk/nearest fallback path).
+        LOGICAL, PARAMETER :: Q1NP_CONTACT_DISABLE_SECONDARY_FALLBACK = .FALSE.
+!       Broad-phase scheduling.
         LOGICAL, PARAMETER :: Q1NP_CONTACT_ENABLE_ADAPTIVE_SKIP = .TRUE.
         REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_SKIP_SCALE = 8.0_WP
         REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_SKIP_EXPONENT = 1.5_WP
         INTEGER, PARAMETER :: Q1NP_CONTACT_SKIP_MAX = 200
+
+! ----------------------------------------------------------------------------------------------------------------------
+!                                                   KQ1NP_TAB column indices
+! ----------------------------------------------------------------------------------------------------------------------
+        INTEGER, PARAMETER :: KQ1NP_NCTRL    = 3
+        INTEGER, PARAMETER :: KQ1NP_CP_OFF   = 4
+        INTEGER, PARAMETER :: KQ1NP_ELEM_U   = 6
+        INTEGER, PARAMETER :: KQ1NP_ELEM_V   = 7
+        INTEGER, PARAMETER :: KQ1NP_P        = 8
+        INTEGER, PARAMETER :: KQ1NP_Q        = 9
+        INTEGER, PARAMETER :: KQ1NP_NX       = 12
+        INTEGER, PARAMETER :: KQ1NP_NY       = 13
+        INTEGER, PARAMETER :: KQ1NP_BULK_OFF = 14
+        INTEGER, PARAMETER :: KQ1NP_KNOT_SET = 15
 
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Contact pair type
@@ -132,16 +131,21 @@
 !   pairs, computes penalty forces, and scatters them to A / STIFN.
 !=======================================================================
         SUBROUTINE Q1NP_CONTACT_BROAD_PHASE_CHECK_PROXIMITY( &
-     &      KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, X_COORDS, NUMNOD, &
-     &      NUMELQ1NP, GAP, A, STIFN, PROXIMITY_DETECTED)
+     &      KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, Q1NP_KTAB, X_COORDS, NUMNOD, &
+     &      NUMELQ1NP, GAP, A, STIFN, IGSTI, KMIN, KMAX, &
+     &      NSV, STFNS, NSN, STFM, NRTM, PROXIMITY_DETECTED)
 !C----------------------------------------------------------------------
 !C   D u m m y   A r g u m e n t s
 !C----------------------------------------------------------------------
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
           INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: NSV(:)
           REAL(KIND=WP), INTENT(IN) :: Q1NP_KTAB(:)
-          INTEGER, INTENT(IN) :: NUMNOD, NUMELQ1NP
-          REAL(KIND=WP), INTENT(IN) :: GAP
+          INTEGER, INTENT(IN) :: NUMNOD, NUMELQ1NP, IGSTI, NSN, NRTM
+          REAL(KIND=WP), INTENT(IN) :: GAP, KMIN, KMAX
+          REAL(KIND=WP), INTENT(IN) :: STFNS(:), STFM(:)
           REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
           REAL(KIND=WP), INTENT(INOUT) :: A(3,NUMNOD)
           REAL(KIND=WP), INTENT(INOUT) :: STIFN(NUMNOD)
@@ -161,7 +165,6 @@
           INTEGER, ALLOCATABLE :: CANDIDATE_IA(:,:)
           INTEGER, ALLOCATABLE :: CANDIDATE_COUNT(:)
           LOGICAL, ALLOCATABLE :: CANDIDATE_OVERFLOW(:)
-          INTEGER :: ICAND, IB_DBG
 
           PROXIMITY_DETECTED = .FALSE.
           GAP_CONTACT = MAX(Q1NP_CONTACT_GAP_FALLBACK, ABS(GAP))
@@ -180,27 +183,27 @@
 !  ----------------------------------------------------------------------------------------------------------------------
 !                                                BUILD POINT CLOUDS
 !  ----------------------------------------------------------------------------------------------------------------------
-          MAX_PTS = NUMELQ1NP * Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_U &
-     &                        * Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_V
+          MAX_PTS = NUMELQ1NP * Q1NP_CONTACT_BP_NGP_U &
+     &                        * Q1NP_CONTACT_BP_NGP_V
           ALLOCATE(SURF_POINTS_A(3, MAX_PTS))
           ALLOCATE(SURF_POINTS_B(3, MAX_PTS))
           ALLOCATE(ELEM_IDS_A(MAX_PTS), XI_A(MAX_PTS), ETA_A(MAX_PTS))
           ALLOCATE(ELEM_IDS_B(MAX_PTS), XI_B(MAX_PTS), ETA_B(MAX_PTS))
 
           ! Build point cloud for surface A
-          CALL Q1NP_CONTACT_BROAD_PHASE_BUILD_SURFACE_POINTS( &
+          CALL Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS( &
      &        KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, NUMELQ1NP,    &
      &        X_COORDS, NUMNOD, 1,                             &
-     &        Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_U,            &
-     &        Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_V,            &
+     &        Q1NP_CONTACT_BP_NGP_U,            &
+     &        Q1NP_CONTACT_BP_NGP_V,            &
      &        SURF_POINTS_A, NPTS_A,                           &
      &        ELEM_IDS_A, XI_A, ETA_A, MAX_PTS)
           ! Build point cloud for surface B
-          CALL Q1NP_CONTACT_BROAD_PHASE_BUILD_SURFACE_POINTS( &
+          CALL Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS( &
      &        KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, NUMELQ1NP,    &
      &        X_COORDS, NUMNOD, 2,                             &
-     &        Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_U,            &
-     &        Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_V,            &
+     &        Q1NP_CONTACT_BP_NGP_U,            &
+     &        Q1NP_CONTACT_BP_NGP_V,            &
      &        SURF_POINTS_B, NPTS_B,                           &
      &        ELEM_IDS_B, XI_B, ETA_B, MAX_PTS)
 
@@ -247,8 +250,9 @@
           IF (N_PAIRS > 0) THEN
             CALL Q1NP_CONTACT_COMPUTE_PENALTY_FORCES( &
      &          PAIRS, N_PAIRS, &
-     &          KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
-     &          NUMNOD, GAP_CONTACT, A, STIFN)
+     &          KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, Q1NP_KTAB, X_COORDS, &
+     &          NUMNOD, GAP_CONTACT, A, STIFN, IGSTI, KMIN, KMAX, &
+     &          NSV, STFNS, NSN, STFM, NRTM)
           END IF
 !   ----------------------------------------------------------------------------------------------------------------------
 !                                                ADAPTIVE SKIP SCHEDULING
@@ -278,13 +282,13 @@
         END SUBROUTINE Q1NP_CONTACT_BROAD_PHASE_CHECK_PROXIMITY
 
 !=======================================================================
-!   Q1NP_CONTACT_BROAD_PHASE_BUILD_SURFACE_POINTS
+!   Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS
 !
 !   Build a point cloud on the NURBS top surface of all Q1NP elements
 !   belonging to a given knot set (i.e. one of the two contact surfaces).
 !
 !=======================================================================
-        SUBROUTINE Q1NP_CONTACT_BROAD_PHASE_BUILD_SURFACE_POINTS( &
+        SUBROUTINE Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS( &
      &      KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, NUMELQ1NP,         &
      &      X_COORDS, NUMNOD, KNOT_SET_ID_FILTER,                 &
      &      NGP_SURF_U, NGP_SURF_V, SURF_POINTS, NPTS_TOTAL,     &
@@ -313,129 +317,43 @@
 !C----------------------------------------------------------------------
 !C   L o c a l   V a r i a b l e s
 !C----------------------------------------------------------------------
-          INTEGER :: IEL, IU, IV, KNOT_SET_ID
-          INTEGER :: P_CUR, Q_CUR, NCTRL, CP_OFFSET
+          INTEGER :: IEL, IU, IV, U_LEN, V_LEN
+          INTEGER :: U_MAX, V_MAX
+          INTEGER :: P_CUR, Q_CUR, NCTRL
           INTEGER :: ELEM_U_IDX, ELEM_V_IDX
-          INTEGER :: NX_CUR, NY_CUR, U_LEN, V_LEN
-          INTEGER :: IPT
           INTEGER, PARAMETER :: MAX_CTRL = 50
           INTEGER :: CTRL_IDS(MAX_CTRL)
           REAL(KIND=WP) :: XI_SAMPLE, ETA_SAMPLE
           REAL(KIND=WP) :: XYZ(3)
-          REAL(KIND=WP), ALLOCATABLE :: U_KNOT_LOCAL(:), V_KNOT_LOCAL(:)
+          REAL(KIND=WP), ALLOCATABLE :: U_KNOT_WS(:), V_KNOT_WS(:)
 
           NPTS_TOTAL = 0
 
+          ! Compute the maximum knot vector length in U and V
+          CALL Q1NP_CONTACT_MAX_KNOT_LEN(KQ1NP_TAB, NUMELQ1NP, U_MAX, V_MAX)
+          ALLOCATE(U_KNOT_WS(U_MAX), V_KNOT_WS(V_MAX))
+
           DO IEL = 1, NUMELQ1NP
-!           KQ1NP_TAB(15,:) stores the knot_set_id assigned by the
-!           starter when GENQ1NP was called for surface A (=1) or B (=2).
-            KNOT_SET_ID = KQ1NP_TAB(15, IEL)
-            IF (KNOT_SET_ID /= KNOT_SET_ID_FILTER) CYCLE
+            IF (KQ1NP_TAB(KQ1NP_KNOT_SET, IEL) /= KNOT_SET_ID_FILTER) CYCLE
+            
+            ! Extract the element data
+            CALL Q1NP_CONTACT_EXTRACT_ELEM_DATA( &
+     &        IEL, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
+     &        P_CUR, Q_CUR, NCTRL, ELEM_U_IDX, ELEM_V_IDX, &
+     &        CTRL_IDS, U_KNOT_WS, V_KNOT_WS, U_LEN, V_LEN)
 
-            P_CUR      = KQ1NP_TAB(8, IEL)
-            Q_CUR      = KQ1NP_TAB(9, IEL)
-            NCTRL      = KQ1NP_TAB(3, IEL)
-            CP_OFFSET  = KQ1NP_TAB(4, IEL)
-            ELEM_U_IDX = KQ1NP_TAB(6, IEL)
-            ELEM_V_IDX = KQ1NP_TAB(7, IEL)
-
-!           Derive grid dimensions for this element's knot set
-            NX_CUR = KQ1NP_TAB(12, IEL)
-            NY_CUR = KQ1NP_TAB(13, IEL)
-            IF (NX_CUR <= 0 .OR. NY_CUR <= 0) THEN
-              IF (Q1NP_NKNOT_SETS_G > 0 .AND. &
-     &            KNOT_SET_ID > 0 .AND. &
-     &            KNOT_SET_ID <= Q1NP_NKNOT_SETS_G) THEN
-                NX_CUR = Q1NP_NX_SET_G(KNOT_SET_ID)
-                NY_CUR = Q1NP_NY_SET_G(KNOT_SET_ID)
-              ELSE
-                NX_CUR = Q1NP_NX_G
-                NY_CUR = Q1NP_NY_G
-              END IF
-            END IF
-
-!           Knot vector lengths: n_knots = n_elements + 2*degree + 1
-            U_LEN = NX_CUR + 2*P_CUR + 1
-            V_LEN = NY_CUR + 2*Q_CUR + 1
-            ALLOCATE(U_KNOT_LOCAL(U_LEN), V_KNOT_LOCAL(V_LEN))
-
-!           Extract knot vectors from the RESTMOD pool (Q1NP_KTAB).
-!           Same logic as q1np_forc3 lines 478-491.
-            IF (Q1NP_NKNOT_SETS_G > 0 .AND. &
-     &          KNOT_SET_ID > 0 .AND. &
-     &          KNOT_SET_ID <= Q1NP_NKNOT_SETS_G .AND. &
-     &          ALLOCATED(Q1NP_KTAB_OFF_G)) THEN
-              U_KNOT_LOCAL(1:U_LEN) = &
-     &            Q1NP_KTAB(Q1NP_KTAB_OFF_G(KNOT_SET_ID) : &
-     &                      Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN - 1)
-              V_KNOT_LOCAL(1:V_LEN) = &
-     &            Q1NP_KTAB(Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN : &
-     &                      Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN + V_LEN - 1)
-            ELSE
-              U_KNOT_LOCAL(1:U_LEN) = Q1NP_KTAB(1:U_LEN)
-              V_KNOT_LOCAL(1:V_LEN) = Q1NP_KTAB(U_LEN+1:U_LEN+V_LEN)
-            END IF
-
-!           Gather control-point IDs for this element
-            DO IPT = 1, MIN(NCTRL, MAX_CTRL)
-              CTRL_IDS(IPT) = IQ1NP_TAB(CP_OFFSET + IPT - 1)
-            END DO
-
+            ! Sample the surface of the element at the Gauss sample points
             DO IV = 1, NGP_SURF_V
-!             Gauss-Legendre abscissae in [-1, +1] for eta direction.
-              SELECT CASE (NGP_SURF_V)
-              CASE (1)
-                ETA_SAMPLE = ZERO
-              CASE (2)
-                IF (IV == 1) THEN
-                  ETA_SAMPLE = -ONE / SQRT(THREE)
-                ELSE
-                  ETA_SAMPLE =  ONE / SQRT(THREE)
-                END IF
-              CASE (3)
-                IF (IV == 1) THEN
-                  ETA_SAMPLE = -SQRT(3.0_WP/5.0_WP)
-                ELSEIF (IV == 2) THEN
-                  ETA_SAMPLE = ZERO
-                ELSE
-                  ETA_SAMPLE =  SQRT(3.0_WP/5.0_WP)
-                END IF
-              CASE DEFAULT
-!               Fallback for unsupported orders: uniform midpoint sampling.
-                ETA_SAMPLE = -ONE + TWO * (REAL(IV, WP) - 0.5_WP) / &
-     &                       REAL(NGP_SURF_V, WP)
-              END SELECT
-
+              ETA_SAMPLE = Q1NP_GAUSS(IV, NGP_SURF_V)
               DO IU = 1, NGP_SURF_U
-!               Gauss-Legendre abscissae in [-1, +1] for xi direction.
-                SELECT CASE (NGP_SURF_U)
-                CASE (1)
-                  XI_SAMPLE = ZERO
-                CASE (2)
-                  IF (IU == 1) THEN
-                    XI_SAMPLE = -ONE / SQRT(THREE)
-                  ELSE
-                    XI_SAMPLE =  ONE / SQRT(THREE)
-                  END IF
-                CASE (3)
-                  IF (IU == 1) THEN
-                    XI_SAMPLE = -SQRT(3.0_WP/5.0_WP)
-                  ELSEIF (IU == 2) THEN
-                    XI_SAMPLE = ZERO
-                  ELSE
-                    XI_SAMPLE =  SQRT(3.0_WP/5.0_WP)
-                  END IF
-                CASE DEFAULT
-!                 Fallback for unsupported orders: uniform midpoint sampling.
-                  XI_SAMPLE = -ONE + TWO * (REAL(IU, WP) - 0.5_WP) / &
-     &                        REAL(NGP_SURF_U, WP)
-                END SELECT
+                XI_SAMPLE = Q1NP_GAUSS(IU, NGP_SURF_U)
 
+                ! Evaluate the NURBS surface point at the sample point
                 CALL Q1NP_EVALUATE_NURBS_TOP_SURFACE_POINT( &
      &              XI_SAMPLE, ETA_SAMPLE,                   &
      &              P_CUR, Q_CUR,                            &
      &              ELEM_U_IDX, ELEM_V_IDX,                  &
-     &              U_KNOT_LOCAL, V_KNOT_LOCAL,              &
+     &              U_KNOT_WS(1:U_LEN), V_KNOT_WS(1:V_LEN), &
      &              MIN(NCTRL, MAX_CTRL), CTRL_IDS,          &
      &              X_COORDS, NUMNOD, XYZ)
 
@@ -446,11 +364,11 @@
                 IF (PRESENT(PT_ETA))      PT_ETA(NPTS_TOTAL) = ETA_SAMPLE
               END DO
             END DO
-
-            DEALLOCATE(U_KNOT_LOCAL, V_KNOT_LOCAL)
           END DO
 
-        END SUBROUTINE Q1NP_CONTACT_BROAD_PHASE_BUILD_SURFACE_POINTS
+          DEALLOCATE(U_KNOT_WS, V_KNOT_WS)
+
+        END SUBROUTINE Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS
 
 !=======================================================================
 !   Q1NP_CONTACT_BROAD_PHASE_VOXEL_MIN_DISTANCE
@@ -555,8 +473,8 @@
             IF (SURF_POINTS_B(3,IB) > ZMAX_B) ZMAX_B = SURF_POINTS_B(3,IB)
           END DO
 !   ----- Step 2: choose padding / cell size from the trigger tolerance -----
-          CELL_SIZE = 4 * TOL
-          SEARCH_PADDING = 2 * TOL
+          CELL_SIZE = 1.25 * TOL
+          SEARCH_PADDING = 1.25 * TOL
           ! Pad the bounding box of point cloud B by the search padding
           XMIN_B = XMIN_B - SEARCH_PADDING
           XMAX_B = XMAX_B + SEARCH_PADDING
@@ -727,9 +645,10 @@
           LOGICAL, INTENT(OUT) :: PENETRATION_DETECTED
 
           INTEGER :: IA, IB, ICAND
-          INTEGER :: BEST_IA
-          REAL(KIND=WP) :: DX, DY, DZ, DIST_SQ, BEST_DSQ
-          REAL(KIND=WP) :: X_SRC(3)
+          INTEGER :: BEST_IA, U_MAX, V_MAX, LAST_ELEM_A
+          REAL(KIND=WP) :: DX, DY, DZ, DIST_SQ
+          REAL(KIND=WP) :: X_SRC(3), GAP_SQ
+          REAL(KIND=WP), ALLOCATABLE :: U_KNOT_WS(:), V_KNOT_WS(:)
 
           REAL(KIND=WP) :: XI_PROJ, ETA_PROJ, XYZ_PROJ(3), PROJ_DIST
           REAL(KIND=WP) :: SIGNED_PENETRATION
@@ -746,77 +665,63 @@
           PENETRATION_DETECTED = .FALSE.
           IF (NPTS_A < 1 .OR. NPTS_B < 1) RETURN
 
+          CALL Q1NP_CONTACT_MAX_KNOT_LEN( &
+     &      KQ1NP_TAB, SIZE(KQ1NP_TAB, 2), U_MAX, V_MAX)
+          ALLOCATE(U_KNOT_WS(U_MAX), V_KNOT_WS(V_MAX))
+          GAP_SQ = 4.0_WP * GAP_CONTACT * GAP_CONTACT
+
           DO IB = 1, NPTS_B
+            IF (CANDIDATE_COUNT(IB) < 1 .OR. CANDIDATE_OVERFLOW(IB)) CYCLE
             X_SRC(1:3) = SURF_POINTS_B(1:3, IB)
 
             BEST_IA  = 0
-            BEST_DSQ = HUGE(ONE)
             BEST_PROJ_VALID = .FALSE.
             BEST_SIGNED_PENETRATION = HUGE(ONE)
             BEST_PROJ_DIST = HUGE(ONE)
-            IF (CANDIDATE_COUNT(IB) > 0 .AND. .NOT. CANDIDATE_OVERFLOW(IB)) THEN
-              DO ICAND = 1, CANDIDATE_COUNT(IB)
-                IA = CANDIDATE_IA(ICAND, IB)
-                IF (IA < 1 .OR. IA > NPTS_A) CYCLE
-                CALL Q1NP_CONTACT_PROJECT_POINT_NEWTON( &
-     &            X_SRC, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
-     &            X_COORDS, NUMNOD, ELEM_IDS_A(IA),       &
-     &            XI_A(IA), ETA_A(IA),                    &
-     &            XI_PROJ, ETA_PROJ, XYZ_PROJ, PROJ_DIST, &
-     &            SIGNED_PENETRATION, NORMAL_VEC,         &
-     &            RESIDUAL, N_ITER, PROJ_VALID)
-                IF (.NOT. PROJ_VALID) CYCLE
-                IF (SIGNED_PENETRATION >= GAP_CONTACT) CYCLE
-                IF ((.NOT. BEST_PROJ_VALID) .OR. &
-     &              (SIGNED_PENETRATION < BEST_SIGNED_PENETRATION) .OR. &
-     &              (SIGNED_PENETRATION == BEST_SIGNED_PENETRATION .AND. &
-     &               PROJ_DIST < BEST_PROJ_DIST)) THEN
-                  BEST_PROJ_VALID = .TRUE.
-                  BEST_IA = IA
-                  BEST_XI_PROJ = XI_PROJ
-                  BEST_ETA_PROJ = ETA_PROJ
-                  BEST_SIGNED_PENETRATION = SIGNED_PENETRATION
-                  BEST_PROJ_DIST = PROJ_DIST
-                  BEST_NORMAL_VEC(1:3) = NORMAL_VEC(1:3)
-                END IF
-              END DO
-            ELSE
-              DO IA = 1, NPTS_A
-                DX = X_SRC(1) - SURF_POINTS_A(1,IA)
-                DY = X_SRC(2) - SURF_POINTS_A(2,IA)
-                DZ = X_SRC(3) - SURF_POINTS_A(3,IA)
-                DIST_SQ = DX*DX + DY*DY + DZ*DZ
-                IF (DIST_SQ < BEST_DSQ) THEN
-                  BEST_DSQ = DIST_SQ
-                  BEST_IA  = IA
-                END IF
-              END DO
+            LAST_ELEM_A = -1
 
-              IF (BEST_IA == 0) CYCLE
-              
-              ! Run Newton projection on the nearest point
+            DO ICAND = 1, CANDIDATE_COUNT(IB)
+              IA = CANDIDATE_IA(ICAND, IB)
+              IF (IA < 1 .OR. IA > NPTS_A) CYCLE
+
+!             Skip duplicate projections onto the same element
+              IF (ELEM_IDS_A(IA) == LAST_ELEM_A) CYCLE
+              LAST_ELEM_A = ELEM_IDS_A(IA)
+
+!             Cheap distance pre-filter before expensive Newton call
+              DX = X_SRC(1) - SURF_POINTS_A(1,IA)
+              DY = X_SRC(2) - SURF_POINTS_A(2,IA)
+              DZ = X_SRC(3) - SURF_POINTS_A(3,IA)
+              DIST_SQ = DX*DX + DY*DY + DZ*DZ
+              IF (DIST_SQ > GAP_SQ) CYCLE
+
               CALL Q1NP_CONTACT_PROJECT_POINT_NEWTON( &
-     &            X_SRC, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
-     &            X_COORDS, NUMNOD, ELEM_IDS_A(BEST_IA),   &
-     &            XI_A(BEST_IA), ETA_A(BEST_IA),            &
-     &            XI_PROJ, ETA_PROJ, XYZ_PROJ, PROJ_DIST,   &
-     &            SIGNED_PENETRATION, NORMAL_VEC,            &
-     &            RESIDUAL, N_ITER, PROJ_VALID)
+     &          X_SRC, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
+     &          X_COORDS, NUMNOD, ELEM_IDS_A(IA),       &
+     &          XI_A(IA), ETA_A(IA),                    &
+     &          XI_PROJ, ETA_PROJ, XYZ_PROJ, PROJ_DIST, &
+     &          SIGNED_PENETRATION, NORMAL_VEC,         &
+     &          RESIDUAL, N_ITER, PROJ_VALID,           &
+     &          U_KNOT_WS, V_KNOT_WS)
               IF (.NOT. PROJ_VALID) CYCLE
               IF (SIGNED_PENETRATION >= GAP_CONTACT) CYCLE
+              IF ((.NOT. BEST_PROJ_VALID) .OR. &
+     &            (SIGNED_PENETRATION < BEST_SIGNED_PENETRATION) .OR. &
+     &            (SIGNED_PENETRATION == BEST_SIGNED_PENETRATION .AND. &
+     &             PROJ_DIST < BEST_PROJ_DIST)) THEN
+                BEST_PROJ_VALID = .TRUE.
+                BEST_IA = IA
+                BEST_XI_PROJ = XI_PROJ
+                BEST_ETA_PROJ = ETA_PROJ
+                BEST_SIGNED_PENETRATION = SIGNED_PENETRATION
+                BEST_PROJ_DIST = PROJ_DIST
+                BEST_NORMAL_VEC(1:3) = NORMAL_VEC(1:3)
+              END IF
+            END DO
 
-              ! Store contact pair if projection is valid and signed penetration is negative
-              BEST_PROJ_VALID = .TRUE.
-              BEST_XI_PROJ = XI_PROJ
-              BEST_ETA_PROJ = ETA_PROJ
-              BEST_SIGNED_PENETRATION = SIGNED_PENETRATION
-              BEST_PROJ_DIST = PROJ_DIST
-              BEST_NORMAL_VEC(1:3) = NORMAL_VEC(1:3)
-            END IF
             IF (.NOT. BEST_PROJ_VALID) CYCLE
             IF (N_PAIRS >= SIZE(CONTACT_PAIRS)) EXIT
 
-            ! Store contact all detected contact pairs
             N_PAIRS = N_PAIRS + 1
             CONTACT_PAIRS(N_PAIRS)%PENETRATION = BEST_SIGNED_PENETRATION
             CONTACT_PAIRS(N_PAIRS)%NORMAL(1:3) = BEST_NORMAL_VEC(1:3)
@@ -828,6 +733,7 @@
             CONTACT_PAIRS(N_PAIRS)%ELEM_B      = ELEM_IDS_B(IB)
           END DO
 
+          DEALLOCATE(U_KNOT_WS, V_KNOT_WS)
           PENETRATION_DETECTED = (N_PAIRS > 0)
 
         END SUBROUTINE Q1NP_CONTACT_NARROW_PHASE_PROJECT
@@ -837,36 +743,50 @@
 !
 !   For each penetrating contact pair, evaluate NURBS shape functions
 !   on both surfaces and scatter penalty forces to control-point nodes.
+!   Pair stiffness is evaluated directly from starter-side contact data.
+!   Direct node/segment maps are used when available; otherwise the
+!   evaluated Q1NP contact point is matched geometrically against the
+!   starter NSV/STFNS and IRECTM/STFM data
 !
 !=======================================================================
         SUBROUTINE Q1NP_CONTACT_COMPUTE_PENALTY_FORCES( &
      &      CONTACT_PAIRS, N_PAIRS, &
-     &      KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
-     &      NUMNOD, GAP_CONTACT, A, STIFN)
+     &      KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, Q1NP_KTAB, X_COORDS, &
+     &      NUMNOD, GAP_CONTACT, A, STIFN, IGSTI, KMIN, KMAX, &
+     &      NSV, STFNS, NSN, STFM, NRTM)
           TYPE(Q1NP_CONTACT_PAIR), INTENT(IN) :: CONTACT_PAIRS(:)
           INTEGER, INTENT(IN) :: N_PAIRS
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
           INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: NSV(:)
           REAL(KIND=WP), INTENT(IN)    :: Q1NP_KTAB(:)
-          INTEGER, INTENT(IN)          :: NUMNOD
-          REAL(KIND=WP), INTENT(IN)    :: GAP_CONTACT
+          INTEGER, INTENT(IN)          :: NUMNOD, IGSTI, NSN, NRTM
+          REAL(KIND=WP), INTENT(IN)    :: GAP_CONTACT, KMIN, KMAX
+          REAL(KIND=WP), INTENT(IN)    :: X_COORDS(3,NUMNOD)
+          REAL(KIND=WP), INTENT(IN)    :: STFNS(:), STFM(:)
           REAL(KIND=WP), INTENT(INOUT) :: A(3,NUMNOD)
           REAL(KIND=WP), INTENT(INOUT) :: STIFN(NUMNOD)
 
           INTEGER, PARAMETER :: MAX_CTRL = 50
           REAL(KIND=WP), PARAMETER :: EPS = 1.0E-10_WP
-          REAL(KIND=WP), PARAMETER :: PREC = 1.0E-6_WP
-          INTEGER :: IP, K, GID, ELEM_IDX
-          INTEGER :: P_CUR, Q_CUR, NCTRL
-          INTEGER :: ELEM_U_IDX, ELEM_V_IDX
+          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+          INTEGER :: IP, K, GID, U_MAX, V_MAX
+          INTEGER :: NSN_EFF, NRTM_EFF, NODE_MAP_SIZE
+          INTEGER :: NCTRL_A_EFF, NCTRL_B_EFF
           INTEGER :: CTRL_IDS_A(MAX_CTRL), CTRL_IDS_B(MAX_CTRL)
-          REAL(KIND=WP), ALLOCATABLE :: U_KNOT_LOCAL(:), V_KNOT_LOCAL(:)
-          REAL(KIND=WP), ALLOCATABLE :: STIFN_BASE(:)
+          INTEGER, ALLOCATABLE :: NODE_TO_STFNS(:)
+          INTEGER, ALLOCATABLE :: ELEM_TO_STFM_SEG(:)
+          REAL(KIND=WP), ALLOCATABLE :: U_KNOT_WS(:), V_KNOT_WS(:)
           REAL(KIND=WP) :: NVAL_A(MAX_CTRL), NVAL_B(MAX_CTRL)
           REAL(KIND=WP) :: F_PEN(3), F_NEG(3), F_MAG
           REAL(KIND=WP) :: F_MAX, PENETR_MAX
-          REAL(KIND=WP) :: PEN_ABS, PEN_EFF, FAC, D1
-          REAL(KIND=WP) :: K_A, K_B, K_PAIR, GAP_REF
+          REAL(KIND=WP) :: PEN_ABS, FAC, D1
+          REAL(KIND=WP) :: K_A_PRIMARY, K_A_SECONDARY
+          REAL(KIND=WP) :: K_B_PRIMARY, K_B_SECONDARY
+          REAL(KIND=WP) :: K_PAIR, GAP_REF
+          REAL(KIND=WP) :: K_PRIMARY, K_SECONDARY
           REAL(KIND=WP) :: PAIR_WEIGHT, D1_WEIGHTED
 
           IF (N_PAIRS < 1) RETURN
@@ -875,93 +795,65 @@
           PENETR_MAX = ZERO
 
           GAP_REF = MAX(Q1NP_CONTACT_GAP_FALLBACK, GAP_CONTACT)
-          PAIR_WEIGHT = ONE / REAL(Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_U * &
-     &                             Q1NP_CONTACT_BROAD_PHASE_NGP_SURF_V, WP)
-          ALLOCATE(STIFN_BASE(NUMNOD))
-          STIFN_BASE(1:NUMNOD) = STIFN(1:NUMNOD)
+          PAIR_WEIGHT = ONE / (Q1NP_CONTACT_BP_NGP_U * Q1NP_CONTACT_BP_NGP_V)
+
+          NSN_EFF = MIN(NSN, SIZE(NSV), SIZE(STFNS))
+          NRTM_EFF = MIN(NRTM, SIZE(STFM), SIZE(IRECTM) / 4)
+
+          NODE_MAP_SIZE = Q1NP_CONTACT_NODE_MAP_SIZE(NUMNOD, NSV, NSN_EFF, IQ1NP_BULK_TAB)
+          ALLOCATE(NODE_TO_STFNS(NODE_MAP_SIZE))
+          ! Build the node to STFNS map
+          CALL Q1NP_CONTACT_BUILD_NODE_TO_STFNS(NSV, NSN_EFF, NODE_TO_STFNS)
+
+          ALLOCATE(ELEM_TO_STFM_SEG(MAX(1, SIZE(KQ1NP_TAB, 2))))  
+          CALL Q1NP_CONTACT_BUILD_PRIMARY_SEG_MAP(KQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, NRTM_EFF, ELEM_TO_STFM_SEG)
+
+          ! Compute the maximum knot vector length in U and V
+          CALL Q1NP_CONTACT_MAX_KNOT_LEN( &
+     &      KQ1NP_TAB, SIZE(KQ1NP_TAB, 2), U_MAX, V_MAX)
+          ALLOCATE(U_KNOT_WS(U_MAX), V_KNOT_WS(V_MAX))
 
           DO IP = 1, N_PAIRS
             PEN_ABS = GAP_REF - CONTACT_PAIRS(IP)%PENETRATION
             IF (PEN_ABS <= ZERO) CYCLE
-            IF (Q1NP_CONTACT_PENETRATION_RATIO_MAX > ZERO) THEN
-              PEN_EFF = MIN(PEN_ABS, &
-     &                      Q1NP_CONTACT_PENETRATION_RATIO_MAX * GAP_REF)
-            ELSE
-              PEN_EFF = PEN_ABS
+
+!           Evaluate both contact sides A/B.
+            CALL Q1NP_CONTACT_EVALUATE_SIDE( &
+     &        CONTACT_PAIRS(IP)%ELEM_A, CONTACT_PAIRS(IP)%XI_PROJ, CONTACT_PAIRS(IP)%ETA_PROJ, &
+     &        KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, Q1NP_KTAB, &
+     &        X_COORDS, NUMNOD, NODE_TO_STFNS, NSV, STFNS, NSN_EFF, &
+     &        ELEM_TO_STFM_SEG, STFM, NRTM_EFF, IRECTM, &
+     &        CTRL_IDS_A, NVAL_A, NCTRL_A_EFF, K_A_PRIMARY, K_A_SECONDARY, &
+     &        U_KNOT_WS, V_KNOT_WS)
+
+            CALL Q1NP_CONTACT_EVALUATE_SIDE( &
+     &        CONTACT_PAIRS(IP)%ELEM_B, CONTACT_PAIRS(IP)%XI_SRC, CONTACT_PAIRS(IP)%ETA_SRC, &
+     &        KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, Q1NP_KTAB, &
+     &        X_COORDS, NUMNOD, NODE_TO_STFNS, NSV, STFNS, NSN_EFF, &
+     &        ELEM_TO_STFM_SEG, STFM, NRTM_EFF, IRECTM, &
+     &        CTRL_IDS_B, NVAL_B, NCTRL_B_EFF, K_B_PRIMARY, K_B_SECONDARY, &
+     &        U_KNOT_WS, V_KNOT_WS)
+
+!           --- Pair stiffness selection ---
+            CALL Q1NP_CONTACT_ASSIGN_PAIR_STIFFNESS( &
+     &        CONTACT_PAIRS(IP)%ELEM_A, K_A_PRIMARY, K_A_SECONDARY, &
+     &        CONTACT_PAIRS(IP)%ELEM_B, K_B_PRIMARY, K_B_SECONDARY, &
+     &        KQ1NP_TAB, K_PRIMARY, K_SECONDARY)
+            IF (K_PRIMARY <= EPS_STIFF .OR. K_SECONDARY <= EPS_STIFF) CYCLE
+
+            ! Compute pair stiffness based on IGSTI.
+            K_PAIR = Q1NP_CONTACT_STIFFNESS(K_PRIMARY, K_SECONDARY, IGSTI, KMIN, KMAX)
+
+!           --- gap scaling ---
+            IF (GAP_REF > EPS .AND. PEN_ABS < GAP_REF) THEN
+              FAC = GAP_REF / MAX(EPS, (GAP_REF - PEN_ABS))
+
             END IF
-            IF (PEN_EFF <= ZERO) CYCLE
 
-!           --- Target surface A: evaluate shape values and side stiffness ---
-            ELEM_IDX = CONTACT_PAIRS(IP)%ELEM_A
-            CALL Q1NP_CONTACT_EXTRACT_ELEM_DATA( &
-     &          ELEM_IDX, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
-     &          P_CUR, Q_CUR, NCTRL, ELEM_U_IDX, ELEM_V_IDX, &
-     &          CTRL_IDS_A, U_KNOT_LOCAL, V_KNOT_LOCAL)
+            D1 = 0.5_WP * K_PAIR * FAC
 
-            CALL Q1NP_EVALUATE_NURBS_SHAPE_VALUES( &
-     &          CONTACT_PAIRS(IP)%XI_PROJ, &
-     &          CONTACT_PAIRS(IP)%ETA_PROJ, &
-     &          P_CUR, Q_CUR, ELEM_U_IDX, ELEM_V_IDX, &
-     &          U_KNOT_LOCAL, V_KNOT_LOCAL, &
-     &          MIN(NCTRL, MAX_CTRL), NVAL_A)
-
-            K_A = ZERO
-            DO K = 1, MIN(NCTRL, MAX_CTRL)
-              GID = CTRL_IDS_A(K)
-              IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
-              K_A = K_A + ABS(NVAL_A(K)) * &
-     &              MIN(ABS(STIFN_BASE(GID)), Q1NP_CONTACT_PENALTY_KMAX)
-            END DO
-            DEALLOCATE(U_KNOT_LOCAL, V_KNOT_LOCAL)
-
-!           --- Source surface B: evaluate shape values and side stiffness ---
-            ELEM_IDX = CONTACT_PAIRS(IP)%ELEM_B
-            CALL Q1NP_CONTACT_EXTRACT_ELEM_DATA( &
-     &          ELEM_IDX, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
-     &          P_CUR, Q_CUR, NCTRL, ELEM_U_IDX, ELEM_V_IDX, &
-     &          CTRL_IDS_B, U_KNOT_LOCAL, V_KNOT_LOCAL)
-
-            CALL Q1NP_EVALUATE_NURBS_SHAPE_VALUES( &
-     &          CONTACT_PAIRS(IP)%XI_SRC, &
-     &          CONTACT_PAIRS(IP)%ETA_SRC, &
-     &          P_CUR, Q_CUR, ELEM_U_IDX, ELEM_V_IDX, &
-     &          U_KNOT_LOCAL, V_KNOT_LOCAL, &
-     &          MIN(NCTRL, MAX_CTRL), NVAL_B)
-
-            K_B = ZERO
-            DO K = 1, MIN(NCTRL, MAX_CTRL)
-              GID = CTRL_IDS_B(K)
-              IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
-              K_B = K_B + ABS(NVAL_B(K)) * &
-     &              MIN(ABS(STIFN_BASE(GID)), Q1NP_CONTACT_PENALTY_KMAX)
-            END DO
-            DEALLOCATE(U_KNOT_LOCAL, V_KNOT_LOCAL)
-
-!           --- STS-style pair stiffness blending + clamping ---
-            IF (K_A > ZERO .AND. K_B > ZERO) THEN
-              K_PAIR = (K_A * K_B) / MAX(EPS, (K_A + K_B))
-            ELSE
-              K_PAIR = MAX(K_A, K_B)
-            END IF
-            K_PAIR = Q1NP_CONTACT_PENALTY_SCALE * K_PAIR
-            K_PAIR = MAX(Q1NP_CONTACT_PENALTY_KMIN, &
-     &                   MIN(K_PAIR, Q1NP_CONTACT_PENALTY_KMAX))
-
-!           --- STS-like gap scaling ---
-            IF (GAP_REF > EPS .AND. PEN_EFF < GAP_REF) THEN
-              FAC = GAP_REF / MAX(EPS, (GAP_REF - PEN_EFF))
-              FAC = MIN(FAC, Q1NP_CONTACT_FAC_MAX)
-            ELSE
-              FAC = Q1NP_CONTACT_FAC_MAX
-            END IF
-            D1 = 0.5 * K_PAIR * FAC
-            IF (D1 <= ZERO) CYCLE
             D1_WEIGHTED = PAIR_WEIGHT * D1
-
-            F_MAG = D1_WEIGHTED * PEN_EFF
-            IF (Q1NP_CONTACT_FORCE_CAP > ZERO) THEN
-              F_MAG = MIN(F_MAG, Q1NP_CONTACT_FORCE_CAP)
-            END IF
+            F_MAG = D1_WEIGHTED * PEN_ABS
             F_PEN(1:3) = F_MAG * CONTACT_PAIRS(IP)%NORMAL(1:3)
 
             IF (F_MAG > F_MAX) F_MAX = F_MAG
@@ -974,7 +866,7 @@
      &          CONTACT_PAIRS(IP)%ELEM_B,  F_PEN, PEN_ABS)
 
 !           --- Scatter to A: -N_k * F ---
-            DO K = 1, MIN(KQ1NP_TAB(3, CONTACT_PAIRS(IP)%ELEM_A), MAX_CTRL)
+            DO K = 1, NCTRL_A_EFF
               GID = CTRL_IDS_A(K)
               IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
               A(1, GID) = A(1, GID) - NVAL_A(K) * F_PEN(1)
@@ -984,7 +876,7 @@
             END DO
 
 !           --- Scatter to B: +N_j * F ---
-            DO K = 1, MIN(KQ1NP_TAB(3, CONTACT_PAIRS(IP)%ELEM_B), MAX_CTRL)
+            DO K = 1, NCTRL_B_EFF
               GID = CTRL_IDS_B(K)
               IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
               A(1, GID) = A(1, GID) + NVAL_B(K) * F_PEN(1)
@@ -994,22 +886,723 @@
             END DO
           END DO
 
-          DEALLOCATE(STIFN_BASE)
+          DEALLOCATE(NODE_TO_STFNS)
+          DEALLOCATE(ELEM_TO_STFM_SEG)
+          DEALLOCATE(U_KNOT_WS, V_KNOT_WS)
 
         END SUBROUTINE Q1NP_CONTACT_COMPUTE_PENALTY_FORCES
+
+!=======================================================================
+!   Q1NP_CONTACT_EVALUATE_SIDE
+!
+!   Evaluate one contact side (A or B) for a given element and parametric
+!   point. This shared helper avoids duplicated logic while keeping the
+!   side-specific inputs explicit at the call site.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_EVALUATE_SIDE( &
+     &      ELEM_IDX, XI, ETA, &
+     &      KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, Q1NP_KTAB, &
+     &      X_COORDS, NUMNOD, NODE_TO_STFNS, NSV, STFNS, NSN_EFF, &
+     &      ELEM_TO_STFM_SEG, STFM, NRTM_EFF, IRECTM, &
+     &      CTRL_IDS, NVALS, NCTRL_EFF, K_PRIMARY, K_SECONDARY, &
+     &      U_KNOT_WS, V_KNOT_WS)
+          INTEGER, INTENT(IN) :: ELEM_IDX, NUMNOD, NSN_EFF, NRTM_EFF
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:), IQ1NP_TAB(:), IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(IN) :: NODE_TO_STFNS(:), NSV(:), ELEM_TO_STFM_SEG(:), IRECTM(:)
+          REAL(KIND=WP), INTENT(IN) :: Q1NP_KTAB(:), X_COORDS(3,NUMNOD), STFNS(:), STFM(:)
+          REAL(KIND=WP), INTENT(IN) :: XI, ETA
+          INTEGER, INTENT(OUT) :: CTRL_IDS(50), NCTRL_EFF
+          REAL(KIND=WP), INTENT(OUT) :: NVALS(50), K_PRIMARY, K_SECONDARY
+          REAL(KIND=WP), INTENT(INOUT) :: U_KNOT_WS(:), V_KNOT_WS(:)
+
+          INTEGER :: P_CUR, Q_CUR, NCTRL, ELEM_U_IDX, ELEM_V_IDX
+          INTEGER :: U_LEN, V_LEN
+          REAL(KIND=WP) :: X_PAIR(3)
+
+          NVALS(1:50) = ZERO
+          CTRL_IDS(1:50) = 0
+
+          CALL Q1NP_CONTACT_EXTRACT_ELEM_DATA( &
+     &      ELEM_IDX, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
+     &      P_CUR, Q_CUR, NCTRL, ELEM_U_IDX, ELEM_V_IDX, &
+     &      CTRL_IDS, U_KNOT_WS, V_KNOT_WS, U_LEN, V_LEN)
+
+          NCTRL_EFF = MIN(NCTRL, 50)
+          CALL Q1NP_EVALUATE_NURBS_SHAPE_VALUES( &
+     &      XI, ETA, P_CUR, Q_CUR, ELEM_U_IDX, ELEM_V_IDX, &
+     &      U_KNOT_WS(1:U_LEN), V_KNOT_WS(1:V_LEN), &
+     &      NCTRL_EFF, NVALS)
+
+          CALL Q1NP_CONTACT_INTERPOLATE_POINT( &
+     &      CTRL_IDS, NVALS, NCTRL_EFF, X_COORDS, NUMNOD, X_PAIR)
+
+          K_SECONDARY = Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS( &
+     &      ELEM_IDX, XI, ETA, &
+     &      KQ1NP_TAB, IQ1NP_BULK_TAB, NODE_TO_STFNS, NSV, STFNS, NSN_EFF, &
+     &      CTRL_IDS, NVALS, NCTRL_EFF, X_PAIR, X_COORDS, NUMNOD)
+
+          K_PRIMARY = Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS( &
+     &      ELEM_IDX, ELEM_TO_STFM_SEG, STFM, NRTM_EFF, IRECTM, X_PAIR, X_COORDS, NUMNOD)
+        END SUBROUTINE Q1NP_CONTACT_EVALUATE_SIDE
+
+!=======================================================================
+!   Q1NP_CONTACT_NODE_MAP_SIZE
+!=======================================================================
+        INTEGER FUNCTION Q1NP_CONTACT_NODE_MAP_SIZE( &
+     &      NUMNOD, NSV, NSN_EFF, IQ1NP_BULK_TAB)
+          INTEGER, INTENT(IN) :: NUMNOD, NSN_EFF
+          INTEGER, INTENT(IN) :: NSV(:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+
+          INTEGER :: I, NEFF, NODE_ID
+
+          Q1NP_CONTACT_NODE_MAP_SIZE = MAX(1, NUMNOD)
+
+          NEFF = MIN(NSN_EFF, SIZE(NSV))
+          DO I = 1, NEFF
+            NODE_ID = ABS(NSV(I))
+            IF (NODE_ID > Q1NP_CONTACT_NODE_MAP_SIZE) THEN
+              Q1NP_CONTACT_NODE_MAP_SIZE = NODE_ID
+            END IF
+          END DO
+
+          DO I = 1, SIZE(IQ1NP_BULK_TAB)
+            NODE_ID = ABS(IQ1NP_BULK_TAB(I))
+            IF (NODE_ID > Q1NP_CONTACT_NODE_MAP_SIZE) THEN
+              Q1NP_CONTACT_NODE_MAP_SIZE = NODE_ID
+            END IF
+          END DO
+        END FUNCTION Q1NP_CONTACT_NODE_MAP_SIZE
+
+!=======================================================================
+!   Q1NP_CONTACT_BUILD_NODE_TO_STFNS
+!=======================================================================
+        !-----------------------------------------------------------------------
+        ! Q1NP_CONTACT_BUILD_NODE_TO_STFNS
+        !
+        ! Build an index array mapping node IDs (from NSV) to their position
+        ! in the surface node vector (NSV).
+        !
+        ! This mapping allows fast lookup: node_id --> associated NSV index.
+        !
+        !-----------------------------------------------------------------------
+        SUBROUTINE Q1NP_CONTACT_BUILD_NODE_TO_STFNS(NSV, NSN_EFF, NODE_TO_STFNS)
+          INTEGER, INTENT(IN) :: NSV(:) ! NSV is the surface node indices
+          INTEGER, INTENT(IN) :: NSN_EFF ! NSN_EFF is the number of active nodes in NSV
+          INTEGER, INTENT(OUT) :: NODE_TO_STFNS(:) ! NODE_TO_STFNS is the array that maps node IDs to their position in NSV
+
+          INTEGER :: I, NODE_ID, NEFF
+
+          ! Initialize the map to zero (no node mapped)
+          NODE_TO_STFNS(:) = 0
+          NEFF = MIN(NSN_EFF, SIZE(NSV))
+          DO I = 1, NEFF
+            NODE_ID = NSV(I)
+            ! Only assign if node_id is positive and in range
+            IF (NODE_ID > 0 .AND. NODE_ID <= SIZE(NODE_TO_STFNS)) THEN
+              NODE_TO_STFNS(NODE_ID) = I
+            ENDIF
+          END DO
+        END SUBROUTINE Q1NP_CONTACT_BUILD_NODE_TO_STFNS
+   
+
+!=======================================================================
+!   Q1NP_CONTACT_BUILD_PRIMARY_SEG_MAP
+!
+!   Build a Q1NP element -> INT7 primary segment map once per force call.
+!   The candidate surface-local segment order is checked first, then a
+!   full node-set search keeps the mapping independent of Q1NP grid order.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_BUILD_PRIMARY_SEG_MAP( &
+     &      KQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, NRTM_EFF, ELEM_TO_STFM_SEG)
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: NRTM_EFF
+          INTEGER, INTENT(OUT) :: ELEM_TO_STFM_SEG(:)
+
+          INTEGER :: ELEM_IDX, SEG_GUESS, NELEM
+
+          ELEM_TO_STFM_SEG(:) = 0
+          IF (NRTM_EFF <= 0) RETURN
+
+          SEG_GUESS = 0
+          NELEM = MIN(SIZE(KQ1NP_TAB, 2), SIZE(ELEM_TO_STFM_SEG))
+          DO ELEM_IDX = 1, NELEM
+            IF (Q1NP_CONTACT_KNOT_SET_ID(ELEM_IDX, KQ1NP_TAB) == 2) THEN
+              SEG_GUESS = SEG_GUESS + 1
+            END IF
+            ELEM_TO_STFM_SEG(ELEM_IDX) = Q1NP_CONTACT_FIND_PRIMARY_SEGMENT( &
+     &        ELEM_IDX, KQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, NRTM_EFF, SEG_GUESS)
+          END DO
+        END SUBROUTINE Q1NP_CONTACT_BUILD_PRIMARY_SEG_MAP
+
+!=======================================================================
+!   Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS( &
+     &      ELEM_IDX, XI, ETA, KQ1NP_TAB, IQ1NP_BULK_TAB, &
+     &      NODE_TO_STFNS, NSV, STFNS, NSN_EFF, &
+     &      CTRL_IDS, NVALS, NCTRL_EFF, X_PAIR, X_COORDS, NUMNOD)
+          INTEGER, INTENT(IN) :: ELEM_IDX, NSN_EFF, NCTRL_EFF, NUMNOD
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(IN) :: NODE_TO_STFNS(:)
+          INTEGER, INTENT(IN) :: NSV(:)
+          INTEGER, INTENT(IN) :: CTRL_IDS(:)
+          REAL(KIND=WP), INTENT(IN) :: STFNS(:)
+          REAL(KIND=WP), INTENT(IN) :: NVALS(:)
+          REAL(KIND=WP), INTENT(IN) :: X_PAIR(3)
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+          REAL(KIND=WP), INTENT(IN) :: XI, ETA
+
+          INTEGER :: K, IDX, NODE_ID, MATCH_COUNT
+          INTEGER :: NODE_IDS(4)
+          LOGICAL :: HAS_NODES
+          REAL(KIND=WP) :: K_NODE, K_SUM, WEIGHT_SUM, K_CTRL
+          REAL(KIND=WP) :: WEIGHT(4)
+          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+
+          Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS = ZERO
+
+!         First try the projected Q1NP control-point set.
+!         This keeps the secondary lookup consistent with the actual
+!         NURBS evaluation used for force projection.
+          K_CTRL = Q1NP_CONTACT_CONTROL_POINT_SECONDARY_STIFFNESS( &
+     &      CTRL_IDS, NVALS, NCTRL_EFF, NODE_TO_STFNS, STFNS, NSN_EFF)
+          IF (K_CTRL > EPS_STIFF) THEN
+            Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS = K_CTRL
+            RETURN
+          END IF
+          IF (Q1NP_CONTACT_DISABLE_SECONDARY_FALLBACK) RETURN
+
+          CALL Q1NP_CONTACT_BULK_NODES( &
+     &      ELEM_IDX, KQ1NP_TAB, IQ1NP_BULK_TAB, NODE_IDS, HAS_NODES)
+
+          IF (HAS_NODES) THEN
+            CALL Q1NP_CONTACT_BILINEAR_WEIGHTS(XI, ETA, WEIGHT)
+            K_SUM = ZERO
+            WEIGHT_SUM = ZERO
+            MATCH_COUNT = 0
+            DO K = 1, 4
+              NODE_ID = NODE_IDS(K)
+              IF (NODE_ID > 0 .AND. NODE_ID <= SIZE(NODE_TO_STFNS)) THEN
+                IDX = NODE_TO_STFNS(NODE_ID)
+                IF (IDX > 0 .AND. IDX <= NSN_EFF .AND. IDX <= SIZE(STFNS)) THEN
+                  MATCH_COUNT = MATCH_COUNT + 1
+                  K_NODE = ABS(STFNS(IDX))
+                  IF (K_NODE > EPS_STIFF .AND. WEIGHT(K) > EPS_STIFF) THEN
+                    K_SUM = K_SUM + WEIGHT(K) * K_NODE
+                    WEIGHT_SUM = WEIGHT_SUM + WEIGHT(K)
+                  END IF
+                END IF
+              END IF
+            END DO
+
+            IF (MATCH_COUNT == 4 .AND. WEIGHT_SUM > EPS_STIFF) THEN
+              Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS = K_SUM / WEIGHT_SUM
+              RETURN
+            END IF
+          END IF
+
+!         IQ1NP_BULK_TAB holds the reconstructed HEX face, which can be the
+!         opposite side of the Q1NP contact surface. If none of those nodes is
+!         in NSV, use the evaluated contact point to sample local STFNS values.
+          Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS = &
+     &      Q1NP_CONTACT_NEAREST_SECONDARY_STIFFNESS( &
+     &        X_PAIR, X_COORDS, NUMNOD, NSV, STFNS, NSN_EFF)
+        END FUNCTION Q1NP_CONTACT_SECONDARY_SIDE_STIFFNESS
+
+!=======================================================================
+!   Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS( &
+     &      ELEM_IDX, ELEM_TO_STFM_SEG, STFM, NRTM_EFF, &
+     &      IRECTM, X_PAIR, X_COORDS, NUMNOD)
+          INTEGER, INTENT(IN) :: ELEM_IDX, NRTM_EFF, NUMNOD
+          INTEGER, INTENT(IN) :: ELEM_TO_STFM_SEG(:)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          REAL(KIND=WP), INTENT(IN) :: STFM(:)
+          REAL(KIND=WP), INTENT(IN) :: X_PAIR(3)
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+
+          INTEGER :: SEG
+          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+
+          Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS = ZERO
+          IF (ELEM_IDX <= 0 .OR. ELEM_IDX > SIZE(ELEM_TO_STFM_SEG)) RETURN
+          SEG = ELEM_TO_STFM_SEG(ELEM_IDX)
+          IF (SEG > 0 .AND. SEG <= NRTM_EFF .AND. SEG <= SIZE(STFM)) THEN
+            Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS = ABS(STFM(SEG))
+            IF (Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS > EPS_STIFF) RETURN
+          END IF
+
+!         The direct map can miss for the same reason as the secondary
+!         lookup: Q1NP bulk nodes are not always the actual contact segment.
+          Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS = &
+     &      Q1NP_CONTACT_NEAREST_PRIMARY_STIFFNESS( &
+     &        X_PAIR, IRECTM, STFM, NRTM_EFF, X_COORDS, NUMNOD)
+        END FUNCTION Q1NP_CONTACT_PRIMARY_SIDE_STIFFNESS
+
+!=======================================================================
+!   Q1NP_CONTACT_CONTROL_POINT_SECONDARY_STIFFNESS
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_CONTACT_CONTROL_POINT_SECONDARY_STIFFNESS( &
+     &      CTRL_IDS, NVALS, NCTRL_EFF, NODE_TO_STFNS, STFNS, NSN_EFF)
+          INTEGER, INTENT(IN) :: CTRL_IDS(:)
+          REAL(KIND=WP), INTENT(IN) :: NVALS(:)
+          INTEGER, INTENT(IN) :: NCTRL_EFF, NSN_EFF
+          INTEGER, INTENT(IN) :: NODE_TO_STFNS(:)
+          REAL(KIND=WP), INTENT(IN) :: STFNS(:)
+
+          INTEGER :: I, NEFF, NODE_ID, IDX
+          REAL(KIND=WP) :: K_NODE, WEIGHT, K_SUM, WEIGHT_SUM
+          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+
+          Q1NP_CONTACT_CONTROL_POINT_SECONDARY_STIFFNESS = ZERO
+          K_SUM = ZERO
+          WEIGHT_SUM = ZERO
+          NEFF = MIN(NCTRL_EFF, SIZE(CTRL_IDS), SIZE(NVALS))
+
+          DO I = 1, NEFF
+            NODE_ID = CTRL_IDS(I)
+            IF (NODE_ID <= 0 .OR. NODE_ID > SIZE(NODE_TO_STFNS)) CYCLE
+
+            IDX = NODE_TO_STFNS(NODE_ID)
+            IF (IDX <= 0 .OR. IDX > NSN_EFF .OR. IDX > SIZE(STFNS)) CYCLE
+
+            K_NODE = ABS(STFNS(IDX))
+            WEIGHT = ABS(NVALS(I))
+            IF (K_NODE <= EPS_STIFF .OR. WEIGHT <= EPS_STIFF) CYCLE
+
+            K_SUM = K_SUM + WEIGHT * K_NODE
+            WEIGHT_SUM = WEIGHT_SUM + WEIGHT
+          END DO
+
+          IF (WEIGHT_SUM > EPS_STIFF) THEN
+            Q1NP_CONTACT_CONTROL_POINT_SECONDARY_STIFFNESS = K_SUM / WEIGHT_SUM
+          END IF
+        END FUNCTION Q1NP_CONTACT_CONTROL_POINT_SECONDARY_STIFFNESS
+
+!=======================================================================
+!   Q1NP_CONTACT_INTERPOLATE_POINT
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_INTERPOLATE_POINT( &
+     &      CTRL_IDS, NVALS, NVAL, X_COORDS, NUMNOD, X_PAIR)
+          INTEGER, INTENT(IN) :: CTRL_IDS(:)
+          INTEGER, INTENT(IN) :: NVAL, NUMNOD
+          REAL(KIND=WP), INTENT(IN) :: NVALS(:)
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+          REAL(KIND=WP), INTENT(OUT) :: X_PAIR(3)
+
+          INTEGER :: K, GID, NEFF
+          REAL(KIND=WP) :: WEIGHT, WSUM
+          REAL(KIND=WP), PARAMETER :: EPS_WEIGHT = 1.0E-30_WP
+
+          X_PAIR(1:3) = ZERO
+          WSUM = ZERO
+          NEFF = MIN(NVAL, SIZE(CTRL_IDS), SIZE(NVALS))
+
+          DO K = 1, NEFF
+            GID = CTRL_IDS(K)
+            IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
+            WEIGHT = NVALS(K)
+            X_PAIR(1:3) = X_PAIR(1:3) + WEIGHT * X_COORDS(1:3, GID)
+            WSUM = WSUM + WEIGHT
+          END DO
+
+!         NURBS shape values should sum to one; this only compensates for
+!         skipped invalid control ids and keeps the geometric lookup stable.
+          IF (ABS(WSUM) > EPS_WEIGHT) THEN
+            X_PAIR(1:3) = X_PAIR(1:3) / WSUM
+          END IF
+        END SUBROUTINE Q1NP_CONTACT_INTERPOLATE_POINT
+
+!=======================================================================
+!   Q1NP_CONTACT_NEAREST_SECONDARY_STIFFNESS
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_CONTACT_NEAREST_SECONDARY_STIFFNESS( &
+     &      X_PAIR, X_COORDS, NUMNOD, NSV, STFNS, NSN_EFF)
+          REAL(KIND=WP), INTENT(IN) :: X_PAIR(3)
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+          INTEGER, INTENT(IN) :: NUMNOD, NSN_EFF
+          INTEGER, INTENT(IN) :: NSV(:)
+          REAL(KIND=WP), INTENT(IN) :: STFNS(:)
+
+          INTEGER, PARAMETER :: N_PICK = 4
+          REAL(KIND=WP), PARAMETER :: EPS_DIST2 = 1.0E-24_WP
+          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+          INTEGER :: I, J, SLOT, NODE_ID, NEFF
+          REAL(KIND=WP) :: DIST2, K_NODE, WEIGHT
+          REAL(KIND=WP) :: K_SUM, WEIGHT_SUM
+          REAL(KIND=WP) :: BEST_DIST2(N_PICK), BEST_K(N_PICK)
+
+          Q1NP_CONTACT_NEAREST_SECONDARY_STIFFNESS = ZERO
+          BEST_DIST2(1:N_PICK) = HUGE(ONE)
+          BEST_K(1:N_PICK) = ZERO
+          NEFF = MIN(NSN_EFF, SIZE(NSV), SIZE(STFNS))
+
+          DO I = 1, NEFF
+            NODE_ID = NSV(I)
+            IF (NODE_ID <= 0 .OR. NODE_ID > NUMNOD) CYCLE
+            K_NODE = ABS(STFNS(I))
+            IF (K_NODE <= EPS_STIFF) CYCLE
+
+            DIST2 = (X_COORDS(1, NODE_ID) - X_PAIR(1))**2 + &
+     &              (X_COORDS(2, NODE_ID) - X_PAIR(2))**2 + &
+     &              (X_COORDS(3, NODE_ID) - X_PAIR(3))**2
+            IF (DIST2 <= EPS_DIST2) THEN
+              Q1NP_CONTACT_NEAREST_SECONDARY_STIFFNESS = K_NODE
+              RETURN
+            END IF
+
+            DO SLOT = 1, N_PICK
+              IF (DIST2 < BEST_DIST2(SLOT)) THEN
+                DO J = N_PICK, SLOT + 1, -1
+                  BEST_DIST2(J) = BEST_DIST2(J - 1)
+                  BEST_K(J) = BEST_K(J - 1)
+                END DO
+                BEST_DIST2(SLOT) = DIST2
+                BEST_K(SLOT) = K_NODE
+                EXIT
+              END IF
+            END DO
+          END DO
+
+          K_SUM = ZERO
+          WEIGHT_SUM = ZERO
+          DO I = 1, N_PICK
+            IF (BEST_K(I) <= EPS_STIFF) CYCLE
+            WEIGHT = ONE / MAX(BEST_DIST2(I), EPS_DIST2)
+            K_SUM = K_SUM + WEIGHT * BEST_K(I)
+            WEIGHT_SUM = WEIGHT_SUM + WEIGHT
+          END DO
+
+          IF (WEIGHT_SUM > EPS_STIFF) THEN
+            Q1NP_CONTACT_NEAREST_SECONDARY_STIFFNESS = K_SUM / WEIGHT_SUM
+          END IF
+        END FUNCTION Q1NP_CONTACT_NEAREST_SECONDARY_STIFFNESS
+
+!=======================================================================
+!   Q1NP_CONTACT_NEAREST_PRIMARY_STIFFNESS
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_CONTACT_NEAREST_PRIMARY_STIFFNESS( &
+     &      X_PAIR, IRECTM, STFM, NRTM_EFF, X_COORDS, NUMNOD)
+          REAL(KIND=WP), INTENT(IN) :: X_PAIR(3)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          REAL(KIND=WP), INTENT(IN) :: STFM(:)
+          INTEGER, INTENT(IN) :: NRTM_EFF, NUMNOD
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+
+          INTEGER :: SEG, BEST_SEG, NEFF
+          REAL(KIND=WP) :: DIST2, BEST_DIST2
+          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+
+          Q1NP_CONTACT_NEAREST_PRIMARY_STIFFNESS = ZERO
+          BEST_SEG = 0
+          BEST_DIST2 = HUGE(ONE)
+          NEFF = MIN(NRTM_EFF, SIZE(STFM), SIZE(IRECTM) / 4)
+
+          DO SEG = 1, NEFF
+            IF (ABS(STFM(SEG)) <= EPS_STIFF) CYCLE
+            DIST2 = Q1NP_CONTACT_PRIMARY_SEGMENT_DISTANCE2( &
+     &        X_PAIR, IRECTM, SEG, X_COORDS, NUMNOD)
+            IF (DIST2 < BEST_DIST2) THEN
+              BEST_DIST2 = DIST2
+              BEST_SEG = SEG
+            END IF
+          END DO
+
+          IF (BEST_SEG > 0) THEN
+            Q1NP_CONTACT_NEAREST_PRIMARY_STIFFNESS = ABS(STFM(BEST_SEG))
+          END IF
+        END FUNCTION Q1NP_CONTACT_NEAREST_PRIMARY_STIFFNESS
+
+!=======================================================================
+!   Q1NP_CONTACT_PRIMARY_SEGMENT_DISTANCE2
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_CONTACT_PRIMARY_SEGMENT_DISTANCE2( &
+     &      X_PAIR, IRECTM, SEG, X_COORDS, NUMNOD)
+          REAL(KIND=WP), INTENT(IN) :: X_PAIR(3)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: SEG, NUMNOD
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+
+          INTEGER :: BASE, IXI, IETA, K, NODE_ID
+          REAL(KIND=WP) :: XI, ETA, DIST2
+          REAL(KIND=WP) :: WEIGHT(4), X_SEG(3)
+
+          Q1NP_CONTACT_PRIMARY_SEGMENT_DISTANCE2 = HUGE(ONE)
+          BASE = 4 * (SEG - 1)
+          IF (SEG <= 0 .OR. BASE + 4 > SIZE(IRECTM)) RETURN
+
+          DO K = 1, 4
+            NODE_ID = IRECTM(BASE + K)
+            IF (NODE_ID <= 0 .OR. NODE_ID > NUMNOD) RETURN
+          END DO
+
+!         A small bilinear sample avoids choosing a neighboring large segment
+!         only by center distance while keeping the lookup deterministic.
+          DO IETA = 0, 2
+            ETA = -ONE + REAL(IETA, WP)
+            DO IXI = 0, 2
+              XI = -ONE + REAL(IXI, WP)
+              CALL Q1NP_CONTACT_BILINEAR_WEIGHTS(XI, ETA, WEIGHT)
+
+              X_SEG(1:3) = ZERO
+              DO K = 1, 4
+                NODE_ID = IRECTM(BASE + K)
+                X_SEG(1:3) = X_SEG(1:3) + WEIGHT(K) * X_COORDS(1:3, NODE_ID)
+              END DO
+
+              DIST2 = (X_SEG(1) - X_PAIR(1))**2 + &
+     &                (X_SEG(2) - X_PAIR(2))**2 + &
+     &                (X_SEG(3) - X_PAIR(3))**2
+              Q1NP_CONTACT_PRIMARY_SEGMENT_DISTANCE2 = &
+     &          MIN(Q1NP_CONTACT_PRIMARY_SEGMENT_DISTANCE2, DIST2)
+            END DO
+          END DO
+        END FUNCTION Q1NP_CONTACT_PRIMARY_SEGMENT_DISTANCE2
+
+!=======================================================================
+!   Q1NP_CONTACT_ASSIGN_PAIR_STIFFNESS
+!   Assign the pair stiffness based on the primary and secondary side stiffnesses.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_ASSIGN_PAIR_STIFFNESS( &
+     &      ELEM_A, K_A_PRIMARY, K_A_SECONDARY, &
+     &      ELEM_B, K_B_PRIMARY, K_B_SECONDARY, &
+     &      KQ1NP_TAB, K_PRIMARY, K_SECONDARY)
+          INTEGER, INTENT(IN) :: ELEM_A, ELEM_B
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          REAL(KIND=WP), INTENT(IN) :: K_A_PRIMARY, K_A_SECONDARY
+          REAL(KIND=WP), INTENT(IN) :: K_B_PRIMARY, K_B_SECONDARY
+          REAL(KIND=WP), INTENT(OUT) :: K_PRIMARY, K_SECONDARY
+
+          INTEGER :: KNOT_A, KNOT_B
+          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+
+          K_PRIMARY = ZERO
+          K_SECONDARY = ZERO
+          KNOT_A = Q1NP_CONTACT_KNOT_SET_ID(ELEM_A, KQ1NP_TAB)
+          KNOT_B = Q1NP_CONTACT_KNOT_SET_ID(ELEM_B, KQ1NP_TAB)
+
+!         Prefer the historical prototype mapping when both data maps are valid.
+          IF (KNOT_A == 1 .AND. KNOT_B == 2 .AND. &
+     &        K_A_SECONDARY > EPS_STIFF .AND. K_B_PRIMARY > EPS_STIFF) THEN
+            K_SECONDARY = K_A_SECONDARY
+            K_PRIMARY = K_B_PRIMARY
+          ELSEIF (KNOT_A == 2 .AND. KNOT_B == 1 .AND. &
+     &            K_A_PRIMARY > EPS_STIFF .AND. K_B_SECONDARY > EPS_STIFF) THEN
+            K_PRIMARY = K_A_PRIMARY
+            K_SECONDARY = K_B_SECONDARY
+          ELSEIF (K_A_SECONDARY > EPS_STIFF .AND. K_B_PRIMARY > EPS_STIFF) THEN
+            K_SECONDARY = K_A_SECONDARY
+            K_PRIMARY = K_B_PRIMARY
+          ELSEIF (K_A_PRIMARY > EPS_STIFF .AND. K_B_SECONDARY > EPS_STIFF) THEN
+            K_PRIMARY = K_A_PRIMARY
+            K_SECONDARY = K_B_SECONDARY
+          END IF
+        END SUBROUTINE Q1NP_CONTACT_ASSIGN_PAIR_STIFFNESS
+
+!=======================================================================
+!   Q1NP_CONTACT_FIND_PRIMARY_SEGMENT
+!=======================================================================
+        INTEGER FUNCTION Q1NP_CONTACT_FIND_PRIMARY_SEGMENT( &
+     &      ELEM_IDX, KQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, NRTM_EFF, SEG_GUESS)
+          INTEGER, INTENT(IN) :: ELEM_IDX, NRTM_EFF, SEG_GUESS
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+
+          INTEGER :: SEG
+          INTEGER :: NODE_IDS(4)
+          LOGICAL :: HAS_NODES
+
+          Q1NP_CONTACT_FIND_PRIMARY_SEGMENT = 0
+          CALL Q1NP_CONTACT_BULK_NODES( &
+     &      ELEM_IDX, KQ1NP_TAB, IQ1NP_BULK_TAB, NODE_IDS, HAS_NODES)
+          IF (.NOT. HAS_NODES) RETURN
+
+          IF (SEG_GUESS > 0 .AND. SEG_GUESS <= NRTM_EFF) THEN
+            IF (Q1NP_CONTACT_SEGMENT_MATCHES(NODE_IDS, IRECTM, SEG_GUESS)) THEN
+              Q1NP_CONTACT_FIND_PRIMARY_SEGMENT = SEG_GUESS
+              RETURN
+            END IF
+          END IF
+
+          DO SEG = 1, NRTM_EFF
+            IF (SEG == SEG_GUESS) CYCLE
+            IF (Q1NP_CONTACT_SEGMENT_MATCHES(NODE_IDS, IRECTM, SEG)) THEN
+              Q1NP_CONTACT_FIND_PRIMARY_SEGMENT = SEG
+              RETURN
+            END IF
+          END DO
+        END FUNCTION Q1NP_CONTACT_FIND_PRIMARY_SEGMENT
+
+!=======================================================================
+!   Q1NP_CONTACT_SEGMENT_MATCHES
+!=======================================================================
+        LOGICAL FUNCTION Q1NP_CONTACT_SEGMENT_MATCHES(NODE_IDS, IRECTM, SEG)
+          INTEGER, INTENT(IN) :: NODE_IDS(4)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: SEG
+
+          INTEGER :: I, J, BASE
+          LOGICAL :: FOUND
+
+          Q1NP_CONTACT_SEGMENT_MATCHES = .FALSE.
+          BASE = 4 * (SEG - 1)
+          IF (SEG <= 0 .OR. BASE + 4 > SIZE(IRECTM)) RETURN
+
+          DO I = 1, 4
+            IF (NODE_IDS(I) <= 0) RETURN
+            FOUND = .FALSE.
+            DO J = 1, 4
+              IF (NODE_IDS(I) == IRECTM(BASE + J)) THEN
+                FOUND = .TRUE.
+                EXIT
+              END IF
+            END DO
+            IF (.NOT. FOUND) RETURN
+          END DO
+          Q1NP_CONTACT_SEGMENT_MATCHES = .TRUE.
+        END FUNCTION Q1NP_CONTACT_SEGMENT_MATCHES
+
+!=======================================================================
+!   Q1NP_CONTACT_BULK_NODES
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_BULK_NODES( &
+     &      ELEM_IDX, KQ1NP_TAB, IQ1NP_BULK_TAB, NODE_IDS, HAS_NODES)
+          INTEGER, INTENT(IN) :: ELEM_IDX
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(OUT) :: NODE_IDS(4)
+          LOGICAL, INTENT(OUT) :: HAS_NODES
+
+          INTEGER :: OFF_BULK
+
+          NODE_IDS(:) = 0
+          HAS_NODES = .FALSE.
+          IF (ELEM_IDX <= 0 .OR. ELEM_IDX > SIZE(KQ1NP_TAB, 2)) RETURN
+
+          OFF_BULK = KQ1NP_TAB(KQ1NP_BULK_OFF, ELEM_IDX)
+          IF (OFF_BULK <= 0 .OR. OFF_BULK + 3 > SIZE(IQ1NP_BULK_TAB)) RETURN
+
+          NODE_IDS(1:4) = IQ1NP_BULK_TAB(OFF_BULK:OFF_BULK+3)
+          HAS_NODES = ALL(NODE_IDS(1:4) > 0)
+        END SUBROUTINE Q1NP_CONTACT_BULK_NODES
+
+!=======================================================================
+!   Q1NP_CONTACT_BILINEAR_WEIGHTS
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_BILINEAR_WEIGHTS(XI, ETA, WEIGHT)
+          REAL(KIND=WP), INTENT(IN) :: XI, ETA
+          REAL(KIND=WP), INTENT(OUT) :: WEIGHT(4)
+
+          REAL(KIND=WP) :: XI_CLAMP, ETA_CLAMP, WSUM
+
+          XI_CLAMP = MAX(-ONE, MIN(ONE, XI))
+          ETA_CLAMP = MAX(-ONE, MIN(ONE, ETA))
+
+          WEIGHT(1) = 0.25_WP * (ONE - XI_CLAMP) * (ONE - ETA_CLAMP)
+          WEIGHT(2) = 0.25_WP * (ONE + XI_CLAMP) * (ONE - ETA_CLAMP)
+          WEIGHT(3) = 0.25_WP * (ONE + XI_CLAMP) * (ONE + ETA_CLAMP)
+          WEIGHT(4) = 0.25_WP * (ONE - XI_CLAMP) * (ONE + ETA_CLAMP)
+          WEIGHT(1:4) = MAX(ZERO, WEIGHT(1:4))
+
+          WSUM = SUM(WEIGHT(1:4))
+          IF (WSUM > ZERO) THEN
+            WEIGHT(1:4) = WEIGHT(1:4) / WSUM
+          END IF
+        END SUBROUTINE Q1NP_CONTACT_BILINEAR_WEIGHTS
+
+!=======================================================================
+!   Q1NP_GAUSS
+!
+!   Return the Gauss-Legendre abscissa for sample point IGP out of NGP.
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_GAUSS(IGP, NGP)
+          INTEGER, INTENT(IN) :: IGP, NGP
+
+          SELECT CASE (NGP)
+          CASE (1)
+            Q1NP_GAUSS = ZERO
+          CASE (2)
+            Q1NP_GAUSS = MERGE( &
+     &        -ONE / SQRT(THREE), ONE / SQRT(THREE), IGP == 1)
+          CASE (3)
+            IF (IGP == 1) THEN
+              Q1NP_GAUSS = -SQRT(3.0_WP / 5.0_WP)
+            ELSEIF (IGP == 2) THEN
+              Q1NP_GAUSS = ZERO
+            ELSE
+              Q1NP_GAUSS =  SQRT(3.0_WP / 5.0_WP)
+            END IF
+          CASE DEFAULT
+            Q1NP_GAUSS = -ONE + TWO * &
+     &        (REAL(IGP, WP) - 0.5_WP) / REAL(NGP, WP)
+          END SELECT
+        END FUNCTION Q1NP_GAUSS
+
+!=======================================================================
+!   Q1NP_CONTACT_KNOT_SET_ID
+!=======================================================================
+        INTEGER FUNCTION Q1NP_CONTACT_KNOT_SET_ID(ELEM_IDX, KQ1NP_TAB)
+          INTEGER, INTENT(IN) :: ELEM_IDX
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+
+          Q1NP_CONTACT_KNOT_SET_ID = 0
+          IF (ELEM_IDX <= 0 .OR. ELEM_IDX > SIZE(KQ1NP_TAB, 2)) RETURN
+          IF (SIZE(KQ1NP_TAB, 1) < KQ1NP_KNOT_SET) RETURN
+          Q1NP_CONTACT_KNOT_SET_ID = KQ1NP_TAB(KQ1NP_KNOT_SET, ELEM_IDX)
+        END FUNCTION Q1NP_CONTACT_KNOT_SET_ID
+
+!=======================================================================
+!   Q1NP_CONTACT_STIFFNESS
+!=======================================================================
+        REAL(KIND=WP) FUNCTION Q1NP_CONTACT_STIFFNESS( &
+     &      K_PRIMARY, K_SECONDARY, IGSTI, KMIN, KMAX)
+          REAL(KIND=WP), INTENT(IN) :: K_PRIMARY, K_SECONDARY
+          REAL(KIND=WP), INTENT(IN) :: KMIN, KMAX
+          INTEGER, INTENT(IN) :: IGSTI
+          REAL(KIND=WP), PARAMETER :: EPS_DEN = 1.0E-30_WP
+
+          SELECT CASE (IGSTI)
+          CASE (:1)
+            Q1NP_CONTACT_STIFFNESS = K_PRIMARY * ABS(K_SECONDARY)
+          CASE (2)
+            Q1NP_CONTACT_STIFFNESS = MAX(KMIN, MIN( &
+     &        0.5_WP * (K_PRIMARY + ABS(K_SECONDARY)), KMAX))
+          CASE (3)
+            Q1NP_CONTACT_STIFFNESS = MAX(KMIN, MIN( &
+     &        MAX(K_PRIMARY, ABS(K_SECONDARY)), KMAX))
+          CASE (4)
+            Q1NP_CONTACT_STIFFNESS = MAX(KMIN, MIN( &
+     &        MIN(K_PRIMARY, ABS(K_SECONDARY)), KMAX))
+          CASE (5)
+            Q1NP_CONTACT_STIFFNESS = MAX(KMIN, MIN( &
+     &        K_PRIMARY * ABS(K_SECONDARY) / &
+     &        MAX(EPS_DEN, K_PRIMARY + ABS(K_SECONDARY)), KMAX))
+          CASE DEFAULT
+            Q1NP_CONTACT_STIFFNESS = K_PRIMARY * ABS(K_SECONDARY)
+          END SELECT
+        END FUNCTION Q1NP_CONTACT_STIFFNESS
 
 !=======================================================================
 !   Q1NP_CONTACT_EXTRACT_ELEM_DATA
 !
 !   Helper: extract element metadata, control-point IDs, and knot
-!   vectors for a given Q1NP element index.  The caller must
-!   DEALLOCATE U_KNOT_LOCAL and V_KNOT_LOCAL after use.
+!   vectors for a given Q1NP element index.  The caller provides
+!   pre-allocated workspace arrays U_KNOT_OUT / V_KNOT_OUT that
+!   must be large enough (use Q1NP_CONTACT_MAX_KNOT_LEN to size).
+!   U_LEN_OUT / V_LEN_OUT return the number of entries written.
 !=======================================================================
         SUBROUTINE Q1NP_CONTACT_EXTRACT_ELEM_DATA( &
      &      ELEM_IDX, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
      &      P_OUT, Q_OUT, NCTRL_OUT, &
      &      ELEM_U_IDX_OUT, ELEM_V_IDX_OUT, &
-     &      CTRL_IDS_OUT, U_KNOT_OUT, V_KNOT_OUT)
+     &      CTRL_IDS_OUT, U_KNOT_OUT, V_KNOT_OUT, &
+     &      U_LEN_OUT, V_LEN_OUT)
           INTEGER, INTENT(IN) :: ELEM_IDX
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
           INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
@@ -1018,22 +1611,23 @@
           INTEGER, INTENT(OUT) :: ELEM_U_IDX_OUT, ELEM_V_IDX_OUT
           INTEGER, PARAMETER :: MAX_CTRL = 50
           INTEGER, INTENT(OUT) :: CTRL_IDS_OUT(MAX_CTRL)
-          REAL(KIND=WP), ALLOCATABLE, INTENT(OUT) :: U_KNOT_OUT(:)
-          REAL(KIND=WP), ALLOCATABLE, INTENT(OUT) :: V_KNOT_OUT(:)
+          REAL(KIND=WP), INTENT(OUT) :: U_KNOT_OUT(:)
+          REAL(KIND=WP), INTENT(OUT) :: V_KNOT_OUT(:)
+          INTEGER, INTENT(OUT) :: U_LEN_OUT, V_LEN_OUT
 
           INTEGER :: CP_OFFSET, KNOT_SET_ID
-          INTEGER :: NX_CUR, NY_CUR, U_LEN, V_LEN, IPT
+          INTEGER :: NX_CUR, NY_CUR, IPT
 
-          P_OUT          = KQ1NP_TAB(8, ELEM_IDX)
-          Q_OUT          = KQ1NP_TAB(9, ELEM_IDX)
-          NCTRL_OUT      = KQ1NP_TAB(3, ELEM_IDX)
-          CP_OFFSET      = KQ1NP_TAB(4, ELEM_IDX)
-          ELEM_U_IDX_OUT = KQ1NP_TAB(6, ELEM_IDX)
-          ELEM_V_IDX_OUT = KQ1NP_TAB(7, ELEM_IDX)
-          KNOT_SET_ID    = KQ1NP_TAB(15, ELEM_IDX)
+          P_OUT          = KQ1NP_TAB(KQ1NP_P, ELEM_IDX)
+          Q_OUT          = KQ1NP_TAB(KQ1NP_Q, ELEM_IDX)
+          NCTRL_OUT      = KQ1NP_TAB(KQ1NP_NCTRL, ELEM_IDX)
+          CP_OFFSET      = KQ1NP_TAB(KQ1NP_CP_OFF, ELEM_IDX)
+          ELEM_U_IDX_OUT = KQ1NP_TAB(KQ1NP_ELEM_U, ELEM_IDX)
+          ELEM_V_IDX_OUT = KQ1NP_TAB(KQ1NP_ELEM_V, ELEM_IDX)
+          KNOT_SET_ID    = KQ1NP_TAB(KQ1NP_KNOT_SET, ELEM_IDX)
 
-          NX_CUR = KQ1NP_TAB(12, ELEM_IDX)
-          NY_CUR = KQ1NP_TAB(13, ELEM_IDX)
+          NX_CUR = KQ1NP_TAB(KQ1NP_NX, ELEM_IDX)
+          NY_CUR = KQ1NP_TAB(KQ1NP_NY, ELEM_IDX)
           IF (NX_CUR <= 0 .OR. NY_CUR <= 0) THEN
             IF (Q1NP_NKNOT_SETS_G > 0 .AND. &
      &          KNOT_SET_ID > 0 .AND. &
@@ -1046,23 +1640,23 @@
             END IF
           END IF
 
-          U_LEN = NX_CUR + 2*P_OUT + 1
-          V_LEN = NY_CUR + 2*Q_OUT + 1
-          ALLOCATE(U_KNOT_OUT(U_LEN), V_KNOT_OUT(V_LEN))
+          U_LEN_OUT = NX_CUR + 2*P_OUT + 1
+          V_LEN_OUT = NY_CUR + 2*Q_OUT + 1
 
           IF (Q1NP_NKNOT_SETS_G > 0 .AND. &
      &        KNOT_SET_ID > 0 .AND. &
      &        KNOT_SET_ID <= Q1NP_NKNOT_SETS_G .AND. &
      &        ALLOCATED(Q1NP_KTAB_OFF_G)) THEN
-            U_KNOT_OUT(1:U_LEN) = &
+            U_KNOT_OUT(1:U_LEN_OUT) = &
      &          Q1NP_KTAB(Q1NP_KTAB_OFF_G(KNOT_SET_ID) : &
-     &                    Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN - 1)
-            V_KNOT_OUT(1:V_LEN) = &
-     &          Q1NP_KTAB(Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN : &
-     &                    Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN + V_LEN - 1)
+     &                    Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN_OUT - 1)
+            V_KNOT_OUT(1:V_LEN_OUT) = &
+     &          Q1NP_KTAB(Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN_OUT : &
+     &                    Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN_OUT + V_LEN_OUT - 1)
           ELSE
-            U_KNOT_OUT(1:U_LEN) = Q1NP_KTAB(1:U_LEN)
-            V_KNOT_OUT(1:V_LEN) = Q1NP_KTAB(U_LEN+1:U_LEN+V_LEN)
+            U_KNOT_OUT(1:U_LEN_OUT) = Q1NP_KTAB(1:U_LEN_OUT)
+            V_KNOT_OUT(1:V_LEN_OUT) = &
+     &          Q1NP_KTAB(U_LEN_OUT+1:U_LEN_OUT+V_LEN_OUT)
           END IF
 
           DO IPT = 1, MIN(NCTRL_OUT, MAX_CTRL)
@@ -1070,6 +1664,50 @@
           END DO
 
         END SUBROUTINE Q1NP_CONTACT_EXTRACT_ELEM_DATA
+
+!=======================================================================
+!   Q1NP_CONTACT_MAX_KNOT_LEN
+!
+!   Scan KQ1NP_TAB to find the maximum knot vector length in U and V
+!   across all elements. Used to size pre-allocated workspace arrays.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_MAX_KNOT_LEN( &
+     &      KQ1NP_TAB, NUMELQ1NP, U_MAX_OUT, V_MAX_OUT)
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          INTEGER, INTENT(IN) :: NUMELQ1NP
+          INTEGER, INTENT(OUT) :: U_MAX_OUT, V_MAX_OUT
+
+          INTEGER :: IEL, P_CUR, Q_CUR, NX_CUR, NY_CUR
+          INTEGER :: KNOT_SET_ID, U_LEN, V_LEN
+
+          U_MAX_OUT = 1
+          V_MAX_OUT = 1
+
+          DO IEL = 1, NUMELQ1NP
+            P_CUR       = KQ1NP_TAB(KQ1NP_P, IEL)
+            Q_CUR       = KQ1NP_TAB(KQ1NP_Q, IEL)
+            KNOT_SET_ID = KQ1NP_TAB(KQ1NP_KNOT_SET, IEL)
+            NX_CUR      = KQ1NP_TAB(KQ1NP_NX, IEL)
+            NY_CUR      = KQ1NP_TAB(KQ1NP_NY, IEL)
+
+            IF (NX_CUR <= 0 .OR. NY_CUR <= 0) THEN
+              IF (Q1NP_NKNOT_SETS_G > 0 .AND. &
+     &            KNOT_SET_ID > 0 .AND. &
+     &            KNOT_SET_ID <= Q1NP_NKNOT_SETS_G) THEN
+                NX_CUR = Q1NP_NX_SET_G(KNOT_SET_ID)
+                NY_CUR = Q1NP_NY_SET_G(KNOT_SET_ID)
+              ELSE
+                NX_CUR = Q1NP_NX_G
+                NY_CUR = Q1NP_NY_G
+              END IF
+            END IF
+
+            U_LEN = NX_CUR + 2*P_CUR + 1
+            V_LEN = NY_CUR + 2*Q_CUR + 1
+            IF (U_LEN > U_MAX_OUT) U_MAX_OUT = U_LEN
+            IF (V_LEN > V_MAX_OUT) V_MAX_OUT = V_LEN
+          END DO
+        END SUBROUTINE Q1NP_CONTACT_MAX_KNOT_LEN
 
 !=======================================================================
 !   Q1NP_CONTACT_PROJECT_POINT_NEWTON
@@ -1088,7 +1726,8 @@
      &      XI_SEED, ETA_SEED, &
      &      XI_OUT, ETA_OUT, XYZ_PROJ, PROJ_DIST, &
      &      SIGNED_PENETRATION_OUT, NORMAL_OUT, &
-     &      RESIDUAL_OUT, N_ITER_OUT, VALID)
+     &      RESIDUAL_OUT, N_ITER_OUT, VALID, &
+     &      U_KNOT_WS, V_KNOT_WS)
           REAL(KIND=WP), INTENT(IN)  :: X_SRC(3)
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
           INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
@@ -1103,17 +1742,16 @@
           REAL(KIND=WP), INTENT(OUT) :: RESIDUAL_OUT
           INTEGER, INTENT(OUT) :: N_ITER_OUT
           LOGICAL, INTENT(OUT) :: VALID
+          REAL(KIND=WP), INTENT(INOUT) :: U_KNOT_WS(:), V_KNOT_WS(:)
 
           INTEGER, PARAMETER :: MAX_ITER = 5
           REAL(KIND=WP), PARAMETER :: NEWTON_TOL = 1.0E-10_WP
           INTEGER, PARAMETER :: MAX_CTRL = 50
 
-          INTEGER :: ITER, KNOT_SET_ID
-          INTEGER :: P_CUR, Q_CUR, NCTRL, CP_OFFSET
+          INTEGER :: ITER, U_LEN, V_LEN
+          INTEGER :: P_CUR, Q_CUR, NCTRL
           INTEGER :: ELEM_U_IDX, ELEM_V_IDX
-          INTEGER :: NX_CUR, NY_CUR, U_LEN, V_LEN, IPT
           INTEGER :: CTRL_IDS(MAX_CTRL)
-          REAL(KIND=WP), ALLOCATABLE :: U_KNOT_LOCAL(:), V_KNOT_LOCAL(:)
           REAL(KIND=WP) :: XI, ETA
           REAL(KIND=WP) :: S(3), SU(3), SV(3), DIFF(3)
           REAL(KIND=WP) :: NORMAL(3), NORM_N
@@ -1123,51 +1761,10 @@
 
           VALID = .FALSE.
 
-!         Extract element metadata
-          P_CUR      = KQ1NP_TAB(8, ELEM_IDX)
-          Q_CUR      = KQ1NP_TAB(9, ELEM_IDX)
-          NCTRL      = KQ1NP_TAB(3, ELEM_IDX)
-          CP_OFFSET  = KQ1NP_TAB(4, ELEM_IDX)
-          ELEM_U_IDX = KQ1NP_TAB(6, ELEM_IDX)
-          ELEM_V_IDX = KQ1NP_TAB(7, ELEM_IDX)
-          KNOT_SET_ID = KQ1NP_TAB(15, ELEM_IDX)
-
-          NX_CUR = KQ1NP_TAB(12, ELEM_IDX)
-          NY_CUR = KQ1NP_TAB(13, ELEM_IDX)
-          IF (NX_CUR <= 0 .OR. NY_CUR <= 0) THEN
-            IF (Q1NP_NKNOT_SETS_G > 0 .AND. &
-     &          KNOT_SET_ID > 0 .AND. &
-     &          KNOT_SET_ID <= Q1NP_NKNOT_SETS_G) THEN
-              NX_CUR = Q1NP_NX_SET_G(KNOT_SET_ID)
-              NY_CUR = Q1NP_NY_SET_G(KNOT_SET_ID)
-            ELSE
-              NX_CUR = Q1NP_NX_G
-              NY_CUR = Q1NP_NY_G
-            END IF
-          END IF
-
-          U_LEN = NX_CUR + 2*P_CUR + 1
-          V_LEN = NY_CUR + 2*Q_CUR + 1
-          ALLOCATE(U_KNOT_LOCAL(U_LEN), V_KNOT_LOCAL(V_LEN))
-
-          IF (Q1NP_NKNOT_SETS_G > 0 .AND. &
-     &        KNOT_SET_ID > 0 .AND. &
-     &        KNOT_SET_ID <= Q1NP_NKNOT_SETS_G .AND. &
-     &        ALLOCATED(Q1NP_KTAB_OFF_G)) THEN
-            U_KNOT_LOCAL(1:U_LEN) = &
-     &          Q1NP_KTAB(Q1NP_KTAB_OFF_G(KNOT_SET_ID) : &
-     &                    Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN - 1)
-            V_KNOT_LOCAL(1:V_LEN) = &
-     &          Q1NP_KTAB(Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN : &
-     &                    Q1NP_KTAB_OFF_G(KNOT_SET_ID) + U_LEN + V_LEN - 1)
-          ELSE
-            U_KNOT_LOCAL(1:U_LEN) = Q1NP_KTAB(1:U_LEN)
-            V_KNOT_LOCAL(1:V_LEN) = Q1NP_KTAB(U_LEN+1:U_LEN+V_LEN)
-          END IF
-
-          DO IPT = 1, MIN(NCTRL, MAX_CTRL)
-            CTRL_IDS(IPT) = IQ1NP_TAB(CP_OFFSET + IPT - 1)
-          END DO
+          CALL Q1NP_CONTACT_EXTRACT_ELEM_DATA( &
+     &      ELEM_IDX, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
+     &      P_CUR, Q_CUR, NCTRL, ELEM_U_IDX, ELEM_V_IDX, &
+     &      CTRL_IDS, U_KNOT_WS, V_KNOT_WS, U_LEN, V_LEN)
 
           XI  = XI_SEED
           ETA = ETA_SEED
@@ -1176,7 +1773,7 @@
             CALL Q1NP_EVALUATE_NURBS_TOP_SURFACE_POINT_AND_DERIVS( &
      &          XI, ETA, P_CUR, Q_CUR, &
      &          ELEM_U_IDX, ELEM_V_IDX, &
-     &          U_KNOT_LOCAL, V_KNOT_LOCAL, &
+     &          U_KNOT_WS(1:U_LEN), V_KNOT_WS(1:V_LEN), &
      &          MIN(NCTRL, MAX_CTRL), CTRL_IDS, &
      &          X_COORDS, NUMNOD, S, SU, SV)
 
@@ -1216,7 +1813,7 @@
           CALL Q1NP_EVALUATE_NURBS_TOP_SURFACE_POINT_AND_DERIVS( &
      &        XI, ETA, P_CUR, Q_CUR, &
      &        ELEM_U_IDX, ELEM_V_IDX, &
-     &        U_KNOT_LOCAL, V_KNOT_LOCAL, &
+     &        U_KNOT_WS(1:U_LEN), V_KNOT_WS(1:V_LEN), &
      &        MIN(NCTRL, MAX_CTRL), CTRL_IDS, &
      &        X_COORDS, NUMNOD, S, SU, SV)
 
@@ -1248,8 +1845,6 @@
 !         Converged = residual small AND parametric coords inside domain
           VALID = (RES_NORM < NEWTON_TOL * 1.0E3_WP) .AND. &
      &            (ABS(XI) <= ONE) .AND. (ABS(ETA) <= ONE)
-
-          DEALLOCATE(U_KNOT_LOCAL, V_KNOT_LOCAL)
 
         END SUBROUTINE Q1NP_CONTACT_PROJECT_POINT_NEWTON
 

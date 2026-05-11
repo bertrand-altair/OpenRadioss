@@ -243,6 +243,8 @@ C
           NI = CAND_N(I)
           IF(NI<=NSN)THEN
             STIF(I)=STF(L)*ABS(STFN(NI))
+            ! print '(A,I0,2(" ",I0),3(" ",ES12.5E2))', 'STIF(I)',I,NI,L,STIF(I),STF(L),ABS(STFN(NI))
+       
           ELSE
             NN = NI - NSN
             STIF(I)=STF(L)*ABS(STIFI(NIN)%P(NN))

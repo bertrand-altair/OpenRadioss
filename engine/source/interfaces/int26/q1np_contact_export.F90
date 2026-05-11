@@ -34,8 +34,7 @@
         IMPLICIT NONE
         PRIVATE
 
-        CHARACTER(LEN=*), PARAMETER :: Q1NP_CONTACT_CSV_FILE = &
-     &    'q1np_contact_forces.csv'
+        CHARACTER(LEN=*), PARAMETER :: Q1NP_CONTACT_CSV_FILE = 'q1np_contact_forces.csv'
 
         REAL(KIND=WP), ALLOCATABLE, SAVE :: Q1NP_CONTACT_FORCE_SUM(:,:)
         INTEGER, ALLOCATABLE, SAVE :: Q1NP_CONTACT_PAIR_COUNT(:)

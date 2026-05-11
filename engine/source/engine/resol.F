@@ -728,6 +728,7 @@ C-----------------------------------------------
               USE OUTPUT_MOD
               USE Q1NP_RESTART_MOD, ONLY : NUMELQ1NP_G, Q1NP_NKNOT_SETS_G
               USE RESTMOD, ONLY : KQ1NP_TAB
+              USE STS_VOXEL_DRIVER_MOD, ONLY : STS_VOXEL_DRIVER_DATA_READY
               USE Q1NP_CONTACT_EXPORT_MOD, ONLY : Q1NP_CONTACT_EXPORT_FLUSH
               USE INTERFACES_MOD
               USE DEBUG_CHKSM_MOD ,  ONLY : SPMD_FLUSH_ACCEL
@@ -1371,6 +1372,10 @@ C NEW VARIABLES
               my_real, allocatable :: SECONDARY_SEG_MAT(:,:)
               LOGICAL :: STS_ACTIVE
               LOGICAL, PARAMETER :: DEBUG_SWITCH = .FALSE.
+              LOGICAL :: CFCSV_STS, CFCSV_NTS, CFCSV_Q1, CFCSV_Q1ON, CFCSV_VOX, CFCSV_EX
+              INTEGER :: CFCSV_NI, CFCSV_NT7, CFCSV_ID, CFCSV_SI, CFCSV_MI
+              INTEGER :: CFCSV_LU, CFCSV_IOA, CFCSV_IOB
+              LOGICAL, PARAMETER :: CFCSV_I7STS = .TRUE.
 C-----------------------------------------------------------------------------------
   
               type(SPH_WORK_)  :: SPH_WORK   !< working Areas for SPLISSV and SPHPREP
@@ -2002,6 +2007,52 @@ C Reinitialise sensor variables defined in /SENS/RESET
      .                         IPART(K3),IPART(K8),IPART(K1),IPART(K2),IPART(K4),
      .                         IPART(K5) ,IPART(K6),SENSORS,TT ,DT2 ,IOUT, PYTHON ,NTHREAD)
 
+              IF (ISPMD == 0) THEN
+                CFCSV_STS = .FALSE.
+                CFCSV_NTS = .FALSE.
+                CFCSV_Q1ON = NUMELQ1NP_G > 0 .AND. Q1NP_NKNOT_SETS_G >= 2 .AND.
+     .                       ALLOCATED(KQ1NP_TAB)
+                CFCSV_Q1 = CFCSV_Q1ON
+                IF (.NOT. CFCSV_Q1ON) THEN
+                  DO CFCSV_NI = 1, NINTER
+                    IF (IPARI(33, CFCSV_NI) == 1) CYCLE
+                    CFCSV_NT7 = IPARI(7, CFCSV_NI)
+                    IF (CFCSV_NT7 /= 7) CYCLE
+                    CFCSV_ID = IPARI(15, CFCSV_NI)
+                    CFCSV_VOX = STS_VOXEL_DRIVER_DATA_READY(IGRSURF, NSURF,
+     .                  CFCSV_ID, .FALSE., CFCSV_SI, CFCSV_MI)
+                    IF (CFCSV_I7STS .AND. CFCSV_VOX) CFCSV_STS = .TRUE.
+                    IF (.NOT. CFCSV_I7STS .OR. .NOT. CFCSV_VOX) CFCSV_NTS = .TRUE.
+                  ENDDO
+                ENDIF
+                IF (CFCSV_STS) THEN
+                  INQUIRE(FILE='sts_contact_forces.csv', EXIST=CFCSV_EX)
+                  IF (CFCSV_EX) THEN
+                    OPEN(NEWUNIT=CFCSV_LU, FILE='sts_contact_forces.csv',
+     .                  STATUS='OLD', IOSTAT=CFCSV_IOA)
+                    IF (CFCSV_IOA == 0)
+     .                CLOSE(UNIT=CFCSV_LU, STATUS='DELETE', IOSTAT=CFCSV_IOB)
+                  ENDIF
+                ENDIF
+                IF (CFCSV_NTS) THEN
+                  INQUIRE(FILE='nts_contact_forces.csv', EXIST=CFCSV_EX)
+                  IF (CFCSV_EX) THEN
+                    OPEN(NEWUNIT=CFCSV_LU, FILE='nts_contact_forces.csv',
+     .                  STATUS='OLD', IOSTAT=CFCSV_IOA)
+                    IF (CFCSV_IOA == 0)
+     .                CLOSE(UNIT=CFCSV_LU, STATUS='DELETE', IOSTAT=CFCSV_IOB)
+                  ENDIF
+                ENDIF
+                IF (CFCSV_Q1) THEN
+                  INQUIRE(FILE='q1np_contact_forces.csv', EXIST=CFCSV_EX)
+                  IF (CFCSV_EX) THEN
+                    OPEN(NEWUNIT=CFCSV_LU, FILE='q1np_contact_forces.csv',
+     .                  STATUS='OLD', IOSTAT=CFCSV_IOA)
+                    IF (CFCSV_IOA == 0)
+     .                CLOSE(UNIT=CFCSV_LU, STATUS='DELETE', IOSTAT=CFCSV_IOB)
+                  ENDIF
+                ENDIF
+              ENDIF
 
 C========================================================================================
 C                                     PARALLEL SECTION (SMP)
@@ -9437,16 +9488,16 @@ C===============================================================================
 C========================================================================================
 C                                     NON PARALLEL SECTION (SMP)
 C========================================================================================
+                IF(ISPMD == 0 .AND. NUMELQ1NP_G > 0 .AND.
+     .           Q1NP_NKNOT_SETS_G >= 2 .AND. ALLOCATED(KQ1NP_TAB)) THEN
+                          CALL Q1NP_CONTACT_EXPORT_FLUSH(TT, KQ1NP_TAB)
+                ENDIF
 
 C---------Computation of node areas for contact area output-----
               IF(INTERFACES%PARAMETERS%INTCAREA > 0) THEN
 C  IOUTPRT for assembly synthesis, not need for spring which call *bilan each cycle
               ITHOUT = 0
               CALL TH_TIME_OUTPUT(ITHOUT, SENSORS,OUTPUT)
-              IF(ISPMD == 0 .AND. NUMELQ1NP_G > 0 .AND.
-     .           Q1NP_NKNOT_SETS_G >= 2 .AND. ALLOCATED(KQ1NP_TAB)) THEN
-                CALL Q1NP_CONTACT_EXPORT_FLUSH(TT, KQ1NP_TAB)
-              ENDIF
 
                 IF(ITHOUT > 0) THEN
                   CALL INTER_NODAL_AREAS(IXS     ,ELEMENT%SHELL%IXC     ,IXTG      ,FASOLFR   ,NODES%X          ,

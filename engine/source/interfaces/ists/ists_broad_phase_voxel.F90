@@ -52,14 +52,15 @@
         IMPLICIT NONE
         PRIVATE
 !-----------------------------------------------------------------------
-!       Tuning constants (mirroring Q1NP defaults)
+!       Tuning constants
 !-----------------------------------------------------------------------
 !       Trigger tolerance derived from the user GAP value.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_TRIGGER_FACTOR   = ONE
+        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_TRIGGER_FACTOR   = 1.0
 !       Voxel cell size = factor * trigger tolerance.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_CELL_SIZE_FACTOR = FOUR
+!       Keep broad phase conservative; narrow phase handles exact contact.
+        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_CELL_SIZE_FACTOR = 1.25_WP
 !       Search padding around master AABB.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_PADDING_FACTOR   = TWO
+        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_PADDING_FACTOR   = 1.25_WP
 !       Lower bound used when GAP is zero/too small.
         REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_GAP_FALLBACK     = 1.0E-6_WP
 !       Default number of samples per segment (4 corners + centroid).
@@ -125,8 +126,7 @@
           IF (.NOT. ALLOCATED(IGRSURF(MST_SURF_IDX)%NODES)) RETURN
 !
           GAP_EFF = MAX(STS_VOXEL_GAP_FALLBACK, ABS(GAP))
-          TRIGGER_TOL = MAX(STS_VOXEL_GAP_FALLBACK, &
-     &                      STS_VOXEL_TRIGGER_FACTOR * GAP_EFF)
+          TRIGGER_TOL = STS_VOXEL_TRIGGER_FACTOR * GAP_EFF
 !-----------------------------------------------
 !         Build sample point clouds
 !-----------------------------------------------
@@ -158,6 +158,14 @@
      &        TRIGGER_TOL, MAX_STS_SIZE_ACTUAL, &
      &        CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
      &        COUNT, OVERFLOW)
+
+!         Keep pair ordering across cycles so pair-indexed
+!         history (friction) stays aligned.
+          IF (COUNT > 1) THEN
+            CALL STS_VOXEL_SORT_PAIRS( &
+     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
+     &          COUNT, MAX_STS_SIZE_ACTUAL)
+          END IF
 !
           DEALLOCATE(PTS_S, PTS_M, SEG_OF_PT_S, SEG_OF_PT_M)
 !
@@ -501,5 +509,42 @@
           END DO
 !
         END SUBROUTINE STS_VOXEL_EMIT_PAIR
+
+!=======================================================================
+!   STS_VOXEL_SORT_PAIRS
+!=======================================================================
+        SUBROUTINE STS_VOXEL_SORT_PAIRS( &
+     &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
+     &      COUNT, MAX_STS_SIZE_ACTUAL)
+          INTEGER, INTENT(IN) :: COUNT, MAX_STS_SIZE_ACTUAL
+          INTEGER, INTENT(INOUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          REAL(KIND=WP), INTENT(INOUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
+
+          INTEGER :: I, J
+          INTEGER :: SEC_TMP(5), MST_TMP(5)
+          REAL(KIND=WP) :: XYZ_TMP(3, 8)
+
+          DO I = 2, COUNT
+            SEC_TMP(1:5) = CAND_SEC_SEG_ID(I, 1:5)
+            MST_TMP(1:5) = CAND_MST_SEG_ID(I, 1:5)
+            XYZ_TMP(1:3, 1:8) = CONT_ELEMENT(I, 1:3, 1:8)
+
+            J = I - 1
+            DO WHILE (J >= 1 .AND. ( &
+     &        CAND_MST_SEG_ID(J,1) > MST_TMP(1) .OR. &
+     &       (CAND_MST_SEG_ID(J,1) == MST_TMP(1) .AND. &
+     &        CAND_SEC_SEG_ID(J,1) > SEC_TMP(1)) ))
+              CAND_SEC_SEG_ID(J+1, 1:5) = CAND_SEC_SEG_ID(J, 1:5)
+              CAND_MST_SEG_ID(J+1, 1:5) = CAND_MST_SEG_ID(J, 1:5)
+              CONT_ELEMENT(J+1, 1:3, 1:8) = CONT_ELEMENT(J, 1:3, 1:8)
+              J = J - 1
+            END DO
+
+            CAND_SEC_SEG_ID(J+1, 1:5) = SEC_TMP(1:5)
+            CAND_MST_SEG_ID(J+1, 1:5) = MST_TMP(1:5)
+            CONT_ELEMENT(J+1, 1:3, 1:8) = XYZ_TMP(1:3, 1:8)
+          END DO
+        END SUBROUTINE STS_VOXEL_SORT_PAIRS
 !
       END MODULE STS_BROAD_PHASE_VOXEL_MOD

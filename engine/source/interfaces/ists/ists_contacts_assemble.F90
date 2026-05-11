@@ -29,7 +29,7 @@
 !-----------------------------------------------
 !      TYPE(INTBUF_STRUCT_) INTBUF_TAB(*)
       REAL*8 CONT_ELEMENT(MAX_STS_SIZE_ACTUAL,3,8)
-      my_real STIF(MVSIZ)
+      my_real STIF(MAX_STS_SIZE_ACTUAL)
       INTEGER COUNT, OPTION, STS_INTERFACE_ID, NCYCLE_IN
       REAL*8 TIME_CUR
       INTEGER CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL,5)
@@ -109,10 +109,10 @@
         ENDDO
         XMU(1) = FRICC(MIN(I,MVSIZ)) ! Friction coefficient mu
       
-        ! Call STS_CONTACT_EVAL_PAIRwith friction calculation integrated
+        ! Call STS_CONTACT_EVAL_PAIR with friction calculation integrated.
         ! Note: STIF is used for both normal and tangential stiffness
         ! (STIF0 = STIF for now, until separate tangential stiffness is available)
-        CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF, p_load_new, IMPACT, I, &
+        CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF(I), p_load_new, IMPACT, I, &
      &                    node_stiff, OPTION, &
      &                    FRICC, XMU, IFPEN, &
      &                    p_friction, EFRICT_LOC, QFRICT, node_ids, &

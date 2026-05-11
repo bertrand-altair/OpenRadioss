@@ -33,7 +33,7 @@
 !     XUPD     : Coordinates of contact element (3,8)
 !                Nodes 1-4 are Primary (master) nodes
 !                Nodes 5-8 are Secondary (slave) nodes
-!     STIF     : Contact stiffness parameter (normal)
+!     STIF     : Pair contact stiffness parameter (normal)
 !     p        : Output contact forces (24 components) - normal + friction combined
 !     IMPACT   : Output flag indicating if penetration was detected
 !     EL_NR    : Temporary Element number (for debugging)
@@ -53,7 +53,7 @@
       INTEGER IMPACT, OPTION, EL_NR
       INTEGER node_ids(8)
       LOGICAL CALC_FRICTION
-      my_real STIF(MVSIZ)
+      my_real STIF
       real*8  p(24), p_friction(24)
       real*8  XUPD(3,8)
       real*8  node_stiff(8)
@@ -83,7 +83,6 @@
       real*8  energy
       real*8  active_area, area_weight
       real*8  stiff_accum, gap_distance, signed_distance
-      real*8  fac_min, fac_max, pair_force_mag
       real*8  N_xi(3,4), N_eta(3,4)
       real*8  norm_secondary(3), sec_t1(3), sec_t2(3)
       real*8  sec_norm_len, normal_dot
@@ -115,8 +114,6 @@
       real*8  rhoxi1_fric(3), rhoxi2_fric(3)
       real*8  wi1_fric, wi2_fric, eta1_fric, eta2_fric
       logical use_gauss_for_friction
-      real*8, parameter :: STS_PENALTY_FAC_MAX = 20.0d0
-      real*8, parameter :: STS_PENALTY_SCALE = 1000.0d0
       logical, parameter :: STS_DEBUG_PENALTY = .FALSE.
 !-----------------------------------------------
 !   I n i t i a l i z a t i o n
@@ -125,8 +122,6 @@
       PAIR_MAX_PENETRATION = 0.0D0
       ip = 2 ! Quadrature order
       pair_fric_idx = MIN(MAX(EL_NR, 1), MVSIZ)
-      fac_min = 1.0d30
-      fac_max = 0.0d0
       
       ! Calculate maximum global GP index for bounds checking
       MAX_GLOBAL_GP_LOCAL = MAX_STS_SIZE * ip * ip
@@ -289,17 +284,14 @@
           PAIR_MAX_PENETRATION = MAX(PAIR_MAX_PENETRATION, DABS(PENE))
 
           ! Calculate penalty parameter. 
-          d1 = STIF(1)
+          d1 = STIF
           IF (DABS(GAPV) .GT. EM10) THEN
             gap_distance = GAPV + PENE
             FAC = DABS(GAPV) / MAX(EM10, gap_distance)
-            FAC = MIN(FAC, STS_PENALTY_FAC_MAX)
           ELSE
             FAC = 1.0d0
           ENDIF
-          d1 = 0.5d0 * d1 * FAC * STS_PENALTY_SCALE
-          fac_min = MIN(fac_min, FAC)
-          fac_max = MAX(fac_max, FAC)
+          d1 = 0.5d0 * d1 * FAC
           stiff_accum = stiff_accum + d1 * area_weight
 
           ! Extract nodal stiffness and set penetration flag if penetration detected
@@ -497,20 +489,16 @@
 !   F i n a l   R e s u l t s
 !-----------------------------------------------
       IF (active_area .GT. 1.0d-30) THEN
-        DO i=1,24
-          pm(i) = pm(i) / active_area
-          pm_friction(i) = pm_friction(i) / active_area
-        ENDDO
-        node_stiff = stiff_accum / active_area
-        energy = energy / active_area
+!       Keep integrated forces; averaging by active area introduces large
+!       force jumps when only a subset of integration points is active.
+        node_stiff = stiff_accum
       ENDIF
 
       IF (STS_DEBUG_PENALTY .AND. IMPACT == 1) THEN
-        pair_force_mag = DSQRT(p(1)**2 + p(2)**2 + p(3)**2)
         WRITE(6,*) 'STS penalty diag: pair=', EL_NR, ', opt=', OPTION, &
-     &             ', STIF1=', STIF(1), ', pen=', PAIR_MAX_PENETRATION, &
-     &             ', fac[min,max]=', fac_min, fac_max, &
-     &             ', k=', node_stiff(1), ', scale=', STS_PENALTY_SCALE
+     &             ', STIF=', STIF, ', pen=', PAIR_MAX_PENETRATION, &
+     &             ', fac=', FAC, &
+     &             ', k=', node_stiff(1)
       ENDIF
 
       ! Set output forces
