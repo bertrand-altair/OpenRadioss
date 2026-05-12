@@ -47,7 +47,7 @@
         USE PRECISION_MOD, ONLY : WP
         USE CONSTANT_MOD , ONLY : ZERO, ONE, TWO, THREE, TEN, HALF
         USE Q1NP_RESTART_MOD
-        USE RESTMOD, ONLY : KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB
+        USE RESTMOD, ONLY : KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, Q1NP_KTAB
         USE Q1NP_CONTACT_EXPORT_MOD, ONLY : Q1NP_CONTACT_EXPORT_ACCUMULATE
         USE Q1NP_NURBS_SURFACE_EVALUATION_MOD, ONLY : &
      &      Q1NP_EVALUATE_NURBS_TOP_SURFACE_POINT, &
@@ -63,7 +63,6 @@
 ! ----------------------------------------------------------------------------------------------------------------------
 !       Broad-phase trigger tolerance (voxel-search).
 !       Runtime trigger tolerance is derived from the interface GAP value.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: Q1NP_CONTACT_VOXEL_TRIGGER_FACTOR = 1.0_WP
 !       Conservative cap for voxel-derived A-candidates stored per B point.
 !       If the local neighborhood exceeds this cap, narrow phase falls back
 !       to the original global nearest search for that B point.
@@ -82,11 +81,6 @@
 !       Temporary debug switch: if enabled, only control-point based
 !       secondary stiffness is used (no bulk/nearest fallback path).
         LOGICAL, PARAMETER :: Q1NP_CONTACT_DISABLE_SECONDARY_FALLBACK = .FALSE.
-!       Broad-phase scheduling.
-        LOGICAL, PARAMETER :: Q1NP_CONTACT_ENABLE_ADAPTIVE_SKIP = .TRUE.
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_SKIP_SCALE = 8.0_WP
-        REAL(KIND=WP), PARAMETER :: Q1NP_CONTACT_SKIP_EXPONENT = 1.5_WP
-        INTEGER, PARAMETER :: Q1NP_CONTACT_SKIP_MAX = 200
 
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   KQ1NP_TAB column indices
@@ -97,10 +91,19 @@
         INTEGER, PARAMETER :: KQ1NP_ELEM_V   = 7
         INTEGER, PARAMETER :: KQ1NP_P        = 8
         INTEGER, PARAMETER :: KQ1NP_Q        = 9
+        INTEGER, PARAMETER :: KQ1NP_IXS_IDX  = 10
         INTEGER, PARAMETER :: KQ1NP_NX       = 12
         INTEGER, PARAMETER :: KQ1NP_NY       = 13
         INTEGER, PARAMETER :: KQ1NP_BULK_OFF = 14
         INTEGER, PARAMETER :: KQ1NP_KNOT_SET = 15
+
+! ----------------------------------------------------------------------------------------------------------------------
+!       FCONT grid-node lookup
+!       Original surface FEM node IDs per Q1NP element, built once from IXS.
+! ----------------------------------------------------------------------------------------------------------------------
+        INTEGER, ALLOCATABLE, SAVE :: Q1NP_FCONT_GRID_IDS(:,:)
+        !Check if the FCONT grid-node lookup is ready
+        LOGICAL, SAVE :: Q1NP_FCONT_GRID_READY = .FALSE.
 
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Contact pair type
@@ -114,172 +117,212 @@
           INTEGER :: ELEM_B
         END TYPE Q1NP_CONTACT_PAIR
 
-        PUBLIC :: Q1NP_CONTACT_BROAD_PHASE_CHECK_PROXIMITY
+! ----------------------------------------------------------------------------------------------------------------------
+!                                            Broad-phase workspace
+!       Holds point clouds, parametric coordinates, and voxel candidate
+!       lists built by the broad phase and consumed by the narrow phase.
+! ----------------------------------------------------------------------------------------------------------------------
+        TYPE Q1NP_CONTACT_WORKSPACE
+          REAL(KIND=WP), ALLOCATABLE :: SURF_POINTS_A(:,:)
+          REAL(KIND=WP), ALLOCATABLE :: SURF_POINTS_B(:,:)
+          INTEGER, ALLOCATABLE       :: ELEM_IDS_A(:), ELEM_IDS_B(:)
+          REAL(KIND=WP), ALLOCATABLE :: XI_A(:), ETA_A(:)
+          REAL(KIND=WP), ALLOCATABLE :: XI_B(:), ETA_B(:)
+          INTEGER, ALLOCATABLE       :: CANDIDATE_IA(:,:)
+          INTEGER, ALLOCATABLE       :: CANDIDATE_COUNT(:)
+          LOGICAL, ALLOCATABLE       :: CANDIDATE_OVERFLOW(:)
+          INTEGER :: NPTS_A = 0, NPTS_B = 0
+        END TYPE Q1NP_CONTACT_WORKSPACE
 
-!       Adaptive call-skipping state:
-!       number of future cycles to skip before running the voxel search again.
-        INTEGER, SAVE :: Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING = 0
+        PUBLIC :: Q1NP_CONTACT_PAIR
+        PUBLIC :: Q1NP_CONTACT_WORKSPACE
+        PUBLIC :: Q1NP_CONTACT_BROAD_PHASE
+        PUBLIC :: Q1NP_CONTACT_NARROW_PHASE
+        PUBLIC :: Q1NP_CONTACT_FORCE_ASSEMBLY
+        PUBLIC :: Q1NP_CONTACT_WORKSPACE_FREE
+        PUBLIC :: Q1NP_CONTACT_INIT_GRID_NODES
 
       CONTAINS
 
 !=======================================================================
-!   Q1NP_CONTACT_BROAD_PHASE_CHECK_PROXIMITY
+!   Q1NP_CONTACT_BROAD_PHASE
 !
-!   Top-level entry point from Q1NP_CONTACT_DRIVER_INT7 (Type 7 / future INT26).
-!   Builds both surface point clouds, computes minimum distance via
-!   voxel search, runs narrow-phase projection to collect penetrating
-!   pairs, computes penalty forces, and scatters them to A / STIFN.
+!   Builds both surface point clouds and runs voxel-based proximity
+!   detection. Returns the filled workspace (point clouds + candidates)
+!   and the minimum distance D_MIN for adaptive-skip scheduling.
 !=======================================================================
-        SUBROUTINE Q1NP_CONTACT_BROAD_PHASE_CHECK_PROXIMITY( &
-     &      KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, Q1NP_KTAB, X_COORDS, NUMNOD, &
-     &      NUMELQ1NP, GAP, A, STIFN, IGSTI, KMIN, KMAX, &
-     &      NSV, STFNS, NSN, STFM, NRTM, PROXIMITY_DETECTED)
-!C----------------------------------------------------------------------
-!C   D u m m y   A r g u m e n t s
-!C----------------------------------------------------------------------
+        SUBROUTINE Q1NP_CONTACT_BROAD_PHASE( &
+     &      KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, X_COORDS, NUMNOD, &
+     &      NUMELQ1NP, GAP, WS, D_MIN)
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
           INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
-          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
-          INTEGER, INTENT(IN) :: IRECTM(:)
-          INTEGER, INTENT(IN) :: NSV(:)
           REAL(KIND=WP), INTENT(IN) :: Q1NP_KTAB(:)
-          INTEGER, INTENT(IN) :: NUMNOD, NUMELQ1NP, IGSTI, NSN, NRTM
-          REAL(KIND=WP), INTENT(IN) :: GAP, KMIN, KMAX
-          REAL(KIND=WP), INTENT(IN) :: STFNS(:), STFM(:)
           REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
-          REAL(KIND=WP), INTENT(INOUT) :: A(3,NUMNOD)
-          REAL(KIND=WP), INTENT(INOUT) :: STIFN(NUMNOD)
-          LOGICAL, INTENT(OUT) :: PROXIMITY_DETECTED
-!C----------------------------------------------------------------------
-!C   L o c a l   V a r i a b l e s
-!C----------------------------------------------------------------------
-          INTEGER :: NPTS_A, NPTS_B, IDX_A, IDX_B
-          INTEGER :: MAX_PTS, N_PAIRS
-          REAL(KIND=WP) :: D_MIN, DIST_RATIO, GAP_CONTACT, TRIGGER_TOL
-          REAL(KIND=WP), ALLOCATABLE :: SURF_POINTS_A(:,:)
-          REAL(KIND=WP), ALLOCATABLE :: SURF_POINTS_B(:,:)
-          INTEGER, ALLOCATABLE :: ELEM_IDS_A(:), ELEM_IDS_B(:)
-          REAL(KIND=WP), ALLOCATABLE :: XI_A(:), ETA_A(:)
-          REAL(KIND=WP), ALLOCATABLE :: XI_B(:), ETA_B(:)
-          TYPE(Q1NP_CONTACT_PAIR), ALLOCATABLE :: PAIRS(:)
-          INTEGER, ALLOCATABLE :: CANDIDATE_IA(:,:)
-          INTEGER, ALLOCATABLE :: CANDIDATE_COUNT(:)
-          LOGICAL, ALLOCATABLE :: CANDIDATE_OVERFLOW(:)
+          INTEGER, INTENT(IN) :: NUMNOD, NUMELQ1NP
+          REAL(KIND=WP), INTENT(IN) :: GAP
+          TYPE(Q1NP_CONTACT_WORKSPACE), INTENT(OUT) :: WS
+          REAL(KIND=WP), INTENT(OUT) :: D_MIN
 
-          PROXIMITY_DETECTED = .FALSE.
-          GAP_CONTACT = MAX(Q1NP_CONTACT_GAP_FALLBACK, ABS(GAP))
-          TRIGGER_TOL = MAX(1.0E-12_WP, Q1NP_CONTACT_VOXEL_TRIGGER_FACTOR * GAP_CONTACT)
+          INTEGER :: IDX_A, IDX_B, MAX_PTS
+          REAL(KIND=WP) :: GAP_CONTACT
+
+          WS%NPTS_A = 0
+          WS%NPTS_B = 0
+          D_MIN = HUGE(ONE)
+          GAP_CONTACT = MAX(Q1NP_CONTACT_GAP_FALLBACK, GAP)
 
           IF (NUMELQ1NP <= 0) RETURN
           IF (Q1NP_NKNOT_SETS_G < 2) RETURN
-
-          IF (Q1NP_CONTACT_ENABLE_ADAPTIVE_SKIP .AND. &
-     &        Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING > 0) THEN
-            Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING = &
-     &          Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING - 1
-            RETURN
-          END IF
 
 !  ----------------------------------------------------------------------------------------------------------------------
 !                                                BUILD POINT CLOUDS
 !  ----------------------------------------------------------------------------------------------------------------------
           MAX_PTS = NUMELQ1NP * Q1NP_CONTACT_BP_NGP_U &
      &                        * Q1NP_CONTACT_BP_NGP_V
-          ALLOCATE(SURF_POINTS_A(3, MAX_PTS))
-          ALLOCATE(SURF_POINTS_B(3, MAX_PTS))
-          ALLOCATE(ELEM_IDS_A(MAX_PTS), XI_A(MAX_PTS), ETA_A(MAX_PTS))
-          ALLOCATE(ELEM_IDS_B(MAX_PTS), XI_B(MAX_PTS), ETA_B(MAX_PTS))
+          ALLOCATE(WS%SURF_POINTS_A(3, MAX_PTS))
+          ALLOCATE(WS%SURF_POINTS_B(3, MAX_PTS))
+          ALLOCATE(WS%ELEM_IDS_A(MAX_PTS), WS%XI_A(MAX_PTS), &
+     &             WS%ETA_A(MAX_PTS))
+          ALLOCATE(WS%ELEM_IDS_B(MAX_PTS), WS%XI_B(MAX_PTS), &
+     &             WS%ETA_B(MAX_PTS))
 
-          ! Build point cloud for surface A
           CALL Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS( &
      &        KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, NUMELQ1NP,    &
      &        X_COORDS, NUMNOD, 1,                             &
      &        Q1NP_CONTACT_BP_NGP_U,            &
      &        Q1NP_CONTACT_BP_NGP_V,            &
-     &        SURF_POINTS_A, NPTS_A,                           &
-     &        ELEM_IDS_A, XI_A, ETA_A, MAX_PTS)
-          ! Build point cloud for surface B
+     &        WS%SURF_POINTS_A, WS%NPTS_A,                    &
+     &        WS%ELEM_IDS_A, WS%XI_A, WS%ETA_A, MAX_PTS)
+
           CALL Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS( &
      &        KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, NUMELQ1NP,    &
      &        X_COORDS, NUMNOD, 2,                             &
      &        Q1NP_CONTACT_BP_NGP_U,            &
      &        Q1NP_CONTACT_BP_NGP_V,            &
-     &        SURF_POINTS_B, NPTS_B,                           &
-     &        ELEM_IDS_B, XI_B, ETA_B, MAX_PTS)
+     &        WS%SURF_POINTS_B, WS%NPTS_B,                    &
+     &        WS%ELEM_IDS_B, WS%XI_B, WS%ETA_B, MAX_PTS)
 
-          ALLOCATE(PAIRS(MAX(1, NPTS_B)))
-          ALLOCATE(CANDIDATE_IA(Q1NP_CONTACT_MAX_CANDIDATES_PER_B, MAX(1, NPTS_B)))
-          ALLOCATE(CANDIDATE_COUNT(MAX(1, NPTS_B)))
-          ALLOCATE(CANDIDATE_OVERFLOW(MAX(1, NPTS_B)))
-          CANDIDATE_IA(:,:) = 0
-          CANDIDATE_COUNT(:) = 0
-          CANDIDATE_OVERFLOW(:) = .FALSE.
+          ALLOCATE(WS%CANDIDATE_IA( &
+     &      Q1NP_CONTACT_MAX_CANDIDATES_PER_B, MAX(1, WS%NPTS_B)))
+          ALLOCATE(WS%CANDIDATE_COUNT(MAX(1, WS%NPTS_B)))
+          ALLOCATE(WS%CANDIDATE_OVERFLOW(MAX(1, WS%NPTS_B)))
+          WS%CANDIDATE_IA(:,:) = 0
+          WS%CANDIDATE_COUNT(:) = 0
+          WS%CANDIDATE_OVERFLOW(:) = .FALSE.
 
 !  ----------------------------------------------------------------------------------------------------------------------
 !                                                VOXEL SEARCH
 !  ----------------------------------------------------------------------------------------------------------------------
           CALL Q1NP_CONTACT_BROAD_PHASE_VOXEL_MIN_DISTANCE( &
-     &        SURF_POINTS_A, NPTS_A, SURF_POINTS_B, NPTS_B,  &
-     &        TRIGGER_TOL, D_MIN, IDX_A, IDX_B,              &
-     &        CANDIDATE_IA, CANDIDATE_COUNT, CANDIDATE_OVERFLOW)
-          ! Returns D_MIN, IDX_A, IDX_B
-          ! D_MIN: minimum distance between the two point clouds
-          ! CANDIDATE_IA: voxel-derived A-candidates for B
-          ! CANDIDATE_COUNT: number of stored candidates for B
-          ! CANDIDATE_OVERFLOW: candidate list exceeded storage
-!   ----------------------------------------------------------------------------------------------------------------------
-!                                       NARROW PHASE: NURBS->NURBS PROJECTION
-!   ----------------------------------------------------------------------------------------------------------------------
+     &        WS%SURF_POINTS_A, WS%NPTS_A, &
+     &        WS%SURF_POINTS_B, WS%NPTS_B, &
+     &        GAP_CONTACT, D_MIN, IDX_A, IDX_B, &
+     &        WS%CANDIDATE_IA, WS%CANDIDATE_COUNT, &
+     &        WS%CANDIDATE_OVERFLOW)
+
+        END SUBROUTINE Q1NP_CONTACT_BROAD_PHASE
+
+!=======================================================================
+!   Q1NP_CONTACT_NARROW_PHASE
+!
+!   NURBS-to-NURBS projection on the point clouds from the broad phase.
+!   Returns penetrating contact pairs.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_NARROW_PHASE( &
+     &      WS, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, X_COORDS, &
+     &      NUMNOD, GAP, PAIRS, N_PAIRS)
+          TYPE(Q1NP_CONTACT_WORKSPACE), INTENT(IN) :: WS
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
+          REAL(KIND=WP), INTENT(IN) :: Q1NP_KTAB(:)
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+          INTEGER, INTENT(IN) :: NUMNOD
+          REAL(KIND=WP), INTENT(IN) :: GAP
+          TYPE(Q1NP_CONTACT_PAIR), ALLOCATABLE, INTENT(OUT) :: PAIRS(:)
+          INTEGER, INTENT(OUT) :: N_PAIRS
+
+          REAL(KIND=WP) :: GAP_CONTACT
+
           N_PAIRS = 0
-          IF (IDX_A > 0 .AND. IDX_B > 0) THEN
-            CALL Q1NP_CONTACT_NARROW_PHASE_PROJECT( &
-     &          KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, X_COORDS, &
-     &          NUMNOD, GAP_CONTACT, &
-     &          SURF_POINTS_A, NPTS_A,                       &
-     &          ELEM_IDS_A, XI_A, ETA_A,                     &
-     &          SURF_POINTS_B, NPTS_B,                       &
-     &          ELEM_IDS_B, XI_B, ETA_B,                     &
-     &          CANDIDATE_IA, CANDIDATE_COUNT,               &
-     &          CANDIDATE_OVERFLOW,                          &
-     &          PAIRS, N_PAIRS, PROXIMITY_DETECTED)
-          END IF
-          
-!   ----------------------------------------------------------------------------------------------------------------------
-!                                       PENALTY FORCE CALCULATION AND ASSEMBLY
-!   ----------------------------------------------------------------------------------------------------------------------
-          IF (N_PAIRS > 0) THEN
-            CALL Q1NP_CONTACT_COMPUTE_PENALTY_FORCES( &
-     &          PAIRS, N_PAIRS, &
-     &          KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, Q1NP_KTAB, X_COORDS, &
-     &          NUMNOD, GAP_CONTACT, A, STIFN, IGSTI, KMIN, KMAX, &
-     &          NSV, STFNS, NSN, STFM, NRTM)
-          END IF
-!   ----------------------------------------------------------------------------------------------------------------------
-!                                                ADAPTIVE SKIP SCHEDULING
-!   ----------------------------------------------------------------------------------------------------------------------
-          IF (Q1NP_CONTACT_ENABLE_ADAPTIVE_SKIP) THEN
-            IF (.NOT. PROXIMITY_DETECTED) THEN
-              DIST_RATIO = D_MIN / TRIGGER_TOL
-              IF (DIST_RATIO <= ONE) THEN
-                Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING = 0
-              ELSE
-                Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING = MIN(Q1NP_CONTACT_SKIP_MAX, &
-     &            INT(Q1NP_CONTACT_SKIP_SCALE * (DIST_RATIO - ONE)**Q1NP_CONTACT_SKIP_EXPONENT))
-              END IF
-            ELSE
-              Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING = 0
-            END IF
-          ELSE
-            Q1NP_CONTACT_BROAD_PHASE_SKIP_REMAINING = 0
-          END IF
+          GAP_CONTACT = MAX(Q1NP_CONTACT_GAP_FALLBACK, ABS(GAP))
 
-          DEALLOCATE(SURF_POINTS_A, SURF_POINTS_B)
-          DEALLOCATE(ELEM_IDS_A, ELEM_IDS_B)
-          DEALLOCATE(XI_A, ETA_A, XI_B, ETA_B)
-          DEALLOCATE(CANDIDATE_IA, CANDIDATE_COUNT, CANDIDATE_OVERFLOW)
-          DEALLOCATE(PAIRS)
+          ALLOCATE(PAIRS(MAX(1, WS%NPTS_B)))
 
-        END SUBROUTINE Q1NP_CONTACT_BROAD_PHASE_CHECK_PROXIMITY
+          CALL Q1NP_CONTACT_NARROW_PHASE_PROJECT( &
+     &        KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, X_COORDS, &
+     &        NUMNOD, GAP_CONTACT, &
+     &        WS%SURF_POINTS_A, WS%NPTS_A, &
+     &        WS%ELEM_IDS_A, WS%XI_A, WS%ETA_A, &
+     &        WS%SURF_POINTS_B, WS%NPTS_B, &
+     &        WS%ELEM_IDS_B, WS%XI_B, WS%ETA_B, &
+     &        WS%CANDIDATE_IA, WS%CANDIDATE_COUNT, &
+     &        WS%CANDIDATE_OVERFLOW, &
+     &        PAIRS, N_PAIRS)
+
+        END SUBROUTINE Q1NP_CONTACT_NARROW_PHASE
+
+!=======================================================================
+!   Q1NP_CONTACT_FORCE_ASSEMBLY
+!
+!   Penalty force computation and FCONT scatter for penetrating pairs.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_FORCE_ASSEMBLY( &
+     &      PAIRS, N_PAIRS, &
+     &      KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, Q1NP_KTAB, &
+     &      X_COORDS, NUMNOD, GAP, A, STIFN, IGSTI, KMIN, KMAX, &
+     &      NSV, STFNS, NSN, STFM, NRTM, FCONT, DO_FCONT)
+          TYPE(Q1NP_CONTACT_PAIR), INTENT(IN) :: PAIRS(:)
+          INTEGER, INTENT(IN) :: N_PAIRS
+          INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
+          INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
+          INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(:)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: NSV(:)
+          REAL(KIND=WP), INTENT(IN) :: Q1NP_KTAB(:)
+          INTEGER, INTENT(IN) :: NUMNOD, IGSTI, NSN, NRTM
+          REAL(KIND=WP), INTENT(IN) :: GAP, KMIN, KMAX
+          REAL(KIND=WP), INTENT(IN) :: STFNS(:), STFM(:)
+          REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
+          REAL(KIND=WP), INTENT(INOUT) :: A(3,NUMNOD)
+          REAL(KIND=WP), INTENT(INOUT) :: STIFN(NUMNOD)
+          REAL(KIND=WP), INTENT(INOUT) :: FCONT(3,NUMNOD)
+          LOGICAL, INTENT(IN) :: DO_FCONT
+
+          REAL(KIND=WP) :: GAP_CONTACT
+
+          GAP_CONTACT = MAX(Q1NP_CONTACT_GAP_FALLBACK, ABS(GAP))
+
+          CALL Q1NP_CONTACT_COMPUTE_PENALTY_FORCES( &
+     &        PAIRS, N_PAIRS, &
+     &        KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, &
+     &        Q1NP_KTAB, X_COORDS, &
+     &        NUMNOD, GAP_CONTACT, A, STIFN, IGSTI, KMIN, KMAX, &
+     &        NSV, STFNS, NSN, STFM, NRTM, FCONT, DO_FCONT)
+
+        END SUBROUTINE Q1NP_CONTACT_FORCE_ASSEMBLY
+
+!=======================================================================
+!   Q1NP_CONTACT_WORKSPACE_FREE
+!
+!   Deallocate all arrays in the broad-phase workspace.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_WORKSPACE_FREE(WS)
+          TYPE(Q1NP_CONTACT_WORKSPACE), INTENT(INOUT) :: WS
+          IF (ALLOCATED(WS%SURF_POINTS_A))    DEALLOCATE(WS%SURF_POINTS_A)
+          IF (ALLOCATED(WS%SURF_POINTS_B))    DEALLOCATE(WS%SURF_POINTS_B)
+          IF (ALLOCATED(WS%ELEM_IDS_A))       DEALLOCATE(WS%ELEM_IDS_A)
+          IF (ALLOCATED(WS%ELEM_IDS_B))       DEALLOCATE(WS%ELEM_IDS_B)
+          IF (ALLOCATED(WS%XI_A))             DEALLOCATE(WS%XI_A)
+          IF (ALLOCATED(WS%ETA_A))            DEALLOCATE(WS%ETA_A)
+          IF (ALLOCATED(WS%XI_B))             DEALLOCATE(WS%XI_B)
+          IF (ALLOCATED(WS%ETA_B))            DEALLOCATE(WS%ETA_B)
+          IF (ALLOCATED(WS%CANDIDATE_IA))     DEALLOCATE(WS%CANDIDATE_IA)
+          IF (ALLOCATED(WS%CANDIDATE_COUNT))  DEALLOCATE(WS%CANDIDATE_COUNT)
+          IF (ALLOCATED(WS%CANDIDATE_OVERFLOW)) &
+     &      DEALLOCATE(WS%CANDIDATE_OVERFLOW)
+          WS%NPTS_A = 0
+          WS%NPTS_B = 0
+        END SUBROUTINE Q1NP_CONTACT_WORKSPACE_FREE
 
 !=======================================================================
 !   Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS
@@ -420,7 +463,7 @@
           REAL(KIND=WP) :: ZMIN_A, ZMAX_A
           REAL(KIND=WP) :: XMIN_B, XMAX_B, YMIN_B, YMAX_B
           REAL(KIND=WP) :: ZMIN_B, ZMAX_B
-          REAL(KIND=WP) :: TOL, CELL_SIZE, SEARCH_PADDING
+          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING
           REAL(KIND=WP) :: SPAN_X, SPAN_Y, SPAN_Z
           INTEGER :: NBX, NBY, NBZ, NVOXELS
           INTEGER, ALLOCATABLE :: VOXEL(:), NEXT_PT(:)
@@ -436,7 +479,6 @@
           D_MIN_SQ  = HUGE(ONE)
           IDX_A_OUT = 0
           IDX_B_OUT = 0
-          TOL       = MAX(1.0E-12_WP, TRIGGER_TOL)
           CANDIDATE_IA(:,:) = 0
           CANDIDATE_COUNT(:) = 0
           CANDIDATE_OVERFLOW(:) = .FALSE.
@@ -473,8 +515,8 @@
             IF (SURF_POINTS_B(3,IB) > ZMAX_B) ZMAX_B = SURF_POINTS_B(3,IB)
           END DO
 !   ----- Step 2: choose padding / cell size from the trigger tolerance -----
-          CELL_SIZE = 1.25 * TOL
-          SEARCH_PADDING = 1.25 * TOL
+          CELL_SIZE = 1.25 * TRIGGER_TOL
+          SEARCH_PADDING = 1.25 * TRIGGER_TOL
           ! Pad the bounding box of point cloud B by the search padding
           XMIN_B = XMIN_B - SEARCH_PADDING
           XMAX_B = XMAX_B + SEARCH_PADDING
@@ -622,7 +664,7 @@
      &      ELEM_IDS_B, XI_B, ETA_B,                     &
      &      CANDIDATE_IA, CANDIDATE_COUNT,               &
      &      CANDIDATE_OVERFLOW,                          &
-     &      CONTACT_PAIRS, N_PAIRS, PENETRATION_DETECTED)
+     &      CONTACT_PAIRS, N_PAIRS)
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
           INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
           REAL(KIND=WP), INTENT(IN) :: Q1NP_KTAB(:)
@@ -642,12 +684,10 @@
           LOGICAL, INTENT(IN) :: CANDIDATE_OVERFLOW(:)
           TYPE(Q1NP_CONTACT_PAIR), INTENT(OUT) :: CONTACT_PAIRS(:)
           INTEGER, INTENT(OUT) :: N_PAIRS
-          LOGICAL, INTENT(OUT) :: PENETRATION_DETECTED
 
           INTEGER :: IA, IB, ICAND
-          INTEGER :: BEST_IA, U_MAX, V_MAX, LAST_ELEM_A
-          REAL(KIND=WP) :: DX, DY, DZ, DIST_SQ
-          REAL(KIND=WP) :: X_SRC(3), GAP_SQ
+          INTEGER :: BEST_IA, U_MAX, V_MAX
+          REAL(KIND=WP) :: X_SRC(3)
           REAL(KIND=WP), ALLOCATABLE :: U_KNOT_WS(:), V_KNOT_WS(:)
 
           REAL(KIND=WP) :: XI_PROJ, ETA_PROJ, XYZ_PROJ(3), PROJ_DIST
@@ -657,43 +697,25 @@
           LOGICAL :: PROJ_VALID
           INTEGER :: N_ITER
           REAL(KIND=WP) :: BEST_XI_PROJ, BEST_ETA_PROJ
-          REAL(KIND=WP) :: BEST_SIGNED_PENETRATION, BEST_PROJ_DIST
+          REAL(KIND=WP) :: BEST_SIGNED_PENETRATION
           REAL(KIND=WP) :: BEST_NORMAL_VEC(3)
-          LOGICAL :: BEST_PROJ_VALID
 
           N_PAIRS = 0
-          PENETRATION_DETECTED = .FALSE.
           IF (NPTS_A < 1 .OR. NPTS_B < 1) RETURN
 
           CALL Q1NP_CONTACT_MAX_KNOT_LEN( &
      &      KQ1NP_TAB, SIZE(KQ1NP_TAB, 2), U_MAX, V_MAX)
           ALLOCATE(U_KNOT_WS(U_MAX), V_KNOT_WS(V_MAX))
-          GAP_SQ = 4.0_WP * GAP_CONTACT * GAP_CONTACT
 
           DO IB = 1, NPTS_B
-            IF (CANDIDATE_COUNT(IB) < 1 .OR. CANDIDATE_OVERFLOW(IB)) CYCLE
             X_SRC(1:3) = SURF_POINTS_B(1:3, IB)
 
-            BEST_IA  = 0
-            BEST_PROJ_VALID = .FALSE.
+            BEST_IA = 0
             BEST_SIGNED_PENETRATION = HUGE(ONE)
-            BEST_PROJ_DIST = HUGE(ONE)
-            LAST_ELEM_A = -1
 
             DO ICAND = 1, CANDIDATE_COUNT(IB)
               IA = CANDIDATE_IA(ICAND, IB)
               IF (IA < 1 .OR. IA > NPTS_A) CYCLE
-
-!             Skip duplicate projections onto the same element
-              IF (ELEM_IDS_A(IA) == LAST_ELEM_A) CYCLE
-              LAST_ELEM_A = ELEM_IDS_A(IA)
-
-!             Cheap distance pre-filter before expensive Newton call
-              DX = X_SRC(1) - SURF_POINTS_A(1,IA)
-              DY = X_SRC(2) - SURF_POINTS_A(2,IA)
-              DZ = X_SRC(3) - SURF_POINTS_A(3,IA)
-              DIST_SQ = DX*DX + DY*DY + DZ*DZ
-              IF (DIST_SQ > GAP_SQ) CYCLE
 
               CALL Q1NP_CONTACT_PROJECT_POINT_NEWTON( &
      &          X_SRC, KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, &
@@ -705,21 +727,17 @@
      &          U_KNOT_WS, V_KNOT_WS)
               IF (.NOT. PROJ_VALID) CYCLE
               IF (SIGNED_PENETRATION >= GAP_CONTACT) CYCLE
-              IF ((.NOT. BEST_PROJ_VALID) .OR. &
-     &            (SIGNED_PENETRATION < BEST_SIGNED_PENETRATION) .OR. &
-     &            (SIGNED_PENETRATION == BEST_SIGNED_PENETRATION .AND. &
-     &             PROJ_DIST < BEST_PROJ_DIST)) THEN
-                BEST_PROJ_VALID = .TRUE.
+
+              IF (SIGNED_PENETRATION < BEST_SIGNED_PENETRATION) THEN
                 BEST_IA = IA
                 BEST_XI_PROJ = XI_PROJ
                 BEST_ETA_PROJ = ETA_PROJ
                 BEST_SIGNED_PENETRATION = SIGNED_PENETRATION
-                BEST_PROJ_DIST = PROJ_DIST
                 BEST_NORMAL_VEC(1:3) = NORMAL_VEC(1:3)
               END IF
             END DO
 
-            IF (.NOT. BEST_PROJ_VALID) CYCLE
+            IF (BEST_IA == 0) CYCLE
             IF (N_PAIRS >= SIZE(CONTACT_PAIRS)) EXIT
 
             N_PAIRS = N_PAIRS + 1
@@ -734,7 +752,6 @@
           END DO
 
           DEALLOCATE(U_KNOT_WS, V_KNOT_WS)
-          PENETRATION_DETECTED = (N_PAIRS > 0)
 
         END SUBROUTINE Q1NP_CONTACT_NARROW_PHASE_PROJECT
 
@@ -753,7 +770,7 @@
      &      CONTACT_PAIRS, N_PAIRS, &
      &      KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, Q1NP_KTAB, X_COORDS, &
      &      NUMNOD, GAP_CONTACT, A, STIFN, IGSTI, KMIN, KMAX, &
-     &      NSV, STFNS, NSN, STFM, NRTM)
+     &      NSV, STFNS, NSN, STFM, NRTM, FCONT, DO_FCONT)
           TYPE(Q1NP_CONTACT_PAIR), INTENT(IN) :: CONTACT_PAIRS(:)
           INTEGER, INTENT(IN) :: N_PAIRS
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
@@ -768,6 +785,8 @@
           REAL(KIND=WP), INTENT(IN)    :: STFNS(:), STFM(:)
           REAL(KIND=WP), INTENT(INOUT) :: A(3,NUMNOD)
           REAL(KIND=WP), INTENT(INOUT) :: STIFN(NUMNOD)
+          REAL(KIND=WP), INTENT(INOUT) :: FCONT(3,NUMNOD)
+          LOGICAL, INTENT(IN) :: DO_FCONT
 
           INTEGER, PARAMETER :: MAX_CTRL = 50
           REAL(KIND=WP), PARAMETER :: EPS = 1.0E-10_WP
@@ -788,6 +807,9 @@
           REAL(KIND=WP) :: K_PAIR, GAP_REF
           REAL(KIND=WP) :: K_PRIMARY, K_SECONDARY
           REAL(KIND=WP) :: PAIR_WEIGHT, D1_WEIGHTED
+          INTEGER :: FEM_IDS_A(4), FEM_IDS_B(4)
+          REAL(KIND=WP) :: BIL_W_A(4), BIL_W_B(4)
+          LOGICAL :: HAS_FEM_A, HAS_FEM_B
 
           IF (N_PAIRS < 1) RETURN
 
@@ -834,6 +856,30 @@
      &        CTRL_IDS_B, NVAL_B, NCTRL_B_EFF, K_B_PRIMARY, K_B_SECONDARY, &
      &        U_KNOT_WS, V_KNOT_WS)
 
+!           --- Prepare FCONT scatter to HEX8 top-face grid nodes ---
+            HAS_FEM_A = .FALSE.
+            HAS_FEM_B = .FALSE.
+            IF (DO_FCONT .AND. Q1NP_FCONT_GRID_READY) THEN
+              IF (CONTACT_PAIRS(IP)%ELEM_A > 0 .AND. &
+     &            CONTACT_PAIRS(IP)%ELEM_A <= SIZE(Q1NP_FCONT_GRID_IDS,2)) THEN
+                FEM_IDS_A(1:4) = Q1NP_FCONT_GRID_IDS(1:4, &
+     &            CONTACT_PAIRS(IP)%ELEM_A)
+                HAS_FEM_A = ALL(FEM_IDS_A(1:4) > 0)
+                IF (HAS_FEM_A) CALL Q1NP_CONTACT_BILINEAR_WEIGHTS( &
+     &            CONTACT_PAIRS(IP)%XI_PROJ, &
+     &            CONTACT_PAIRS(IP)%ETA_PROJ, BIL_W_A)
+              END IF
+              IF (CONTACT_PAIRS(IP)%ELEM_B > 0 .AND. &
+     &            CONTACT_PAIRS(IP)%ELEM_B <= SIZE(Q1NP_FCONT_GRID_IDS,2)) THEN
+                FEM_IDS_B(1:4) = Q1NP_FCONT_GRID_IDS(1:4, &
+     &            CONTACT_PAIRS(IP)%ELEM_B)
+                HAS_FEM_B = ALL(FEM_IDS_B(1:4) > 0)
+                IF (HAS_FEM_B) CALL Q1NP_CONTACT_BILINEAR_WEIGHTS( &
+     &            CONTACT_PAIRS(IP)%XI_SRC, &
+     &            CONTACT_PAIRS(IP)%ETA_SRC, BIL_W_B)
+              END IF
+            END IF
+
 !           --- Pair stiffness selection ---
             CALL Q1NP_CONTACT_ASSIGN_PAIR_STIFFNESS( &
      &        CONTACT_PAIRS(IP)%ELEM_A, K_A_PRIMARY, K_A_SECONDARY, &
@@ -841,13 +887,11 @@
      &        KQ1NP_TAB, K_PRIMARY, K_SECONDARY)
             IF (K_PRIMARY <= EPS_STIFF .OR. K_SECONDARY <= EPS_STIFF) CYCLE
 
-            ! Compute pair stiffness based on IGSTI.
             K_PAIR = Q1NP_CONTACT_STIFFNESS(K_PRIMARY, K_SECONDARY, IGSTI, KMIN, KMAX)
 
 !           --- gap scaling ---
             IF (GAP_REF > EPS .AND. PEN_ABS < GAP_REF) THEN
               FAC = GAP_REF / MAX(EPS, (GAP_REF - PEN_ABS))
-
             END IF
 
             D1 = 0.5_WP * K_PAIR * FAC
@@ -865,7 +909,7 @@
             CALL Q1NP_CONTACT_EXPORT_ACCUMULATE( &
      &          CONTACT_PAIRS(IP)%ELEM_B,  F_PEN, PEN_ABS)
 
-!           --- Scatter to A: -N_k * F ---
+!           --- Scatter to A control points: -N_k * F ---
             DO K = 1, NCTRL_A_EFF
               GID = CTRL_IDS_A(K)
               IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
@@ -875,7 +919,18 @@
               STIFN(GID) = STIFN(GID) + D1_WEIGHTED * ABS(NVAL_A(K))
             END DO
 
-!           --- Scatter to B: +N_j * F ---
+!           --- FCONT scatter to FEM nodes for side A ---
+            IF (HAS_FEM_A) THEN
+              DO K = 1, 4
+                GID = FEM_IDS_A(K)
+                IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
+                FCONT(1, GID) = FCONT(1, GID) - BIL_W_A(K) * F_PEN(1)
+                FCONT(2, GID) = FCONT(2, GID) - BIL_W_A(K) * F_PEN(2)
+                FCONT(3, GID) = FCONT(3, GID) - BIL_W_A(K) * F_PEN(3)
+              END DO
+            END IF
+
+!           --- Scatter to B control points: +N_j * F ---
             DO K = 1, NCTRL_B_EFF
               GID = CTRL_IDS_B(K)
               IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
@@ -884,6 +939,17 @@
               A(3, GID) = A(3, GID) + NVAL_B(K) * F_PEN(3)
               STIFN(GID) = STIFN(GID) + D1_WEIGHTED * ABS(NVAL_B(K))
             END DO
+
+!           --- FCONT scatter to FEM nodes for side B ---
+            IF (HAS_FEM_B) THEN
+              DO K = 1, 4
+                GID = FEM_IDS_B(K)
+                IF (GID <= 0 .OR. GID > NUMNOD) CYCLE
+                FCONT(1, GID) = FCONT(1, GID) + BIL_W_B(K) * F_PEN(1)
+                FCONT(2, GID) = FCONT(2, GID) + BIL_W_B(K) * F_PEN(2)
+                FCONT(3, GID) = FCONT(3, GID) + BIL_W_B(K) * F_PEN(3)
+              END DO
+            END IF
           END DO
 
           DEALLOCATE(NODE_TO_STFNS)
@@ -1847,5 +1913,63 @@
      &            (ABS(XI) <= ONE) .AND. (ABS(ETA) <= ONE)
 
         END SUBROUTINE Q1NP_CONTACT_PROJECT_POINT_NEWTON
+
+!=======================================================================
+!   Q1NP_CONTACT_INIT_GRID_NODES
+!   Build Q1NP_FCONT_GRID_IDS(4, NUMELQ1NP_G) from IXS once.
+!   For each Q1NP element, finds the HEX8 top-face nodes (the ones
+!   visible in H3D) by identifying which HEX8 face matches the 4 bulk
+!   nodes and taking the opposite face.
+!=======================================================================
+        SUBROUTINE Q1NP_CONTACT_INIT_GRID_NODES(IXS, NIXS_IN, NUMELS_IN)
+          INTEGER, INTENT(IN) :: NIXS_IN, NUMELS_IN
+          INTEGER, INTENT(IN) :: IXS(NIXS_IN, NUMELS_IN)
+
+          INTEGER :: IEL, IEL_HEX8, IFACE, K, J2
+          INTEGER :: HEX_NODES(8), BULK_IDS(4), OFF_BULK
+          INTEGER :: FACE_LOC(4,6), OPP(6)
+          LOGICAL :: MATCH
+          DATA FACE_LOC / 1,2,3,4, 5,6,7,8, 1,2,6,5, 2,3,7,6, &
+     &                    3,4,8,7, 4,1,5,8 /
+          DATA OPP       / 2,1,5,6,3,4 /
+
+          IF (Q1NP_FCONT_GRID_READY) RETURN
+          IF (NUMELQ1NP_G <= 0) RETURN
+          IF (.NOT. ALLOCATED(KQ1NP_TAB)) RETURN
+          IF (.NOT. ALLOCATED(IQ1NP_BULK_TAB)) RETURN
+
+          IF (ALLOCATED(Q1NP_FCONT_GRID_IDS)) DEALLOCATE(Q1NP_FCONT_GRID_IDS)
+          ALLOCATE(Q1NP_FCONT_GRID_IDS(4, NUMELQ1NP_G))
+          Q1NP_FCONT_GRID_IDS(:,:) = 0
+
+          DO IEL = 1, NUMELQ1NP_G
+            IEL_HEX8 = KQ1NP_TAB(KQ1NP_IXS_IDX, IEL)
+            IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS_IN) CYCLE
+
+            HEX_NODES(1:8) = IXS(2:9, IEL_HEX8)
+
+            OFF_BULK = KQ1NP_TAB(KQ1NP_BULK_OFF, IEL)
+            IF (OFF_BULK <= 0 .OR. OFF_BULK + 3 > SIZE(IQ1NP_BULK_TAB)) CYCLE
+            BULK_IDS(1:4) = IQ1NP_BULK_TAB(OFF_BULK:OFF_BULK+3)
+
+            DO IFACE = 1, 6
+              MATCH = .TRUE.
+              DO K = 1, 4
+                IF (.NOT. ANY(BULK_IDS(1:4) == &
+     &              HEX_NODES(FACE_LOC(K, IFACE)))) THEN
+                  MATCH = .FALSE.
+                  EXIT
+                END IF
+              END DO
+              IF (MATCH) THEN
+                J2 = OPP(IFACE)
+                Q1NP_FCONT_GRID_IDS(1:4, IEL) = &
+     &            HEX_NODES(FACE_LOC(1:4, J2))
+                EXIT
+              END IF
+            END DO
+          END DO
+          Q1NP_FCONT_GRID_READY = .TRUE.
+        END SUBROUTINE Q1NP_CONTACT_INIT_GRID_NODES
 
       END MODULE Q1NP_CONTACT_ALGORITHMS_MOD

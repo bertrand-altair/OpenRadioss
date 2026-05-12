@@ -103,7 +103,8 @@ C-----------------------------------------------
       USE I18DST3_MOD , ONLY : I18DST3
       USE I18FOR3_MOD , ONLY : I18FOR3
       USE sts_gp_state_mod
-      USE Q1NP_CONTACT_DRIVER_MOD, ONLY: Q1NP_CONTACT_DATA_READY, Q1NP_CONTACT_DRIVER_INT7
+      USE Q1NP_CONTACT_DRIVER_MOD, ONLY: Q1NP_CONTACT_DATA_READY,
+     &  Q1NP_CONTACT_DRIVER_INT7, Q1NP_CONTACT_INIT_GRID_NODES
       USE STS_VOXEL_DRIVER_MOD, ONLY: STS_VOXEL_DRIVER_DATA_READY
       USE STS_BROAD_PHASE_VOXEL_MOD, ONLY: STS_VOXEL_BROAD_PHASE
       USE STS_CONTACT_STIFFNESS_MOD, ONLY: STS_CONTACT_STIFFNESS
@@ -115,6 +116,7 @@ C-----------------------------------------------
 C   G l o b a l   P a r a m e t e r s
 C-----------------------------------------------
 #include      "mvsiz_p.inc"
+#include      "elements.inc"
 C-----------------------------------------------
 C   C o m m o n   B l o c k s
 C-----------------------------------------------
@@ -127,6 +129,8 @@ C-----------------------------------------------
 #include      "parit_c.inc"
 #include      "timeri_c.inc"
 #include      "impl1_c.inc"
+#include      "scr14_c.inc"
+#include      "scr16_c.inc"
 #include      "macro.inc"
 #include      "comlock.inc"
 #include      "tabsiz_c.inc"
@@ -347,11 +351,15 @@ C-----------------------------------------------
         IF (Q1NP_CONTACT_DATA_READY()) THEN
           KMIN   = INTBUF_TAB%VARIABLES(17)
           KMAX   = INTBUF_TAB%VARIABLES(18)
+          ! Q1NP_CONTACT_INIT_GRID_NODES:Returns IXS, NIXS, NUMELS for FCONT scatter in the force assembly.
+          CALL Q1NP_CONTACT_INIT_GRID_NODES(IXS, NIXS, NUMELS)
           CALL MY_BARRIER()
           IF (JTASK == 1) THEN
             CALL Q1NP_CONTACT_DRIVER_INT7(NCYCLE, NUMNOD, X, A, STIFN,
      &        GAP, IGSTI, KMIN, KMAX, INTBUF_TAB%IRECTM,
-     &        INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, INTBUF_TAB%STFM, NRTM)
+     &        INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, INTBUF_TAB%STFM, NRTM,
+     &        FCONT, INCONV == 1 .AND.
+     &        ANIM_V(4)+OUTP_V(4)+H3D_DATA%N_VECT_CONT > 0)
           ENDIF
           CALL MY_BARRIER()
           RETURN
@@ -551,7 +559,7 @@ C           Scatter the per-pair load_arr / node_id_load directly into A / STIFN
               IPARI(29,NIN) = 1
               IF (DEBUG(3) >= 1) NB_JLT_NEW = NB_JLT_NEW + L - 1
               CALL I7ASS0_STS(A, STIFN, load_arr, node_id_load, L,
-     &          MAX_STS_SIZE_ACTUAL)
+     &          MAX_STS_SIZE_ACTUAL, FCONT, H3D_DATA)
             ENDIF
             ENDIF ! COUNT > 0
           ENDIF
