@@ -287,7 +287,9 @@ C-----------------------------------------------
 C-----------------------------------------------
 C   S o u r c e   L i n e s
 C-----------------------------------------------
-      STS_ACTIVE = .TRUE. ! .FALSE. = NTS (node-to-surface); .TRUE. = STS (segment-to-segment)
+      STS_ACTIVE = .FALSE. ! .FALSE. = NTS (node-to-surface); .TRUE. = STS (segment-to-segment)      
+      IF (IPARI(105,NIN) == 1) STS_ACTIVE = .TRUE.
+C      
       IF (STS_ACTIVE) THEN
         ASS_FLAG = 2  ! New STS assembly algorithm
       ELSE

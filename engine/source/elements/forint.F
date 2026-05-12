@@ -149,8 +149,6 @@ C-----------------------------------------------
       USE PRELOAD_SOLID_INI_MOD
       USE S6ZFORC3_MOD
       use element_mod , only : nixs,nixq,nixt,nixr,nixp
-      USE RESTMOD, ONLY: IQ1NP_TAB, IQ1NP_BULK_TAB, KQ1NP_TAB,
-     .                   Q1NP_WTAB, Q1NP_KTAB, Q1NP_CPTAB
       USE Q1NP_RESTART_MOD
       use sfem_mod
       USE DEBUG_MOD, ONLY : ITAB_DEBUG

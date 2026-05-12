@@ -42,7 +42,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      5       IGEO       ,IPM           ,NOD2ELS   ,ISOLOFF ,
      6       TAGPRT_SMS ,SPH2SOL       ,SOL2SPH   ,MAT_PARAM,
      7       SOL2SPH_TYP,IFLAG_BPRELOAD,CLUSTERS  ,RNOISE  ,
-     8       DAMP_RANGE_PART,TRIMAT, KQ1NP_TAB)
+     8       DAMP_RANGE_PART,TRIMAT)
 C-----------------------------------------------
 C            A R G U M E N T S
 C-----------------------------------------------
@@ -100,7 +100,6 @@ C-----------------------------------------------
      .        NOD2ELS(*), ISOLOFF(*),
      .        TAGPRT_SMS(*), SPH2SOL(*), 
      .        SOL2SPH(2,*),SOL2SPH_TYP(*),IFLAG_BPRELOAD(*)
-      INTEGER, INTENT(INOUT) ::KQ1NP_TAB(15,NUMELQ1NP_G)
       INTEGER,INTENT(IN) :: IPM(NPROPMI,NUMMAT)
       INTEGER,INTENT(INOUT) :: IGEO(NPROPGI,NUMGEO)
       INTEGER, INTENT(IN)   :: DAMP_RANGE_PART(NPART)   ! < flag to compute the damping range

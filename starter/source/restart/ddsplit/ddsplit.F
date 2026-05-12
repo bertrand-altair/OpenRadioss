@@ -338,8 +338,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      E   DRAPEG       ,USER_WINDOWS,OUTPUT          ,INTERFACES  ,NUMBER_LOAD_CYL,
      F   LOADS_PER_PROC, PYTHON    ,DPL0CLD         ,VEL0CLD     ,NAMES_AND_TITLES,
      G   BCS_PER_PROC,constraint_struct,glob_therm  ,PBLAST      ,RWSTIF_PEN,SLN_PEN,
-     H   IN_SFEM     , NE_SFEM,  NKQ1NP         ,KQ1NP_TAB    ,IQ1NP_TAB      ,IQ1NP_BULK_TAB,
-     I   Q1NP_WTAB      ,Q1NP_KTAB    ,Q1NP_CPTAB)
+     H   IN_SFEM     , NE_SFEM)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -515,13 +514,6 @@ C-----------------------------------------------
       INTEGER, DIMENSION(2,NPART), INTENT(IN) :: POIN_PART_SHELL,POIN_PART_TRI
       INTEGER, DIMENSION(2,NPART,7), INTENT(IN) :: POIN_PART_SOL
       INTEGER :: NBR_TH_MONVOL ! number of /TH/MONV
-      INTEGER, INTENT(IN) :: NKQ1NP
-      INTEGER, INTENT(IN) :: KQ1NP_TAB(NKQ1NP,*)
-      INTEGER, INTENT(IN) :: IQ1NP_TAB(*)
-      INTEGER, INTENT(IN) :: IQ1NP_BULK_TAB(*)
-      my_real, INTENT(IN) :: Q1NP_WTAB(*)
-      my_real, INTENT(IN) :: Q1NP_KTAB(*)
-      my_real, INTENT(IN) :: Q1NP_CPTAB(3,*)
 
       DOUBLE PRECISION
      .        BUFGEO(*)

@@ -44,7 +44,6 @@
 !   X        : current nodal coordinates, dimension (3,NUMNOD)
 !-----------------------------------------------------------------------
       USE Q1NP_RESTART_MOD
-      USE RESTMOD, ONLY: IQ1NP_TAB, IQ1NP_BULK_TAB, KQ1NP_TAB
       USE DEBUG_MOD, ONLY: ITAB_DEBUG
 
 

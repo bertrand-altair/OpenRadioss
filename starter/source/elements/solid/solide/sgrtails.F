@@ -47,7 +47,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      6       IPM           ,NOD2ELS ,ISOLOFF     , ISOLNOD1,
      7       TAGPRT_SMS    ,INIVOL  ,SPH2SOL     , SOL2SPH , SOL2SPH_TYP,
      8       IFLAG_BPRELOAD,CLUSTERS,MATPARAM_TAB, RNOISE  ,
-     9       PRINT_FLAG    ,DAMP_RANGE_PART,IPRELOAD_FUN, KQ1NP_TAB)
+     9       PRINT_FLAG    ,DAMP_RANGE_PART,IPRELOAD_FUN)
 C-----------------------------------------------
 C   A n a l y s e   M o d u l e
 C-----------------------------------------------
@@ -115,7 +115,6 @@ C-----------------------------------------------
       TYPE(MATPARAM_STRUCT_) , TARGET, DIMENSION(NUMMAT),INTENT(INOUT) :: MATPARAM_TAB
       MY_REAL  PM(NPROPM,NUMMAT), GEO(NPROPG,NUMGEO), RNOISE(NPERTURB,NUMELS)
       INTEGER, DIMENSION(2,NUMPRELOAD),INTENT(IN) :: IPRELOAD_FUN
-      INTEGER, INTENT(INOUT), OPTIONAL :: KQ1NP_TAB(15,*)
 C-----------------------------------------------
       TYPE (GROUP_)  , DIMENSION(NGRBRIC) :: IGRBRIC
       TYPE (SURF_)   , DIMENSION(NSURF)   :: IGRSURF

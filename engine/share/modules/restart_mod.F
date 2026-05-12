@@ -84,9 +84,6 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      .      INTERLOADP,KLOADPINTER,LOADPINTER
             !rank (1 to NSPMD) of the processor that is the main of the node 
       INTEGER, DIMENSION(:), ALLOCATABLE :: ID_GLOBAL_VOIS,FACE_VOIS
-C Q1Np element arrays
-      INTEGER, DIMENSION(:), ALLOCATABLE :: IQ1NP_TAB,IQ1NP_BULK_TAB
-      INTEGER, DIMENSION(:,:), ALLOCATABLE :: KQ1NP_TAB
 
       INTEGER, DIMENSION(:), ALLOCATABLE :: IBFTEMP, IBCV, IBCR, IBFFLUX
 
@@ -141,13 +138,10 @@ C Q1Np element arrays
      .      CFIELD,  MSZ2,    DIAG_SMS,LOADP,   DMINT2,
      .      POR,     GAUGE,   WAGAP   ,RTHBUF,  KNOT,
      .      WIGE,    RDRAPE,  TAB_MAT, MS_2D ,KNOTLOCPC,KNOTLOCEL,
-     .      FCONT_MAX,DGAPLOADINT,DPL0CLD,VEL0CLD,
-     .      Q1NP_WTAB,Q1NP_KTAB
+     .      FCONT_MAX,DGAPLOADINT,DPL0CLD,VEL0CLD
         
       my_real, 
      .    DIMENSION(:, :), ALLOCATABLE :: XCELL
-      my_real, 
-     .    DIMENSION(:, :), ALLOCATABLE :: Q1NP_CPTAB
       my_real, 
      .    DIMENSION(:, :, :), ALLOCATABLE :: XFACE
 

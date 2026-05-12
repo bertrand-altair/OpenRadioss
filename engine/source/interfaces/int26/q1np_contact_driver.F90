@@ -15,8 +15,6 @@
         USE PRECISION_MOD, ONLY : WP
         USE CONSTANT_MOD, ONLY : ONE
         USE Q1NP_RESTART_MOD
-        USE RESTMOD, ONLY : KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, &
-     &    Q1NP_KTAB
         USE Q1NP_CONTACT_EXPORT_MOD, ONLY : &
      &    Q1NP_CONTACT_EXPORT_BEGIN_CYCLE
         USE Q1NP_CONTACT_ALGORITHMS_MOD, ONLY : &
@@ -49,6 +47,7 @@
 
 !=======================================================================
 !   Q1NP_CONTACT_DATA_READY
+!   True when Q1NP elements and restart tables exist.
 !=======================================================================
         LOGICAL FUNCTION Q1NP_CONTACT_DATA_READY()
           Q1NP_CONTACT_DATA_READY = (NUMELQ1NP_G > 0 .AND. &

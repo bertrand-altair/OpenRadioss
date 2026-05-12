@@ -201,7 +201,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      O                  DAMPR      ,IBEAM_VECTOR  ,RBEAM_VECTOR     ,IKINE          ,LSIGI     ,
      P                  LSIGSP     ,SRNOISE       ,NPRW             ,LPRW           , RWSTIF_PEN,
      M                  SLN_PEN    ,ROOTLEN       ,ROOTNAM          ,NGUIDED_CABLE  ,TOTMAS1   ,
-     N                  STIF_STS   ,KQ1NP_TAB     ,IQ1NP_TAB        ,IQ1NP_BULK_TAB)
+     N                  STIF_STS)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------                     
@@ -309,7 +309,6 @@ C-----------------------------------------------
      .   IUSOLYLD,IUSER,IDDLEVEL,NBSUBMAT, TAGPRT_SMS(*),SITAGE,FXB_MATRIX_ADD(4,*),
      .   FXB_LAST_ADRESS(*),PTR_NOPT_FXB,R_SKEW(*), NPTS,KNOD2EL1D(*)  ,NOD2EL1D(*),
      .   KNOD2ELC(*),NOD2ELC(*)
-      INTEGER,INTENT(INOUT),TARGET :: KQ1NP_TAB(15,*),IQ1NP_TAB(*),IQ1NP_BULK_TAB(*)
       TYPE(T_EBCS_TAB), INTENT(INOUT) :: EBCS_TAB     
       INTEGER,TARGET  :: ITAGE(*)
       INTEGER,POINTER :: ptr_ITAGE

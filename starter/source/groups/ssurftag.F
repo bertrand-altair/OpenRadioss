@@ -176,7 +176,6 @@ C           looks for an elt sharing the face.
               DO II=1,NF
                 NODTAG(NI(II))=0
               END DO
-
               DO II=1,8
                 NODTAG(IXS(II+1,KS))=1
               END DO
@@ -556,8 +555,7 @@ C-----------------------------------------------
 !||    lectur         ../starter/source/starter/lectur.F
 !||--- uses       -----------------------------------------------------
 !||====================================================================
-      SUBROUTINE SURFEXT_TAGN(IXS    ,KNOD2ELS,NOD2ELS  ,IXS10   ,FASTAG,itab,
-     .                        KQ1NP_TAB,IQ1NP_TAB,IQ1NP_BULK_TAB)
+      SUBROUTINE SURFEXT_TAGN(IXS    ,KNOD2ELS,NOD2ELS  ,IXS10   ,FASTAG)
       use element_mod , only : nixs
 C-----------------------------------------------
 C   M o d u l e s
@@ -572,10 +570,7 @@ C-----------------------------------------------
 C   D u m m y   A r g u m e n t s
 C-----------------------------------------------
       INTEGER IXS(NIXS,*),KNOD2ELS(*),NOD2ELS(*),
-     .        IXS10(6,*),FASTAG(NUMELS),itab(*)
-      INTEGER, OPTIONAL :: KQ1NP_TAB(15,*)
-      INTEGER, OPTIONAL :: IQ1NP_TAB(*)
-      INTEGER, OPTIONAL :: IQ1NP_BULK_TAB(*)
+     .        IXS10(6,*),FASTAG(NUMELS)
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
@@ -608,9 +603,7 @@ C     Check if Q1NP arrays are available
 C     Q1NP data are available only if all optional arrays are present,
 C     at least one Q1NP element exists, and TABVINT_LEN_G (control point
 C     buffer length) is strictly positive.
-      HAS_Q1NP = PRESENT(KQ1NP_TAB) .AND. PRESENT(IQ1NP_TAB) .AND.
-     .           PRESENT(IQ1NP_BULK_TAB) .AND. NUMELQ1NP_G > 0 .AND.
-     .           TABVINT_LEN_G > 0
+        HAS_Q1NP = NUMELQ1NP_G > 0 .AND. TABVINT_LEN_G > 0
 Co=======================================================================
         ALLOCATE(NODTAG(NUMNOD))
         FASTAG=0

@@ -47,7 +47,6 @@
         USE PRECISION_MOD, ONLY : WP
         USE CONSTANT_MOD , ONLY : ZERO, ONE, TWO, THREE, TEN, HALF
         USE Q1NP_RESTART_MOD
-        USE RESTMOD, ONLY : KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, Q1NP_KTAB
         USE Q1NP_CONTACT_EXPORT_MOD, ONLY : Q1NP_CONTACT_EXPORT_ACCUMULATE
         USE Q1NP_NURBS_SURFACE_EVALUATION_MOD, ONLY : &
      &      Q1NP_EVALUATE_NURBS_TOP_SURFACE_POINT, &
@@ -251,12 +250,11 @@
           CALL Q1NP_CONTACT_NARROW_PHASE_PROJECT( &
      &        KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, X_COORDS, &
      &        NUMNOD, GAP_CONTACT, &
-     &        WS%SURF_POINTS_A, WS%NPTS_A, &
+        &        WS%NPTS_A, &
      &        WS%ELEM_IDS_A, WS%XI_A, WS%ETA_A, &
      &        WS%SURF_POINTS_B, WS%NPTS_B, &
      &        WS%ELEM_IDS_B, WS%XI_B, WS%ETA_B, &
      &        WS%CANDIDATE_IA, WS%CANDIDATE_COUNT, &
-     &        WS%CANDIDATE_OVERFLOW, &
      &        PAIRS, N_PAIRS)
 
         END SUBROUTINE Q1NP_CONTACT_NARROW_PHASE
@@ -658,12 +656,11 @@
         SUBROUTINE Q1NP_CONTACT_NARROW_PHASE_PROJECT( &
      &      KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, X_COORDS, &
      &      NUMNOD, GAP_CONTACT, &
-     &      SURF_POINTS_A, NPTS_A,                       &
+     &      NPTS_A,                                      &
      &      ELEM_IDS_A, XI_A, ETA_A,                     &
      &      SURF_POINTS_B, NPTS_B,                       &
      &      ELEM_IDS_B, XI_B, ETA_B,                     &
      &      CANDIDATE_IA, CANDIDATE_COUNT,               &
-     &      CANDIDATE_OVERFLOW,                          &
      &      CONTACT_PAIRS, N_PAIRS)
           INTEGER, INTENT(IN) :: KQ1NP_TAB(:,:)
           INTEGER, INTENT(IN) :: IQ1NP_TAB(:)
@@ -671,7 +668,6 @@
           REAL(KIND=WP), INTENT(IN) :: X_COORDS(3,NUMNOD)
           INTEGER, INTENT(IN) :: NUMNOD
           REAL(KIND=WP), INTENT(IN) :: GAP_CONTACT
-          REAL(KIND=WP), INTENT(IN) :: SURF_POINTS_A(3,NPTS_A)
           INTEGER, INTENT(IN) :: NPTS_A
           INTEGER, INTENT(IN) :: ELEM_IDS_A(:)
           REAL(KIND=WP), INTENT(IN) :: XI_A(:), ETA_A(:)
@@ -681,7 +677,6 @@
           REAL(KIND=WP), INTENT(IN) :: XI_B(:), ETA_B(:)
           INTEGER, INTENT(IN) :: CANDIDATE_IA(:,:)
           INTEGER, INTENT(IN) :: CANDIDATE_COUNT(:)
-          LOGICAL, INTENT(IN) :: CANDIDATE_OVERFLOW(:)
           TYPE(Q1NP_CONTACT_PAIR), INTENT(OUT) :: CONTACT_PAIRS(:)
           INTEGER, INTENT(OUT) :: N_PAIRS
 
