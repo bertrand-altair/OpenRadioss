@@ -56,10 +56,8 @@
       INTEGER node_ids(8)  ! Node IDs for velocity interpolation
       REAL*8 fx_prim, fy_prim, fz_prim, fx_sec, fy_sec, fz_sec
       REAL*8 fxf_prim, fyf_prim, fzf_prim, fxf_sec, fyf_sec, fzf_sec
-      REAL*8 k_pair_avg, fn_pair_est
       LOGICAL FILE_EXISTS_STS, STS_CSV_INITIALIZED
       LOGICAL, PARAMETER :: CSV_OUTPUT_ENABLED = .FALSE.
-      LOGICAL, PARAMETER :: STS_DEBUG_PRINT_FORCES = .FALSE.
       SAVE STS_CSV_INITIALIZED
       DATA STS_CSV_INITIALIZED /.FALSE./
 !-----------------------------------------------

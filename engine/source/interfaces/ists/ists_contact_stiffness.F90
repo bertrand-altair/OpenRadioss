@@ -57,6 +57,13 @@
           END DO
 
           DO I = 1, MIN(COUNT, MAX_STS_SIZE)
+            ! Istf=1: constant interface stiffness (STIGLO = -STFAC > 0 in engine).
+            ! eval_pair uses d1 = 0.5*STIF*FAC; store 2*STIGLO to match NTS (STIGLO*FAC).
+            IF (STIGLO > 0.0_WP) THEN
+              STIF(I) = 2.0_WP * STIGLO
+              CYCLE
+            END IF
+
             ! find the primary segment
             ! IRECTM is prepared in starter and passed here as IRECTM/IRECT (INTBUF_TAB%IRECTM).
             MST_SEG = STS_CONTACT_FIND_PRIMARY_SEG( &

@@ -22,6 +22,8 @@
 !Copyright>        commercial version may interest you: https://www.altair.com/radioss/.
 !||====================================================================
 !||    sts_broad_phase_voxel_mod   ../engine/source/interfaces/ists/ists_broad_phase_voxel.F90
+!||--- uses       -----------------------------------------------------
+!||    contact_broad_phase_tol_mod   ../engine/source/interfaces/ists/contact_broad_phase_tol_mod.F90
 !||====================================================================
 !
 !   STS voxel broad-phase: produce (master_seg, secondary_seg) candidate
@@ -49,20 +51,12 @@
         USE PRECISION_MOD, ONLY : WP
         USE CONSTANT_MOD,  ONLY : ZERO, ONE, TWO, THREE, FOUR, HALF
         USE GROUPDEF_MOD,  ONLY : SURF_
+        USE CONTACT_BROAD_PHASE_TOL_MOD
         IMPLICIT NONE
         PRIVATE
 !-----------------------------------------------------------------------
 !       Tuning constants
 !-----------------------------------------------------------------------
-!       Trigger tolerance derived from the user GAP value.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_TRIGGER_FACTOR   = 1.0
-!       Voxel cell size = factor * trigger tolerance.
-!       Keep broad phase conservative; narrow phase handles exact contact.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_CELL_SIZE_FACTOR = 1.25_WP
-!       Search padding around master AABB.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_PADDING_FACTOR   = 1.25_WP
-!       Lower bound used when GAP is zero/too small.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_VOXEL_GAP_FALLBACK     = 1.0E-6_WP
 !       Default number of samples per segment (4 corners + centroid).
         INTEGER, PARAMETER, PUBLIC :: STS_VOXEL_NSAMPLES_PER_SEG = 5
 !
@@ -105,7 +99,7 @@
           INTEGER :: NPTS_S, NPTS_M
           REAL(KIND=WP), ALLOCATABLE :: PTS_S(:,:), PTS_M(:,:)
           INTEGER, ALLOCATABLE :: SEG_OF_PT_S(:), SEG_OF_PT_M(:)
-          REAL(KIND=WP) :: GAP_EFF, TRIGGER_TOL
+          REAL(KIND=WP) :: TRIGGER_TOL, H_MESH_S, H_MESH_M
 !-----------------------------------------------
 !         Initialization
 !-----------------------------------------------
@@ -125,8 +119,6 @@
           IF (.NOT. ALLOCATED(IGRSURF(SEC_SURF_IDX)%NODES)) RETURN
           IF (.NOT. ALLOCATED(IGRSURF(MST_SURF_IDX)%NODES)) RETURN
 !
-          GAP_EFF = MAX(STS_VOXEL_GAP_FALLBACK, ABS(GAP))
-          TRIGGER_TOL = STS_VOXEL_TRIGGER_FACTOR * GAP_EFF
 !-----------------------------------------------
 !         Build sample point clouds
 !-----------------------------------------------
@@ -148,6 +140,10 @@
             DEALLOCATE(PTS_S, PTS_M, SEG_OF_PT_S, SEG_OF_PT_M)
             RETURN
           END IF
+
+          H_MESH_S = INTER_BP_TOL_MESH_SCALE(PTS_S, NPTS_S)
+          H_MESH_M = INTER_BP_TOL_MESH_SCALE(PTS_M, NPTS_M)
+          CALL INTER_BP_TOL_SEARCH(GAP, H_MESH_S, H_MESH_M, TRIGGER_TOL)
 !-----------------------------------------------
 !         Voxel pair search and pair emission
 !-----------------------------------------------
@@ -265,10 +261,10 @@
 !
           REAL(KIND=WP) :: XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M
           REAL(KIND=WP) :: XMIN_S, XMAX_S, YMIN_S, YMAX_S, ZMIN_S, ZMAX_S
-          REAL(KIND=WP) :: TOL, CELL_SIZE, SEARCH_PADDING
+          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING, SEARCH_RADIUS
           REAL(KIND=WP) :: SPAN_X, SPAN_Y, SPAN_Z
           REAL(KIND=WP) :: SPAN_X_SAFE, SPAN_Y_SAFE, SPAN_Z_SAFE
-          REAL(KIND=WP) :: DX, DY, DZ, AABB_DIST
+          REAL(KIND=WP) :: DX, DY, DZ, AABB_DIST, DIST_SQ
           REAL(KIND=WP) :: RX, RY, RZ
           REAL(KIND=WP), PARAMETER :: EPS_SPAN = 1.0E-12_WP
           INTEGER :: NBX, NBY, NBZ, NVOXELS
@@ -303,9 +299,9 @@
             IF (PTS_S(3,IS) > ZMAX_S) ZMAX_S = PTS_S(3,IS)
           END DO
 !
-          TOL = MAX(EPS_SPAN, TRIGGER_TOL)
-          CELL_SIZE      = STS_VOXEL_CELL_SIZE_FACTOR * TOL
-          SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR  * TOL
+          CALL INTER_BP_TOL_PAD_CELL( &
+     &        MAX(EPS_SPAN, TRIGGER_TOL), SEARCH_PADDING, CELL_SIZE)
+          SEARCH_RADIUS = SEARCH_PADDING
 !
 !         Coarse AABB rejection (use unpadded master AABB vs secondary AABB)
           DX = MAX(ZERO, MAX(XMIN_S - XMAX_M, XMIN_M - XMAX_S))
@@ -401,13 +397,19 @@
                     IF (JJ > NPTS_M) EXIT
                     SEG_M = SEG_OF_PT_M(JJ)
                     IF (SEG_S > 0 .AND. SEG_M > 0) THEN
-                      CALL STS_VOXEL_EMIT_PAIR( &
-     &                  IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
-     &                  X, NUMNOD, SEG_S, SEG_M, &
-     &                  MAX_STS_SIZE_ACTUAL, &
-     &                  CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
-     &                  CONT_ELEMENT, COUNT, OVERFLOW)
-                      IF (OVERFLOW) EXIT
+                      DX = PTS_S(1, IS) - PTS_M(1, JJ)
+                      DY = PTS_S(2, IS) - PTS_M(2, JJ)
+                      DZ = PTS_S(3, IS) - PTS_M(3, JJ)
+                      DIST_SQ = DX*DX + DY*DY + DZ*DZ
+                      IF (DIST_SQ <= SEARCH_RADIUS*SEARCH_RADIUS) THEN
+                        CALL STS_VOXEL_EMIT_PAIR( &
+     &                    IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
+     &                    X, NUMNOD, SEG_S, SEG_M, &
+     &                    MAX_STS_SIZE_ACTUAL, &
+     &                    CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &                    CONT_ELEMENT, COUNT, OVERFLOW)
+                        IF (OVERFLOW) EXIT
+                      END IF
                     END IF
                     JJ = NEXT_PT(JJ)
                     IF (JJ < 0) EXIT

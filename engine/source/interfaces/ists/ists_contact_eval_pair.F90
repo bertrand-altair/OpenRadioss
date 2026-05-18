@@ -82,7 +82,7 @@
       real*8  eta1(10), eta2(10), wi1(10), wi2(10)
       real*8  energy
       real*8  active_area, area_weight
-      real*8  stiff_accum, gap_distance, signed_distance
+      real*8  gap_distance
       real*8  N_xi(3,4), N_eta(3,4)
       real*8  norm_secondary(3), sec_t1(3), sec_t2(3)
       real*8  sec_norm_len, normal_dot
@@ -114,7 +114,6 @@
       real*8  rhoxi1_fric(3), rhoxi2_fric(3)
       real*8  wi1_fric, wi2_fric, eta1_fric, eta2_fric
       logical use_gauss_for_friction
-      logical, parameter :: STS_DEBUG_PENALTY = .FALSE.
 !-----------------------------------------------
 !   I n i t i a l i z a t i o n
 !-----------------------------------------------
@@ -156,8 +155,8 @@
       EFRICT = 0.d0
       XMU(1) = FRICC(pair_fric_idx) ! Friction coefficient mu
       active_area = 0.0d0
-      stiff_accum = 0.0d0
       node_stiff = 0.0d0
+      FAC = 1.0d0
 !-----------------------------------------------
 !   M a i n   C o m p u t a t i o n
 !-----------------------------------------------
@@ -267,8 +266,8 @@
           ENDIF
 
           ! Compute signed clearance to the primary projection.
-          call sts_penetr(XUPD, signed_distance, norm_contact, a)
-          penetr = signed_distance
+          call sts_penetr(XUPD, penetr, norm_contact, a)
+          
 
           ! Check for penetration
           PENE = penetr - GAPV
@@ -292,7 +291,16 @@
             FAC = 1.0d0
           ENDIF
           d1 = 0.5d0 * d1 * FAC
-          stiff_accum = stiff_accum + d1 * area_weight
+
+!         Accumulate nodal stiffness with the same shape-function
+!         weighting used by NTS/Q1NP before the final area average.
+          call sts_shape(xi1, xi2, N_xi)
+          DO j = 1, 4
+            node_stiff(j) = node_stiff(j) &
+     &        + d1 * DABS(N_xi(1,j)) * area_weight
+            node_stiff(j+4) = node_stiff(j+4) &
+     &        + d1 * DABS(N_eta(1,j)) * area_weight
+          ENDDO
 
           ! Extract nodal stiffness and set penetration flag if penetration detected
           IF (IMPACT == 1) THEN
@@ -489,16 +497,14 @@
 !   F i n a l   R e s u l t s
 !-----------------------------------------------
       IF (active_area .GT. 1.0d-30) THEN
-!       Keep integrated forces; averaging by active area introduces large
-!       force jumps when only a subset of integration points is active.
-        node_stiff = stiff_accum
-      ENDIF
-
-      IF (STS_DEBUG_PENALTY .AND. IMPACT == 1) THEN
-        WRITE(6,*) 'STS penalty diag: pair=', EL_NR, ', opt=', OPTION, &
-     &             ', STIF=', STIF, ', pen=', PAIR_MAX_PENETRATION, &
-     &             ', fac=', FAC, &
-     &             ', k=', node_stiff(1)
+        DO i = 1, 24
+          pm(i) = pm(i) / active_area
+          pm_friction(i) = pm_friction(i) / active_area
+        ENDDO
+        DO i = 1, 8
+          node_stiff(i) = node_stiff(i) / active_area
+        ENDDO
+        energy = energy / active_area
       ENDIF
 
       ! Set output forces
