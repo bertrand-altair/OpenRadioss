@@ -39,24 +39,10 @@
         REAL(KIND=WP), PARAMETER :: GAP_FALLBACK  = 1.0E-6_WP
         INTEGER, SAVE :: SKIP_REMAINING = 0
 
-        PUBLIC :: Q1NP_CONTACT_DATA_READY
         PUBLIC :: Q1NP_CONTACT_DRIVER_INT7
         PUBLIC :: Q1NP_CONTACT_INIT_GRID_NODES
 
       CONTAINS
-
-!=======================================================================
-!   Q1NP_CONTACT_DATA_READY
-!   True when Q1NP elements and restart tables exist.
-!=======================================================================
-        LOGICAL FUNCTION Q1NP_CONTACT_DATA_READY()
-          Q1NP_CONTACT_DATA_READY = (NUMELQ1NP_G > 0 .AND. &
-     &        Q1NP_NKNOT_SETS_G >= 2 .AND. &
-     &        ALLOCATED(KQ1NP_TAB) .AND. &
-     &        ALLOCATED(IQ1NP_TAB) .AND. &
-     &        ALLOCATED(IQ1NP_BULK_TAB) .AND. &
-     &        ALLOCATED(Q1NP_KTAB))
-        END FUNCTION Q1NP_CONTACT_DATA_READY
 
 !=======================================================================
 !   Q1NP_CONTACT_DRIVER_INT7
@@ -80,8 +66,6 @@
           TYPE(Q1NP_CONTACT_PAIR), ALLOCATABLE :: PAIRS(:)
           INTEGER :: N_PAIRS
           REAL(KIND=WP) :: D_MIN
-
-          IF (.NOT. Q1NP_CONTACT_DATA_READY()) RETURN
 
           IF (NCYCLE /= Q1NP_CONTACT_INT7_LAST_NCYCLE) THEN
             Q1NP_CONTACT_INT7_LAST_NCYCLE = NCYCLE

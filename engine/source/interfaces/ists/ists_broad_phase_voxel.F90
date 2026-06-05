@@ -304,7 +304,7 @@
           END DO
 !
           TOL = MAX(EPS_SPAN, TRIGGER_TOL)
-          CELL_SIZE      = STS_VOXEL_CELL_SIZE_FACTOR * TOL
+          CELL_SIZE      = 10.0*STS_VOXEL_CELL_SIZE_FACTOR * TOL
           SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR  * TOL
 !
 !         Coarse AABB rejection (use unpadded master AABB vs secondary AABB)
