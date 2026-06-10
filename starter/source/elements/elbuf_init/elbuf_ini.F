@@ -776,6 +776,14 @@ c----------------------------------------------------
             ELBUF_TAB(NG)%BUFLY(1)%L_EPSA = 3
             ELBUF_TAB(NG)%BUFLY(1)%L_EPE  = 3
           ENDIF                                                        
+C
+C         Q1NP starter mass and GP-volume reconstruction always need
+C         the local volume field, independent of the small/large strain
+C         branch below.
+          IF (I_Q1NP_GROUP == 1) THEN
+            ELBUF_TAB(NG)%BUFLY(1)%L_VOL = 1
+          ENDIF
+
           IF (ISMSTR /= 4 .OR. JLAG >0)THEN
            IF (IGTYP == 43) THEN       
              ELBUF_TAB(NG)%BUFLY(1)%L_VOL = 1

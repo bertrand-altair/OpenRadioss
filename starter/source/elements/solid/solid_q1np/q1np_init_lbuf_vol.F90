@@ -60,7 +60,9 @@
 !=======================================================================
           if (numels <= 0 .or. numelq1np_g <= 0) return
           if (.not. associated(q1np_ktab_g)) return
-          if (q1np_nx_g <= 0 .or. q1np_ny_g <= 0) return
+          if (q1np_nknot_sets_g <= 0) then
+            if (q1np_nx_g <= 0 .or. q1np_ny_g <= 0) return
+          end if
 !
           call q1np_ensure_gauss_scheme(kq1np_tab)
           if (q1np_np_u_g <= 0 .or. q1np_np_v_g <= 0 .or. &

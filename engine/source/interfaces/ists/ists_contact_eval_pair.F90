@@ -93,6 +93,10 @@
       INTEGER MAX_GLOBAL_GP_LOCAL
 
       INTEGER, PARAMETER :: DEBUG_NODE = 1
+!     Deep-penetration guard, mirrors NTS i7for3 (PREC = FIVEEM4):
+!     limits the penalty amplification to FAC <= 1/PREC_CLEAR = 2000,
+!     preventing force blow-up (MSG 259) when the clearance approaches 0.
+      real*8, PARAMETER :: PREC_CLEAR = 5.0d-4
       CHARACTER*7 FRICTION_QUAD_TYPE
       CHARACTER*7 STICK_STATE
 
@@ -282,11 +286,13 @@
           active_area = active_area + area_weight
           PAIR_MAX_PENETRATION = MAX(PAIR_MAX_PENETRATION, DABS(PENE))
 
-          ! Calculate penalty parameter. 
+          ! Calculate penalty parameter.
+          ! Clamp the clearance to PREC_CLEAR*GAP so FAC stays bounded
+          ! (<= 2000) for deep penetration, as in NTS i7for3.
           d1 = STIF
           IF (DABS(GAPV) .GT. EM10) THEN
             gap_distance = GAPV + PENE
-            FAC = DABS(GAPV) / MAX(EM10, gap_distance)
+            FAC = DABS(GAPV) / MAX(PREC_CLEAR*DABS(GAPV), gap_distance)
           ELSE
             FAC = 1.0d0
           ENDIF

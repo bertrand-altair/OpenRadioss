@@ -82,7 +82,7 @@
       USE TABLE_MOD
       USE DT_MOD
       USE GLOB_THERM_MOD
-      USE CONSTANT_MOD, ONLY : ZERO, ONE, HALF
+      USE CONSTANT_MOD, ONLY : ZERO, ONE, HALF, FOURTH
       USE Q1NP_RESTART_MOD
       USE Q1NP_GEOM_MOD
       USE SENSOR_MOD
@@ -536,9 +536,11 @@
         SUBROUTINE Q1NP_GET_BULK_NODE_IDS(IEL_LOCAL, IQ1NP_LOCAL, BULK_NODE_IDS_OUT)
           INTEGER, INTENT(IN)  :: IEL_LOCAL, IQ1NP_LOCAL
           INTEGER, INTENT(OUT) :: BULK_NODE_IDS_OUT(4)
-          INTEGER :: STORED_BULK(4), REBUILT_BULK(4)
-          INTEGER :: K_LOCAL, IERR_LOCAL, OFF14
-          my_real :: MATCH_SCORE
+          INTEGER :: STORED_BULK(4), REBUILT_BULK(4), CENTROID_BULK(4)
+          INTEGER :: K_LOCAL, IERR_LOCAL, IERR_CENTROID, OFF14, TOP_FACE
+          INTEGER :: STORED_SORTED(4), REBUILT_SORTED(4), CENTROID_SORTED(4)
+          LOGICAL :: BULK_SETS_MATCH, BULK_VS_CENTROID_MATCH
+          my_real :: MATCH_SCORE, CENTROID_DIST
 
           OFF14 = KQ1NP_TAB(14,IQ1NP_LOCAL)
           DO K_LOCAL = 1, 4
@@ -546,21 +548,109 @@
           END DO
 
           IF (.NOT. Q1NP_BULK_FIX_READY(IQ1NP_LOCAL)) THEN
-            IF (MINVAL(STORED_BULK) > 0 .AND. MAXVAL(STORED_BULK) <= NUMNOD) THEN
-              Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = STORED_BULK(1:4)
+            ! Try CENTROID-based reconstruction first: pick HEX8 face whose
+            ! centroid is closest to the top-patch centroid. This is much
+            ! more robust on strongly distorted bricks than the original
+            ! corner-distance scoring (which can pick a face that has a
+            ! HEX corner accidentally near the patch centroid).
+            CALL Q1NP_REBUILD_BULK_BY_CENTROID(IEL_LOCAL, IQ1NP_LOCAL, &
+     &                                          CENTROID_BULK, TOP_FACE, &
+     &                                          CENTROID_DIST, IERR_CENTROID)
+
+            ! Also call the legacy corner-score rebuild for cross-checking.
+            CALL Q1NP_REBUILD_BULK_FROM_HEX(IEL_LOCAL, IQ1NP_LOCAL, &
+     &                                      REBUILT_BULK, MATCH_SCORE, IERR_LOCAL)
+
+            IF (MINVAL(STORED_BULK) <= 0 .OR. &
+     &          MAXVAL(STORED_BULK) > NUMNOD) THEN
+              ! Stored bulk invalid: prefer centroid result, fall back to corner.
+              IF (IERR_CENTROID == 0) THEN
+                Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = CENTROID_BULK(1:4)
+              ELSE IF (IERR_LOCAL == 0) THEN
+                Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = REBUILT_BULK(1:4)
+              ELSE
+                Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = STORED_BULK(1:4)
+              END IF
             ELSE
-            CALL Q1NP_REBUILD_BULK_FROM_HEX(IEL_LOCAL, IQ1NP_LOCAL, REBUILT_BULK, MATCH_SCORE, IERR_LOCAL)
-            IF (IERR_LOCAL == 0) THEN
-              Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = REBUILT_BULK(1:4)
-            ELSE
-              Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = STORED_BULK(1:4)
-            END IF
+              ! Stored bulk has valid IDs. Cross-check STORED vs both
+              ! reconstructions. We trust the CENTROID result over STORED
+              ! when they disagree (Starter's corner-score matcher is the
+              ! same algorithm that built STORED and tends to repeat the
+              ! same wrong face on distorted bricks).
+              IF (IERR_CENTROID == 0) THEN
+                STORED_SORTED   = STORED_BULK
+                CENTROID_SORTED = CENTROID_BULK
+                CALL Q1NP_SORT4_ASC(STORED_SORTED)
+                CALL Q1NP_SORT4_ASC(CENTROID_SORTED)
+                BULK_VS_CENTROID_MATCH = .TRUE.
+                DO K_LOCAL = 1, 4
+                  IF (STORED_SORTED(K_LOCAL) /= CENTROID_SORTED(K_LOCAL)) THEN
+                    BULK_VS_CENTROID_MATCH = .FALSE.
+                    EXIT
+                  END IF
+                END DO
+                IF (BULK_VS_CENTROID_MATCH) THEN
+                  ! Same set; keep stored order.
+                  Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = STORED_BULK(1:4)
+                ELSE
+                  ! Centroid result differs: override.
+                  Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = CENTROID_BULK(1:4)
+                  WRITE(*,'(A,I10,A,4I8,A,4I8,A,I2,A,1PE10.3)') &
+     &              ' Q1NP NOTE (centroid override) elem_uid=', KQ1NP_TAB(5,IQ1NP_LOCAL), &
+     &              ' stored=', STORED_BULK, &
+     &              ' centroid_bulk=', CENTROID_BULK, &
+     &              ' top_face=', TOP_FACE, ' dist=', CENTROID_DIST
+                END IF
+              ELSE IF (IERR_LOCAL == 0) THEN
+                ! Centroid failed but corner-score worked: cross-check that.
+                STORED_SORTED  = STORED_BULK
+                REBUILT_SORTED = REBUILT_BULK
+                CALL Q1NP_SORT4_ASC(STORED_SORTED)
+                CALL Q1NP_SORT4_ASC(REBUILT_SORTED)
+                BULK_SETS_MATCH = .TRUE.
+                DO K_LOCAL = 1, 4
+                  IF (STORED_SORTED(K_LOCAL) /= REBUILT_SORTED(K_LOCAL)) THEN
+                    BULK_SETS_MATCH = .FALSE.
+                    EXIT
+                  END IF
+                END DO
+                IF (BULK_SETS_MATCH) THEN
+                  Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = STORED_BULK(1:4)
+                ELSE
+                  Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = REBUILT_BULK(1:4)
+                  WRITE(*,'(A,I10,A,4I8,A,4I8)') &
+     &              ' Q1NP NOTE: stored bulk differs from HEX rebuild for elem_uid=', KQ1NP_TAB(5,IQ1NP_LOCAL), &
+     &              ' stored=', STORED_BULK, &
+     &              ' rebuilt=', REBUILT_BULK
+                END IF
+              ELSE
+                ! Both reconstructions failed: keep stored.
+                Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL) = STORED_BULK(1:4)
+              END IF
             END IF
             Q1NP_BULK_FIX_READY(IQ1NP_LOCAL) = .TRUE.
           END IF
 
           BULK_NODE_IDS_OUT(1:4) = Q1NP_BULK_FIX_IDS(1:4,IQ1NP_LOCAL)
         END SUBROUTINE Q1NP_GET_BULK_NODE_IDS
+
+!=======================================================================
+! Sort an INTEGER(4) array ascending in place (insertion sort).
+!=======================================================================
+        SUBROUTINE Q1NP_SORT4_ASC(ARR)
+          INTEGER, INTENT(INOUT) :: ARR(4)
+          INTEGER :: I_LOC, J_LOC, KEY_LOC
+          DO I_LOC = 2, 4
+            KEY_LOC = ARR(I_LOC)
+            J_LOC = I_LOC - 1
+            DO WHILE (J_LOC >= 1)
+              IF (ARR(J_LOC) <= KEY_LOC) EXIT
+              ARR(J_LOC + 1) = ARR(J_LOC)
+              J_LOC = J_LOC - 1
+            END DO
+            ARR(J_LOC + 1) = KEY_LOC
+          END DO
+        END SUBROUTINE Q1NP_SORT4_ASC
 
 !=======================================================================
 ! Recover the opposite HEX8 face by matching the fitted Q1NP top patch to
@@ -652,6 +742,128 @@
         END SUBROUTINE Q1NP_REBUILD_BULK_FROM_HEX
 
 !=======================================================================
+! Alternative bulk reconstruction using CENTROID matching.
+! For each of the 6 HEX8 faces, compute its centroid and pick the face
+! whose centroid is closest to the NURBS top-patch centroid. The bulk
+! face is the OPPOSITE HEX8 face; the 4 bulk nodes are then ordered
+! so each one is paired with the geometrically closest TOP_CORNER.
+! This is much more robust than corner-distance scoring on strongly
+! distorted bricks where one HEX corner accidentally lives near the
+! center of the patch.
+!=======================================================================
+        SUBROUTINE Q1NP_REBUILD_BULK_BY_CENTROID(IEL_LOCAL, IQ1NP_LOCAL, &
+     &                                          BULK_NODE_IDS_OUT, TOP_FACE_OUT, &
+     &                                          DIST_OUT, IERR_OUT)
+          INTEGER, INTENT(IN)  :: IEL_LOCAL, IQ1NP_LOCAL
+          INTEGER, INTENT(OUT) :: BULK_NODE_IDS_OUT(4)
+          INTEGER, INTENT(OUT) :: TOP_FACE_OUT
+          my_real, INTENT(OUT) :: DIST_OUT
+          INTEGER, INTENT(OUT) :: IERR_OUT
+          INTEGER :: IEL_HEX8, IFACE, IFOPP, K_LOCAL, J_LOCAL, IBEST
+          INTEGER :: FACE_IXS(4,6), OPPOSITE(6)
+          INTEGER :: NODES_FACE_LOCAL(4,6), NODES_OPP_LOCAL(4,6)
+          my_real :: FACE_CENTROID(3,6), TOP_CORNER(3,4), TOP_CENTROID(3)
+          my_real :: D_LOCAL(3), DIST_LOCAL, BEST_DIST
+          INTEGER :: USED_LOCAL(4), IBEST_NODE
+          my_real :: BEST_NODE_DIST, D_CORNER(3), DC_NORM
+          DATA FACE_IXS / &
+     &      2,3,4,5, 6,7,8,9, 2,3,7,6, 3,4,8,7, 4,5,9,8, 5,2,6,9 /
+          DATA OPPOSITE / 2,1,5,6,3,4 /
+
+          BULK_NODE_IDS_OUT = 0
+          TOP_FACE_OUT = 0
+          DIST_OUT = HUGE(ONE)
+          IERR_OUT = 1
+
+          IEL_HEX8 = KQ1NP_TAB(10,IQ1NP_LOCAL)
+          IF (IEL_HEX8 > 0 .AND. IEL_HEX8 <= NUMELS) THEN
+            IF (IXS(NIXS,IEL_HEX8) /= KQ1NP_TAB(5,IQ1NP_LOCAL)) IEL_HEX8 = 0
+          ELSE
+            IEL_HEX8 = 0
+          END IF
+          IF (IEL_HEX8 <= 0) THEN
+            DO J_LOCAL = 1, NUMELS
+              IF (IXS(NIXS,J_LOCAL) == KQ1NP_TAB(5,IQ1NP_LOCAL)) THEN
+                IEL_HEX8 = J_LOCAL
+                EXIT
+              END IF
+            END DO
+          END IF
+          IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS) RETURN
+
+          ! Top-patch corners and centroid (parametric (-1,-1)...(-1,+1)).
+          CALL Q1NP_EVAL_TOP_SURF_POINT(IEL_LOCAL, -ONE, -ONE, TOP_CORNER(1:3,1))
+          CALL Q1NP_EVAL_TOP_SURF_POINT(IEL_LOCAL,  ONE, -ONE, TOP_CORNER(1:3,2))
+          CALL Q1NP_EVAL_TOP_SURF_POINT(IEL_LOCAL,  ONE,  ONE, TOP_CORNER(1:3,3))
+          CALL Q1NP_EVAL_TOP_SURF_POINT(IEL_LOCAL, -ONE,  ONE, TOP_CORNER(1:3,4))
+          TOP_CENTROID(1:3) = FOURTH * (TOP_CORNER(1:3,1) + TOP_CORNER(1:3,2) + &
+     &                                  TOP_CORNER(1:3,3) + TOP_CORNER(1:3,4))
+
+          ! Cache face nodes and compute face centroids.
+          DO IFACE = 1, 6
+            DO K_LOCAL = 1, 4
+              NODES_FACE_LOCAL(K_LOCAL,IFACE) = IXS(FACE_IXS(K_LOCAL,IFACE),IEL_HEX8)
+            END DO
+            IFOPP = OPPOSITE(IFACE)
+            DO K_LOCAL = 1, 4
+              NODES_OPP_LOCAL(K_LOCAL,IFACE) = IXS(FACE_IXS(K_LOCAL,IFOPP),IEL_HEX8)
+            END DO
+
+            IF (MINVAL(NODES_FACE_LOCAL(1:4,IFACE)) <= 0 .OR. &
+     &          MAXVAL(NODES_FACE_LOCAL(1:4,IFACE)) > NUMNOD) THEN
+              FACE_CENTROID(1:3,IFACE) = HUGE(ONE)
+              CYCLE
+            END IF
+            FACE_CENTROID(1:3,IFACE) = FOURTH * ( &
+     &        X(1:3,NODES_FACE_LOCAL(1,IFACE)) + &
+     &        X(1:3,NODES_FACE_LOCAL(2,IFACE)) + &
+     &        X(1:3,NODES_FACE_LOCAL(3,IFACE)) + &
+     &        X(1:3,NODES_FACE_LOCAL(4,IFACE)))
+          END DO
+
+          ! Pick the HEX8 face whose centroid is closest to the top-patch centroid.
+          BEST_DIST = HUGE(ONE)
+          IBEST = 0
+          DO IFACE = 1, 6
+            IF (FACE_CENTROID(1,IFACE) >= HUGE(ONE)*HALF) CYCLE
+            D_LOCAL(1:3) = FACE_CENTROID(1:3,IFACE) - TOP_CENTROID(1:3)
+            DIST_LOCAL = SQRT(DOT_PRODUCT(D_LOCAL,D_LOCAL))
+            IF (DIST_LOCAL < BEST_DIST) THEN
+              BEST_DIST = DIST_LOCAL
+              IBEST = IFACE
+            END IF
+          END DO
+          IF (IBEST <= 0) RETURN
+
+          TOP_FACE_OUT = IBEST
+          DIST_OUT = BEST_DIST
+
+          ! Bulk is the OPPOSITE face; order the 4 bulk nodes so that
+          ! bulk(k) is the node closest to TOP_CORNER(k).
+          USED_LOCAL = 0
+          DO K_LOCAL = 1, 4
+            BEST_NODE_DIST = HUGE(ONE)
+            IBEST_NODE = 0
+            DO J_LOCAL = 1, 4
+              IF (USED_LOCAL(J_LOCAL) == 1) CYCLE
+              D_CORNER(1:3) = TOP_CORNER(1:3,K_LOCAL) - &
+     &                        X(1:3,NODES_OPP_LOCAL(J_LOCAL,IBEST))
+              DC_NORM = DOT_PRODUCT(D_CORNER, D_CORNER)
+              IF (DC_NORM < BEST_NODE_DIST) THEN
+                BEST_NODE_DIST = DC_NORM
+                IBEST_NODE = J_LOCAL
+              END IF
+            END DO
+            IF (IBEST_NODE <= 0) RETURN
+            BULK_NODE_IDS_OUT(K_LOCAL) = NODES_OPP_LOCAL(IBEST_NODE,IBEST)
+            USED_LOCAL(IBEST_NODE) = 1
+          END DO
+
+          IF (MINVAL(BULK_NODE_IDS_OUT) <= 0 .OR. MAXVAL(BULK_NODE_IDS_OUT) > NUMNOD) RETURN
+          IERR_OUT = 0
+        END SUBROUTINE Q1NP_REBUILD_BULK_BY_CENTROID
+
+!=======================================================================
 ! Evaluate one top-surface point using only the Q1NP control points.
 !=======================================================================
         SUBROUTINE Q1NP_EVAL_TOP_SURF_POINT(IEL_LOCAL, XI_LOCAL, ETA_LOCAL, XYZ_OUT)
@@ -694,7 +906,7 @@
             II(I_INIT) = NEL * (I_INIT - 1)
           END DO
 
-          ISTRAIN = 1
+          ISTRAIN = IPARG(44,NG)
           ILAY = 1
           IEXPAN = IPARG(49,NG)
           TH_STRAIN = 0
@@ -871,6 +1083,7 @@
           INTEGER :: IEL_LOCAL, NNODE_LOCAL, K_LOCAL, P_LOCAL, Q_LOCAL
           my_real :: JMAT_LOCAL(3,3), JINV_LOCAL(3,3), DETJ_LOCAL
           INTEGER :: IERR_LOCAL
+          INTEGER :: IEL_HEX8_DBG, K_DBG, IQ1NP_DBG
 
           IERR_OUT = 0
 
@@ -889,7 +1102,46 @@
      &                           NNODE_LOCAL, JMAT_LOCAL, DETJ_LOCAL, JINV_LOCAL, DN_GLOBAL(1:NNODE_LOCAL,1:3), IERR_LOCAL)
 
             IF (IERR_LOCAL /= 0) THEN
-              WRITE(*,*) 'Bad Jacobian'
+              IQ1NP_DBG = Q1NP_IDS(IEL_LOCAL)
+              IEL_HEX8_DBG = KQ1NP_TAB(10,IQ1NP_DBG)
+              WRITE(*,'(A,I10,A,I4,A,I4,A,I4,A,I4,A,1PE12.4)')                &
+     &          ' Q1NP Bad Jacobian: elem_uid=', NGL_ELEM(IEL_LOCAL),         &
+     &          ' lane=', IEL_LOCAL, ' nnode=', NNODE_LOCAL,                  &
+     &          ' p=', P_LOCAL, ' q=', Q_LOCAL, ' detJ=', DETJ_LOCAL
+              WRITE(*,'(A,3(1PE12.4))') '   xi,eta,zeta=', XI, ETA, ZETA
+              WRITE(*,'(A,I4,A,I4,A,I4)') '   elem_u=', ELEM_U(IEL_LOCAL),    &
+     &          ' elem_v=', ELEM_V(IEL_LOCAL),                                &
+     &          ' nctrl=', NCTRL_ELEM(IEL_LOCAL)
+              WRITE(*,'(A,8(1X,1PE10.3))') '   U_KNOT=',                      &
+     &          U_KNOT(1:MIN(U_LEN_EL(IEL_LOCAL),8),IEL_LOCAL)
+              WRITE(*,'(A,8(1X,1PE10.3))') '   V_KNOT=',                      &
+     &          V_KNOT(1:MIN(V_LEN_EL(IEL_LOCAL),8),IEL_LOCAL)
+              IF (IEL_HEX8_DBG > 0 .AND. IEL_HEX8_DBG <= NUMELS) THEN
+                WRITE(*,'(A,I10,A,8I8)')                                      &
+     &            '   HEX8 (iel=', IEL_HEX8_DBG,                              &
+     &            ') IXS(2:9)=', (IXS(K_DBG,IEL_HEX8_DBG), K_DBG=2,9)
+                DO K_DBG = 2, 9
+                  IF (IXS(K_DBG,IEL_HEX8_DBG) > 0 .AND.                       &
+     &                IXS(K_DBG,IEL_HEX8_DBG) <= NUMNOD) THEN
+                    WRITE(*,'(A,I1,A,I8,A,3(1X,1PE12.4))')                    &
+     &                '   IXS(', K_DBG, ')=', IXS(K_DBG,IEL_HEX8_DBG),        &
+     &                ' X=', X(1,IXS(K_DBG,IEL_HEX8_DBG)),                    &
+     &                      X(2,IXS(K_DBG,IEL_HEX8_DBG)),                     &
+     &                      X(3,IXS(K_DBG,IEL_HEX8_DBG))
+                  END IF
+                END DO
+                WRITE(*,'(A,I8,A,I8)')                                        &
+     &            '   KQ1NP_TAB(5)=', KQ1NP_TAB(5,IQ1NP_DBG),                 &
+     &            ' KQ1NP_TAB(10)=', KQ1NP_TAB(10,IQ1NP_DBG)
+              END IF
+              DO K_LOCAL = 1, NNODE_LOCAL
+                WRITE(*,'(A,I4,A,3(1X,1PE12.4),A,I10)')                       &
+     &            '   X_ELEM(', K_LOCAL, ')=',                                &
+     &            X_ELEM(1,K_LOCAL,IEL_LOCAL),                                &
+     &            X_ELEM(2,K_LOCAL,IEL_LOCAL),                                &
+     &            X_ELEM(3,K_LOCAL,IEL_LOCAL),                                &
+     &            ' nid=', NODE_LID(K_LOCAL,IEL_LOCAL)
+              END DO
               IERR_OUT = IERR_LOCAL
               RETURN
             END IF
@@ -952,7 +1204,9 @@
 
           ! strain history update routine. Used to store the small-strain tensor
           ! Update LBUF%STRA (stored strain components) from current deformation-rate terms
-          CALL SSTRA3(DXX, DYY, DZZ, D4, D5, D6, LBUF%STRA, WXX, WYY, WZZ, OFF, NEL, JCVT)
+          IF (ISTRAIN == 1) THEN
+            CALL SSTRA3(DXX, DYY, DZZ, D4, D5, D6, LBUF%STRA, WXX, WYY, WZZ, OFF, NEL, JCVT)
+          END IF
         END SUBROUTINE Q1NP_GP_MAT
 
 !=======================================================================

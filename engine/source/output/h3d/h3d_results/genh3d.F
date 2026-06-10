@@ -466,7 +466,7 @@ c to be made allocatable
      .           IPARTSKIN_P,
      .           NODAL_IPART,
      .           IMAPSKP
-        my_real, DIMENSION(:), ALLOCATABLE :: X_P,D_P
+        my_real, DIMENSION(:), ALLOCATABLE :: X_P,D_P,D_H3D
         INTEGER, DIMENSION(:), ALLOCATABLE :: ITAB_P
         INTEGER :: NUMNODG0,IP0 ,NIXSKIN
         INTEGER :: NUMNOD_P(NSPMD)
@@ -874,6 +874,34 @@ c
             ENDIF
           ENDDO
 c
+c         Q1NP control points are promoted nodes of the owning solid part,
+c         but they are not present in the legacy HEX8 connectivity.
+          IF (NUMELQ1NP_G > 0 .AND. ALLOCATED(KQ1NP_TAB) .AND.
+     .        ALLOCATED(IQ1NP_TAB)) THEN
+            DO Q1NP_IEL=1,NUMELQ1NP_G
+              Q1NP_HEX_IEL = KQ1NP_TAB(10,Q1NP_IEL)
+              IF (Q1NP_HEX_IEL <= 0 .OR. Q1NP_HEX_IEL > NUMELS) CYCLE
+              IF (H3D_DATA%PARTS(1)%PART(IPARTS(Q1NP_HEX_IEL))
+     .            == 1) THEN
+                Q1NP_NCTRL = KQ1NP_TAB(3,Q1NP_IEL)
+                Q1NP_OFFCP = KQ1NP_TAB(4,Q1NP_IEL)
+                IF (Q1NP_NCTRL > 0 .AND. Q1NP_OFFCP > 0) THEN
+                  IF (Q1NP_OFFCP + Q1NP_NCTRL - 1 <=
+     .                SIZE(IQ1NP_TAB)) THEN
+                    DO Q1NP_KK=1,Q1NP_NCTRL
+                      Q1NP_NODE_ID_TMP =
+     .                  IQ1NP_TAB(Q1NP_OFFCP + Q1NP_KK - 1)
+                      IF (Q1NP_NODE_ID_TMP > 0 .AND.
+     .                    Q1NP_NODE_ID_TMP <= NUMNOD) THEN
+                        TAGNOD(Q1NP_NODE_ID_TMP) = 1
+                      ENDIF
+                    ENDDO
+                  ENDIF
+                ENDIF
+              ENDIF
+            ENDDO
+          ENDIF
+c
           DO I=1,NUMELQ
             IF (H3D_DATA%PARTS(1)%PART(IPARTQ(I)) == 1) THEN
               DO J=2,5
@@ -1171,6 +1199,14 @@ c
         ENDIF
         USER_NOD_ID%INPUT_MAX = MAX_NOD_ID
 
+!       H3D may remap legacy Q1NP nodes for visualization. Keep that
+!       synthetic displacement out of the solver displacement array D.
+        IF (ISPMD == 0 .AND. NSPMD == 1) THEN
+          IF (ALLOCATED(D_H3D)) DEALLOCATE(D_H3D)
+          ALLOCATE(D_H3D(3*NUMNOD))
+          D_H3D(1:3*NUMNOD) = D(1:3*NUMNOD)
+        ENDIF
+
 !       First H3D frame: force node creation onto the saved span-corner reference.
         IF (Q1NP_REMAP_ENABLED .AND. Q1NP_REMAP_MAP_READY .AND.
      .      ALLOCATED(Q1NP_OLDNODE_IDS_SAVE) .AND.
@@ -1182,12 +1218,15 @@ c
             Q1NP_OLD_NODE_ID = Q1NP_OLDNODE_IDS_SAVE(Q1NP_KK)
             IF (Q1NP_OLD_NODE_ID < 1 .OR.
      .          Q1NP_OLD_NODE_ID > NUMNOD) CYCLE
-            D(3*(Q1NP_OLD_NODE_ID-1)+1) = X(3*(Q1NP_OLD_NODE_ID-1)+1)
-     .                                  - Q1NP_REFXYZ_SAVE(1,Q1NP_KK)
-            D(3*(Q1NP_OLD_NODE_ID-1)+2) = X(3*(Q1NP_OLD_NODE_ID-1)+2)
-     .                                  - Q1NP_REFXYZ_SAVE(2,Q1NP_KK)
-            D(3*(Q1NP_OLD_NODE_ID-1)+3) = X(3*(Q1NP_OLD_NODE_ID-1)+3)
-     .                                  - Q1NP_REFXYZ_SAVE(3,Q1NP_KK)
+            D_H3D(3*(Q1NP_OLD_NODE_ID-1)+1) =
+     .        X(3*(Q1NP_OLD_NODE_ID-1)+1)
+     .        - Q1NP_REFXYZ_SAVE(1,Q1NP_KK)
+            D_H3D(3*(Q1NP_OLD_NODE_ID-1)+2) =
+     .        X(3*(Q1NP_OLD_NODE_ID-1)+2)
+     .        - Q1NP_REFXYZ_SAVE(2,Q1NP_KK)
+            D_H3D(3*(Q1NP_OLD_NODE_ID-1)+3) =
+     .        X(3*(Q1NP_OLD_NODE_ID-1)+3)
+     .        - Q1NP_REFXYZ_SAVE(3,Q1NP_KK)
           END DO
         END IF
 
@@ -1198,7 +1237,7 @@ c
           CALL STOPTIME(TIMERS,MACRO_TIMER_LIBH3D)
         ELSEIF(ISPMD==0  .AND. H3D_DATA%IH3D == 1)THEN
           CALL STARTIME(TIMERS,MACRO_TIMER_LIBH3D)
-          CALL C_H3D_CREATE_NODES(ITAB,NUMNOD,X,TAGNOD_P,D)
+          CALL C_H3D_CREATE_NODES(ITAB,NUMNOD,X,TAGNOD_P,D_H3D)
           CALL STOPTIME(TIMERS,MACRO_TIMER_LIBH3D)
         ENDIF
         DEALLOCATE(X_P)
@@ -1310,12 +1349,12 @@ c
             END IF
             IF (.NOT. Q1NP_CORNER_READY) CYCLE
             Q1NP_TARGET_XYZ(1:3) = Q1NP_CORNER_XYZ(1:3,Q1NP_CORNER_ID)
-            D(3*(Q1NP_OLD_NODE_ID-1)+1) = Q1NP_TARGET_XYZ(1)
-     .                                  - Q1NP_REFXYZ_SAVE(1,Q1NP_KK)
-            D(3*(Q1NP_OLD_NODE_ID-1)+2) = Q1NP_TARGET_XYZ(2)
-     .                                  - Q1NP_REFXYZ_SAVE(2,Q1NP_KK)
-            D(3*(Q1NP_OLD_NODE_ID-1)+3) = Q1NP_TARGET_XYZ(3)
-     .                                  - Q1NP_REFXYZ_SAVE(3,Q1NP_KK)
+            D_H3D(3*(Q1NP_OLD_NODE_ID-1)+1) =
+     .        Q1NP_TARGET_XYZ(1) - Q1NP_REFXYZ_SAVE(1,Q1NP_KK)
+            D_H3D(3*(Q1NP_OLD_NODE_ID-1)+2) =
+     .        Q1NP_TARGET_XYZ(2) - Q1NP_REFXYZ_SAVE(2,Q1NP_KK)
+            D_H3D(3*(Q1NP_OLD_NODE_ID-1)+3) =
+     .        Q1NP_TARGET_XYZ(3) - Q1NP_REFXYZ_SAVE(3,Q1NP_KK)
           END DO
           IF (ALLOCATED(Q1NP_U_KNOT)) DEALLOCATE(Q1NP_U_KNOT)
           IF (ALLOCATED(Q1NP_V_KNOT)) DEALLOCATE(Q1NP_V_KNOT)
@@ -1809,8 +1848,13 @@ c
 
         IF(H3D_DATA%IH3D  == 1 .AND. NRWALL>0) THEN
 
-          CALL SCANOR(X,D,CDG,XMIN,YMIN,ZMIN,XMAX,YMAX,ZMAX,SCALE,
-     .             WEIGHT)
+          IF (ALLOCATED(D_H3D)) THEN
+            CALL SCANOR(X,D_H3D,CDG,XMIN,YMIN,ZMIN,XMAX,YMAX,ZMAX,SCALE,
+     .               WEIGHT)
+          ELSE
+            CALL SCANOR(X,D,CDG,XMIN,YMIN,ZMIN,XMAX,YMAX,ZMAX,SCALE,
+     .               WEIGHT)
+          ENDIF
 C
 
           CALL H3D_DXYZ_RWALL(
@@ -2099,15 +2143,28 @@ c*******************************************************************************
 c
         IF(NRWALL>0) THEN
 
-          CALL SCANOR(X,D,CDG,XMIN,YMIN,ZMIN,XMAX,YMAX,ZMAX,SCALE,
-     .             WEIGHT)
+          IF (ALLOCATED(D_H3D)) THEN
+            CALL SCANOR(X,D_H3D,CDG,XMIN,YMIN,ZMIN,XMAX,YMAX,ZMAX,SCALE,
+     .               WEIGHT)
+          ELSE
+            CALL SCANOR(X,D,CDG,XMIN,YMIN,ZMIN,XMAX,YMAX,ZMAX,SCALE,
+     .               WEIGHT)
+          ENDIF
 C
 
-          CALL H3D_DXYZ_RWALL_UPDATE(
+          IF (ALLOCATED(D_H3D)) THEN
+            CALL H3D_DXYZ_RWALL_UPDATE(
+     2                   NSTRF,RWBUF,NPRW  ,D_H3D,XMIN,
+     3                   YMIN,ZMIN,XMAX,YMAX,ZMAX,
+     4                   FR_SEC,FR_WALL,WEIGHT,ITAB,
+     5                   XWL ,YWL , ZWL, V1, V2, V3, VV1, VV2, VV3)
+          ELSE
+            CALL H3D_DXYZ_RWALL_UPDATE(
      2                   NSTRF,RWBUF,NPRW  ,D,XMIN,
      3                   YMIN,ZMIN,XMAX,YMAX,ZMAX,
      4                   FR_SEC,FR_WALL,WEIGHT,ITAB,
      5                   XWL ,YWL , ZWL, V1, V2, V3, VV1, VV2, VV3)
+          ENDIF
         ENDIF
 c
         H3DTITLE = ' '
@@ -2132,12 +2189,14 @@ c
         ELSEIF(ISPMD==0 )THEN
           CALL STARTIME(TIMERS,MACRO_TIMER_LIBH3D)
           CALL C_H3D_UPDATE_NODES(H3DTITLE,LEN_H3DTITLE,TT,H3D_DATA%IH3D,
-     .                            ITAB,NUMNOD,D, NRWALL, USER_NOD_ID%RWALL_SHIFT,
+     .                            ITAB,NUMNOD,D_H3D, NRWALL, USER_NOD_ID%RWALL_SHIFT,
      .                            XWL ,YWL , ZWL, V1, V2,
      .                            V3, VV1, VV2, VV3,KXSP_P,
      .                            NISP,NUMSPHG,TAGNOD_P,NPRW)
           CALL STOPTIME(TIMERS,MACRO_TIMER_LIBH3D)
         ENDIF
+
+        IF (ALLOCATED(D_H3D)) DEALLOCATE(D_H3D)
 
         !VIRTUAL NODES
         !  FVMBAGS

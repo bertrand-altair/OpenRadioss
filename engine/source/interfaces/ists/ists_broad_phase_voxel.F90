@@ -59,6 +59,11 @@
 !-----------------------------------------------------------------------
 !       Default number of samples per segment (4 corners + centroid).
         INTEGER, PARAMETER, PUBLIC :: STS_VOXEL_NSAMPLES_PER_SEG = 5
+!       Voxel grid / AABB padding factors (aligned with Q1NP and legacy STS).
+!       Do not use INTER_BP_TOL_PAD_CELL (4.0) here: coarse cells plus a tight
+!       SEARCH_RADIUS drop valid segment pairs; a loose radius floods the buffer.
+        REAL(KIND=WP), PARAMETER :: STS_VOXEL_CELL_SIZE_FACTOR = 1.25_WP
+        REAL(KIND=WP), PARAMETER :: STS_VOXEL_PADDING_FACTOR  = 1.25_WP
 !
         PUBLIC :: STS_VOXEL_BROAD_PHASE
 !
@@ -265,7 +270,7 @@
           REAL(KIND=WP) :: SPAN_X, SPAN_Y, SPAN_Z
           REAL(KIND=WP) :: SPAN_X_SAFE, SPAN_Y_SAFE, SPAN_Z_SAFE
           REAL(KIND=WP) :: DX, DY, DZ, AABB_DIST, DIST_SQ
-          REAL(KIND=WP) :: RX, RY, RZ
+          REAL(KIND=WP) :: RX, RY, RZ, TOL_BASE
           REAL(KIND=WP), PARAMETER :: EPS_SPAN = 1.0E-12_WP
           INTEGER :: NBX, NBY, NBZ, NVOXELS
           INTEGER :: IM, IS, IX, IY, IZ, JX, JY, JZ, CELLID, JJ
@@ -299,9 +304,14 @@
             IF (PTS_S(3,IS) > ZMAX_S) ZMAX_S = PTS_S(3,IS)
           END DO
 !
-          TOL = MAX(EPS_SPAN, TRIGGER_TOL)
-          CELL_SIZE      = 10.0*STS_VOXEL_CELL_SIZE_FACTOR * TOL
-          SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR  * TOL
+!         STS voxel grid (1.25 x TRIGGER_TOL, same as Q1NP / legacy STS).
+!         Pair cutoff = SEARCH_PADDING so grid extent and sample distance
+!         filter stay consistent. TRIGGER_TOL already includes gap + mesh
+!         scale from INTER_BP_TOL_SEARCH.
+          TOL_BASE = MAX(EPS_SPAN, TRIGGER_TOL)
+          CELL_SIZE      = STS_VOXEL_CELL_SIZE_FACTOR * TOL_BASE
+          SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR  * TOL_BASE
+          SEARCH_RADIUS  = SEARCH_PADDING
 !
 !         Coarse AABB rejection (use unpadded master AABB vs secondary AABB)
           DX = MAX(ZERO, MAX(XMIN_S - XMAX_M, XMIN_M - XMAX_S))

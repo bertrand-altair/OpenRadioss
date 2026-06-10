@@ -2221,7 +2221,9 @@ C       Initialize per-Gauss-point Q1NP reference volumes in ELBUF/LBUF
      .     KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB)
 
 C       Reconstruct scalar GBUF%VOL from per-Gauss Q1NP volumes.
-        IF (ASSOCIATED(Q1NP_KTAB_G) .AND. Q1NP_NX_G > 0 .AND. Q1NP_NY_G > 0) THEN
+        IF (ASSOCIATED(Q1NP_KTAB_G) .AND.
+     .      (Q1NP_NKNOT_SETS_G > 0 .OR.
+     .       (Q1NP_NX_G > 0 .AND. Q1NP_NY_G > 0))) THEN
           DO IEL_Q1NP = 1, NUMELQ1NP_G
             IEL_HEX8 = KQ1NP_TAB(10, IEL_Q1NP)
             IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS) CYCLE

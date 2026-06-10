@@ -367,18 +367,18 @@ C rebuild SOL2SPH
           END DO
         END IF
 C
-!   Update KQ1NP_TAB based on the new order after sorting  
-        IF (NUMELQ1NP_G > 0) then  
+!   Update KQ1NP_TAB based on the new order after sorting
+        IF (NUMELQ1NP_G > 0 .AND. ALLOCATED(KQ1NP_TAB_INV)) then
           DO I=1,NEL
             KQ1NP_TAB_INV(NFT+I)=INUM_Q1NP(INDEX(I))
-          ENDDO  
-          IF (KQ1NP_TAB_INV(NFT+1) > 0) THEN
-            DO  I=1,NEL          
-              II = KQ1NP_TAB_INV(NFT+I)
+          ENDDO
+          DO  I=1,NEL
+            II = KQ1NP_TAB_INV(NFT+I)
+            IF (II > 0) THEN
               KQ1NP_TAB(10,II) = NFT + I
-            ENDDO
-          ENDIF  
-        ENDIF                  
+            ENDIF
+          ENDDO
+        ENDIF
 C
         P = CEP(NFT+INDEX(1))
         NB = 1
@@ -478,8 +478,10 @@ C
         IF (NEL>0) THEN
          NEL_PREC = DD_IAD(P,NSPGROUP+N)-DD_IAD(1,NSPGROUP+N)
          NGP(P)=NGROUP
-         NG  = (NEL-1)/NVSIZ + 1
-         DO 220 I=1,NG
+         NG  = 0
+  215    CONTINUE
+         IF (NFT >= NEL + NEL_PREC) GOTO 220
+         NG = NG + 1
 C ngroup global
           NGROUP=NGROUP+1
           CALL ZEROIN(1,NPARG,IPARG(1,NGROUP))
@@ -1411,6 +1413,32 @@ C-------for the case where we use ISRAT=0 law in Part define and ISRAT=1 laws in
 
 C-------
         NE1 = MIN( NVSIZ, NEL + NEL_PREC - NFT) ! Nb of elements in the group
+C-------
+C       Split mixed HEX8 runs so Q1NP elements get their own groups.
+        I_Q1NP_GROUP = 0
+        IF (IKSNOD0 == 8 .AND. NUMELQ1NP_G > 0 .AND.
+     .      ALLOCATED(KQ1NP_TAB_INV)) THEN
+          II = EADD(N) + NFT
+          IF (II > 0 .AND. II <= SIZE(KQ1NP_TAB_INV) .AND.
+     .        KQ1NP_TAB_INV(II) > 0) THEN
+            I_Q1NP_GROUP = 1
+          ENDIF
+          DO J = 2, NE1
+            II = EADD(N) + NFT + J - 1
+            IF (II <= 0 .OR. II > SIZE(KQ1NP_TAB_INV)) EXIT
+            IF (I_Q1NP_GROUP == 1) THEN
+              IF (KQ1NP_TAB_INV(II) <= 0) THEN
+                NE1 = J - 1
+                EXIT
+              ENDIF
+            ELSE
+              IF (KQ1NP_TAB_INV(II) > 0) THEN
+                NE1 = J - 1
+                EXIT
+              ENDIF
+            ENDIF
+          ENDDO
+        ENDIF
         IF(ISSN > 4 .AND. IBOLTP /= 0)THEN
 C
           ISSN_ = ISSN
@@ -1475,11 +1503,20 @@ C-------
      .                      C1=TITR)
         ENDIF
 C-------------------------------------------------
-C Q1NP element group detection
+C Q1NP element group detection (all elements in group).
 C-------------------------------------------------
           I_Q1NP_GROUP = 0
-          IF (NUMELQ1NP_G > 0) THEN
-            IF (KQ1NP_TAB_INV(EADD(N)+NFT) > 0) I_Q1NP_GROUP = 1
+          IF (IKSNOD0 == 8 .AND. NUMELQ1NP_G > 0 .AND.
+     .        ALLOCATED(KQ1NP_TAB_INV)) THEN
+            I_Q1NP_GROUP = 1
+            DO J = 1, NE1
+              II = EADD(N) + NFT + J - 1
+              IF (II <= 0 .OR. II > SIZE(KQ1NP_TAB_INV) .OR.
+     .            KQ1NP_TAB_INV(II) <= 0) THEN
+                I_Q1NP_GROUP = 0
+                EXIT
+              ENDIF
+            ENDDO
           ENDIF
 C
 C-------------------------------------------------
@@ -1589,6 +1626,7 @@ C------------------------------------------------------
           IF (NPG == 1 .AND. JHBE == 15) NPG = NPG + 1
 C
           NFT = NFT + NE1
+          GOTO 215
   220    CONTINUE
          NGP(P)=NGROUP-NGP(P)
         ENDIF

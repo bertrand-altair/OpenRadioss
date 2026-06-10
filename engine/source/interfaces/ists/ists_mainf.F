@@ -175,11 +175,12 @@ C-----------------------------------------------
       INTEGER :: STS_FLAG
       INTEGER :: SEC_SURF_ID_STS
       INTEGER :: MST_SURF_ID_STS
-!     STS workflow uses fixed /SURF user IDs (100 secondary, 200 master).
-!     The STS_VOXEL_DRIVER_MOD owns readiness checks and one-time hints when
-!     those surfaces are missing or empty; otherwise the engine stops (MSG 324).
+      INTEGER :: NSEG_SEC, NSEG_MST
+!     Secondary / master surfaces from IPARI(45/46); voxel broad-phase
+!     populates candidate segment pairs up to MAX_STS_SIZE_ACTUAL.
       LOGICAL :: STS_VOXEL_OVERFLOW                       ! voxel broad-phase overflow flag
       LOGICAL, SAVE :: INT7_CONTACT_MODE_MSG_DONE = .FALSE. ! one-time flag for the contact-mode banner
+      LOGICAL, SAVE :: STS_VOXEL_OVERFLOW_WARN_DONE = .FALSE.
 C-----------------------------------------------
 C   S o u r c e   L i n e s
 C-----------------------------------------------
@@ -261,9 +262,7 @@ C--- Corresponding Friction model
       ENDIF
 
 C-----------------------------------------------
-C     Type 7 STS: voxel broad-phase only (early RETURN), or fatal error.
-C     Requires /SURF user IDs 100 (secondary) and 200 (master) with
-C     non-empty segment lists.
+C     Type 7 STS (STS_FLAG == 1): voxel broad-phase via IPARI(45/46).
 C-----------------------------------------------
       IF (NTY == 7 .AND. STS_FLAG == 1) THEN
 C
@@ -271,9 +270,13 @@ C
         SEC_SURF_ID_STS = IPARI(45,NIN)
 C
         IF (JTASK == 1) THEN
-C          Set storage capacity for the candidate arrays. 
-          MAX_STS_SIZE_ACTUAL = MAX(1, 10*MAX(IGRSURF(SEC_SURF_ID_STS)%NSEG,
-     &                                        IGRSURF(MST_SURF_ID_STS)%NSEG))
+C          Set storage capacity for the candidate arrays.
+C          Upper bound: all unique (sec, mst) pairs; practical cap:
+C          NSEG_sec * 512 (matches prior i7mainf STS voxel sizing).
+          NSEG_SEC = IGRSURF(SEC_SURF_ID_STS)%NSEG
+          NSEG_MST = IGRSURF(MST_SURF_ID_STS)%NSEG
+          MAX_STS_SIZE_ACTUAL = MAX(1, MIN(NSEG_SEC * NSEG_MST,
+     &                                    NSEG_SEC * 512))
 
 C         Allocate / refresh the working arrays consumed by
 C         STS_CONTACTS_ASSEMBLE and I7ASS33 (ASS_FLAG = 2).
@@ -308,15 +311,12 @@ C         Voxel broad phase populates CAND_*_SEG_ID and CONT_ELEMENT.
      &          COUNT, STS_VOXEL_OVERFLOW)
           IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STOPTIME(TIMERS,35)
 
-          IF (STS_VOXEL_OVERFLOW) THEN
-             WRITE(*,'(A,I8,A,I10,A,I10)') 
-     &          ' WARNING INTERFACE ', NOINT, 
-     &          ': STS voxel pair overflow, kept ', COUNT, 
-     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
-            WRITE(* ,'(A,I8,A,I10,A,I10)') 
-     &          ' WARNING INTERFACE ', NOINT, 
-     &          ': STS voxel pair overflow, kept ', COUNT, 
-     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
+          IF (STS_VOXEL_OVERFLOW .AND. .NOT. STS_VOXEL_OVERFLOW_WARN_DONE) THEN
+            WRITE(*,'(A,I8,A,I10,A,I10)') 
+     &        ' WARNING INTERFACE ', NOINT, 
+     &        ': STS voxel pair overflow, kept ', COUNT, 
+     &        ' / capacity ', MAX_STS_SIZE_ACTUAL
+            STS_VOXEL_OVERFLOW_WARN_DONE = .TRUE.
           END IF
 
 C         Friction model 

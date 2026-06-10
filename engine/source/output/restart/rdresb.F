@@ -1145,6 +1145,13 @@ C Read real arrays
         IF (SQ1NPCTRL_SHARED_G > 0) THEN
           CALL READ_DB(Q1NP_CPTAB,3*SQ1NPCTRL_SHARED_G)
         ENDIF
+C       Bind Q1NP_KTAB_G pointer to Q1NP_KTAB so engine-side helpers
+C       that still test ASSOCIATED(Q1NP_KTAB_G) see a valid target.
+        IF (ALLOCATED(Q1NP_KTAB) .AND. SIZE(Q1NP_KTAB) > 0) THEN
+          Q1NP_KTAB_G => Q1NP_KTAB
+        ELSE
+          Q1NP_KTAB_G => NULL()
+        ENDIF
       ENDIF
 C--------------------------------------
 C     READING REALS
