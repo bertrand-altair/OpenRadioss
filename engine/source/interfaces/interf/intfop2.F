@@ -297,7 +297,20 @@ C
           ENDIF
 
           IF(IMPL_S /= 1)THEN
-           CALL I7MAINF(output,TIMERS,
+C
+            IF(IPARI(105,N) > 0) THEN
+C
+              CALL ISTS_MAINF(TIMERS,
+     1                      IPARI         ,PTR_X          ,A              ,
+     2                      STIFN         ,FCONT          ,N              ,
+     3                      JTASK         ,NB_JLT_NEW(JTASK),
+     4                      TEMP          ,NPC            ,TF             ,
+     5                      INTERFACES%INTBUF_TAB(N)      ,IXS            ,
+     6                      H3D_DATA      ,INTERFACES%INTBUF_FRIC_TAB,IGRSURF)
+C
+            ELSE  
+C                      
+              CALL I7MAINF(output,TIMERS,
      1  IPARI          ,PTR_X          ,A                ,ALE_CONNECTIVITY,XCELL       ,
      2  ICODT          ,FSAV(1,NTH)    ,PTR_V            ,PTR_MS          ,DT2T        ,
      3  NELTST         ,ITYPTST        ,ITAB             ,STIFN           ,FSKYI       ,
@@ -317,8 +330,12 @@ C
      I  KXIG3D         ,WIGE           ,KNOT             ,IGEO            ,MULTI_FVM   , 
      J  H3D_DATA       ,INTERFACES%INTBUF_FRIC_TAB,KNOTLOCPC      ,KNOTLOCEL        ,JTASK        ,
      K  TAGNCONT       ,KLOADPINTER    ,LOADPINTER       ,LOADP_HYD_INTER ,DGAPLOADINT ,
-     L  S_LOADPINTER   ,INTEREFRIC     ,XCELL_REMOTE(N)%SIZE_MY_REAL_ARRAY_1D,XCELL_REMOTE(N)%MY_REAL_ARRAY_1D, IGRSURF)
+     L  S_LOADPINTER   ,INTEREFRIC     ,XCELL_REMOTE(N)%SIZE_MY_REAL_ARRAY_1D,XCELL_REMOTE(N)%MY_REAL_ARRAY_1D)
+C
+            ENDIF     
+C
           ELSE
+C            
            CALL I7MAINF(output, TIMERS,
      1  IPARI      ,PTR_X         ,A                 ,ALE_CONNECTIVITY,XCELL       ,
      2  ICODT      ,FSAV(1,NTH)   ,PTR_V             ,PTR_MS          ,DT2T        ,
@@ -339,9 +356,10 @@ C
      I  KXIG3D     ,WIGE          ,KNOT             ,IGEO            ,MULTI_FVM,     
      J  H3D_DATA   ,INTERFACES%INTBUF_FRIC_TAB,KNOTLOCPC       ,KNOTLOCEL       ,JTASK       ,
      K  TAGNCONT    ,KLOADPINTER  ,LOADPINTER       ,LOADP_HYD_INTER ,DGAPLOADINT ,
-     L  S_LOADPINTER,INTEREFRIC   ,XCELL_REMOTE(N)%SIZE_MY_REAL_ARRAY_1D,XCELL_REMOTE(N)%MY_REAL_ARRAY_1D, IGRSURF)
+     L  S_LOADPINTER,INTEREFRIC   ,XCELL_REMOTE(N)%SIZE_MY_REAL_ARRAY_1D,XCELL_REMOTE(N)%MY_REAL_ARRAY_1D)
            IAD=IAD+NUM_IMP(N)
           END IF
+C          
           IF(NTY == 17 .AND. IPARI(33,N) == 0)THEN            ! ILAGM == 0
             IGN   =IPARI(36,N)
             IGE   =IPARI(34,N)

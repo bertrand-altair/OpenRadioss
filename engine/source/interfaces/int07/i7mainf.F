@@ -85,7 +85,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      I                   WIGE           ,KNOT        ,IGEO           ,MULTI_FVM        ,H3D_DATA   ,
      J                   INTBUF_FRIC_TAB,KNOTLOCPC   ,KNOTLOCEL      ,ITASK            ,TAGNCONT   ,
      K                   KLOADPINTER    ,LOADPINTER  ,LOADP_HYD_INTER,DGAPLOADINT      ,S_LOADPINTER,
-     L                   INTEREFRIC     ,S_XCELL_REMOTE,XCELL_REMOTE, IGRSURF)
+     L                   INTEREFRIC     ,S_XCELL_REMOTE,XCELL_REMOTE )
 C======================================================================
 C-----------------------------------------------
 C   M o d u l e s
@@ -102,12 +102,6 @@ C-----------------------------------------------
       USE OUTPUT_MOD
       USE I18DST3_MOD , ONLY : I18DST3
       USE I18FOR3_MOD , ONLY : I18FOR3
-      USE sts_gp_state_mod
-      USE Q1NP_CONTACT_DRIVER_MOD, ONLY: Q1NP_CONTACT_DATA_READY,
-     &  Q1NP_CONTACT_DRIVER_INT7, Q1NP_CONTACT_INIT_GRID_NODES
-      USE STS_VOXEL_DRIVER_MOD, ONLY: STS_VOXEL_DRIVER_DATA_READY
-      USE STS_BROAD_PHASE_VOXEL_MOD, ONLY: STS_VOXEL_BROAD_PHASE
-      USE STS_CONTACT_STIFFNESS_MOD, ONLY: STS_CONTACT_STIFFNESS
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -116,7 +110,6 @@ C-----------------------------------------------
 C   G l o b a l   P a r a m e t e r s
 C-----------------------------------------------
 #include      "mvsiz_p.inc"
-#include      "elements.inc"
 C-----------------------------------------------
 C   C o m m o n   B l o c k s
 C-----------------------------------------------
@@ -129,8 +122,6 @@ C-----------------------------------------------
 #include      "parit_c.inc"
 #include      "timeri_c.inc"
 #include      "impl1_c.inc"
-#include      "scr14_c.inc"
-#include      "scr16_c.inc"
 #include      "macro.inc"
 #include      "comlock.inc"
 #include      "tabsiz_c.inc"
@@ -141,7 +132,6 @@ C-----------------------------------------------
       TYPE(OUTPUT_), INTENT(INOUT) :: OUTPUT
       TYPE(t_ale_connectivity), INTENT(IN) :: ALE_CONNECTIVITY
       TYPE (ELBUF_STRUCT_), DIMENSION(NGROUP) :: ELBUF_TAB
-      TYPE(SURF_)   ,DIMENSION(NSURF)   :: IGRSURF
       INTEGER NELTST,ITYPTST,NIN,NEWFRONT,NSTRF(*),NRTMDIM, IAD17, ISENSINT(*),DIMFB,IGROUPS(NUMELS)
       INTEGER IPARI(NPARI,NINTER), ICODT(*),ICONTACT(*),ITAB(*), ISKY(*), KINET(*),IPARG(NPARG,*),TAGNCONT(NLOADP_HYD_INTER,NUMNOD)
       INTEGER NB_JLT,NB_JLT_NEW,NB_STOK_N,JTASK,NISKYFI, LINDMAX,ITASK
@@ -170,47 +160,10 @@ C-----------------------------------------------
       TYPE(INTBUF_FRIC_STRUCT_), TARGET, DIMENSION(NINTERFRIC) ::  INTBUF_FRIC_TAB
       TYPE (GROUP_)  , DIMENSION(NGRBRIC) :: IGRBRIC
 C-----------------------------------------------
-C     N E W   V a r i a b l e s
-C-----------------------------------------------
-      my_real, DIMENSION(:,:,:), ALLOCATABLE :: CONT_ELEMENT        !contact element array
-      my_real, DIMENSION(:,:,:), ALLOCATABLE :: load_arr            !load array
-      my_real, DIMENSION(:),     ALLOCATABLE :: STS_STIF            !STS pair stiffness
-      INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_SEC_SEG_ID   !secondary segment nodes
-      INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_MST_SEG_ID   !primary segment nodes
-      INTEGER, DIMENSION(:),       ALLOCATABLE :: node_id_load      !node id array (8 nodes per element)
-      INTEGER COUNT !count for the number of contact elements found
-      INTEGER ASS_FLAG !Assembly flag, 0 if old Assembly, 1 if new assembly algorithm called
-      INTEGER :: MAX_STS_SIZE_ACTUAL !actual calculated sts array size needed      
-      INTEGER OPTION !option for the contact algorithm
-      INTEGER IMPACT_glob !global impact flag, 0 if no impact, 1 if impact
-      LOGICAL :: STS_ACTIVE !true if STS is active, false if NTS is active
-      INTEGER :: IP_MAX
-      INTEGER :: MAX_GLOBAL_GP_LOC
-C-----------------------------------------------
-C   H i s t o r y   V a r i a b l e s   f o r   F r i c t i o n
-C-----------------------------------------------
-      REAL*8, DIMENSION(:,:,:), ALLOCATABLE, SAVE :: XI1_HIST  ! History of xi1 per Gauss point
-      REAL*8, DIMENSION(:,:,:), ALLOCATABLE, SAVE :: XI2_HIST  ! History of xi2 per Gauss point
-      REAL*8, DIMENSION(:,:,:), ALLOCATABLE, SAVE :: TTRIAL1_HIST  ! History of T_trial(1) per Gauss point
-      REAL*8, DIMENSION(:,:,:), ALLOCATABLE, SAVE :: TTRIAL2_HIST  ! History of T_trial(2) per Gauss point
-      INTEGER, SAVE :: MAX_STS_SIZE_HIST = 0  ! Stored size for history arrays
-      INTEGER, SAVE :: IP_MAX_HIST = 0        ! Stored quadrature order
-C-----------------------------------------------
-C   G l o b a l   G a u s s   P o i n t   S t a t e   (N e w   S T S)
-C-----------------------------------------------
-C  1D arrays indexed by a global Gauss point index:
-C     gp_index = secondary_element_id * (IP_MAX*IP_MAX) + local_gp_index
-C  where local_gp_index = (z-1)*IP_MAX + (q-1)
-C-----------------------------------------------
-      INTEGER, DIMENSION(:), ALLOCATABLE, SAVE :: GP_GLOBAL_ID
-      INTEGER, DIMENSION(:), ALLOCATABLE, SAVE :: GP_SECONDARY_EL_ID
-      INTEGER, DIMENSION(:), ALLOCATABLE, SAVE :: GP_MASTER_EL_ID
-      INTEGER, DIMENSION(:), ALLOCATABLE, SAVE :: GP_MASTER_EL_ID_PREV
-C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
-      INTEGER I, J, K, L, I_STOK, JLT_NEW, JLT , NFT, IVIS2,
-     .        IBC,  NSEG, ISECIN, IBAG, IADM,
+      INTEGER I, J, I_STOK, JLT_NEW, JLT , NFT, IVIS2,
+     .        IBC,  ISECIN, IBAG, IADM,
      .        IGAP, INACTI, IFQ, MFROT, IGSTI, NISUB, ITIED,
      .        JLT_TIED, NB_LOC, I_STOK_LOC,DEBUT,
      .        ILAGM, LENR, LENT, MAXCC,INTTH,IFORM, H, IERROR,
@@ -224,8 +177,7 @@ C-----------------------------------------------
      .        IELECI(MVSIZ), NSMS(MVSIZ), IPARTFRICSI(MVSIZ),
      .        IPARTFRICMI(MVSIZ),INDEXISOT(MVSIZ),INDEXORTH(MVSIZ),
      .        IREP_FRICMI(MVSIZ)
-      my_real STARTT, FRIC, GAP, STOPT,VISC,VISCF,STIGLO,GAPMIN, KMIN, KMAX, GAPMAX,
-     .        GAP_FOR_STS,RSTIF,FHEATS,FHEATM,TINT,DTMINI
+      my_real STARTT, FRIC, GAP, STOPT,VISC,VISCF,STIGLO,GAPMIN, KMIN, KMAX, GAPMAX,RSTIF,FHEATS,FHEATM,TINT,DTMINI
 C-----------------------------------------------
       my_real NX1(MVSIZ), NX2(MVSIZ), NX3(MVSIZ), NX4(MVSIZ),
      .        NY1(MVSIZ), NY2(MVSIZ), NY3(MVSIZ), NY4(MVSIZ),
@@ -260,9 +212,7 @@ C-----------------------------------------------
      .        PHI1(MVSIZ),PHI2(MVSIZ),PHI3(MVSIZ),PHI4(MVSIZ)
       my_real XFILTR_FRIC,FRIC_COEFS(MVSIZ,10),VISCFFRIC(MVSIZ),FRICC(MVSIZ),
      .        FRIC_COEFS2(MVSIZ,10),VISCFFRIC2(MVSIZ),FRICC2(MVSIZ),
-     .        DIR1(MVSIZ,3),DIR2(MVSIZ,3),DIR_FRICMI(MVSIZ,2),
-     .        XMU(MVSIZ), ! Effective friction coefficients for STS
-     .        ALPHA0, QFRICT
+     .        DIR1(MVSIZ,3),DIR2(MVSIZ,3),DIR_FRICMI(MVSIZ,2)
       INTEGER, DIMENSION(:) ,POINTER  :: TABCOUPLEPARTS_FRIC
       INTEGER, DIMENSION(:) ,POINTER  :: TABPARTS_FRIC 
       INTEGER, DIMENSION(:) ,POINTER  :: ADPARTS_FRIC 
@@ -277,25 +227,9 @@ C-----------------------------------------------
       INTEGER :: NRTM
       LOGICAL TYPE18
       INTEGER :: IDIR
-      INTEGER :: SEC_SURF_ID_STS
-      INTEGER :: MST_SURF_ID_STS
-!     STS workflow uses fixed /SURF user IDs (100 secondary, 200 master).
-!     The STS_VOXEL_DRIVER_MOD owns readiness checks and one-time hints when
-!     those surfaces are missing or empty; otherwise the engine stops (MSG 324).
-      LOGICAL :: STS_VOXEL_OVERFLOW                       ! voxel broad-phase overflow flag
-      LOGICAL, SAVE :: INT7_CONTACT_MODE_MSG_DONE = .FALSE. ! one-time flag for the contact-mode banner
 C-----------------------------------------------
 C   S o u r c e   L i n e s
 C-----------------------------------------------
-      STS_ACTIVE = .FALSE. ! .FALSE. = NTS (node-to-surface); .TRUE. = STS (segment-to-segment)
-      IF (IPARI(105,NIN) == 1) STS_ACTIVE = .TRUE.
-C      
-      IF (STS_ACTIVE) THEN
-        ASS_FLAG = 2  ! New STS assembly algorithm
-      ELSE
-        ASS_FLAG = 0  ! Old NTS assembly algorithm
-             ENDIF
-
       TYPE18 = .FALSE.
       NRTM = IPARI(4,NIN)
       NSN = IPARI(5,NIN)
@@ -320,7 +254,7 @@ C heat interface
       IFORM = IPARI(48,NIN)
       IRSTH = IPARI(42,NIN)
 C adaptive meshing
-      IADM = IPARI(44,NIN) 
+      IADM = IPARI(44,NIN)
       NRADM = IPARI(49,NIN)
       PADM = INTBUF_TAB%VARIABLES(24)
       ANGLT = INTBUF_TAB%VARIABLES(25)
@@ -329,45 +263,6 @@ C adaptive meshing
       STOPT = INTBUF_TAB%VARIABLES(11)
       IF(STARTT > TT) RETURN !precondition
       IF(TT > STOPT)  RETURN !precondition
-C-----------------------------------------------
-C     One-time diagnostic message: which contact branch applies (first cycle).
-C-----------------------------------------------
-      IF (NTY == 7 .AND. JTASK == 1 .AND. .NOT. INT7_CONTACT_MODE_MSG_DONE) THEN
-        IF (ABS(TT) <= 1.0E-20 .OR. NCYCLE <= 0) THEN
-          IF (Q1NP_CONTACT_DATA_READY()) THEN
-            WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = Q1NP (NURBS)'
-          ELSE IF (STS_ACTIVE .AND. STS_VOXEL_DRIVER_DATA_READY(IGRSURF, NSURF, NOINT,
-     &                .FALSE., SEC_SURF_ID_STS, MST_SURF_ID_STS)) THEN
-            WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = STS (voxel broad-phase)'
-          ELSE
-            WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = NTS (node-to-surface)'
-          ENDIF
-          INT7_CONTACT_MODE_MSG_DONE = .TRUE.
-        ENDIF
-      ENDIF
-C-----------------------------------------------
-C     Type 7: when Q1NP data exists, run Q1NP and skip legacy STS/NTS.
-C-----------------------------------------------
-      GAP = INTBUF_TAB%VARIABLES(2)
-      IF (NTY == 7) THEN
-        IF (Q1NP_CONTACT_DATA_READY()) THEN
-          KMIN   = INTBUF_TAB%VARIABLES(17)
-          KMAX   = INTBUF_TAB%VARIABLES(18)
-          ! Q1NP_CONTACT_INIT_GRID_NODES:Returns IXS, NIXS, NUMELS for FCONT scatter in the force assembly.
-          CALL Q1NP_CONTACT_INIT_GRID_NODES(IXS, NIXS, NUMELS)
-          CALL MY_BARRIER()
-          IF (JTASK == 1) THEN
-            CALL Q1NP_CONTACT_DRIVER_INT7(NCYCLE, NUMNOD, X, A, STIFN,
-     &        GAP, IGSTI, KMIN, KMAX, INTBUF_TAB%IRECTM,
-     &        INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, INTBUF_TAB%STFM, NRTM,
-     &        FCONT, INCONV == 1 .AND.
-     &        ANIM_V(4)+OUTP_V(4)+H3D_DATA%N_VECT_CONT > 0)
-          ENDIF
-          CALL MY_BARRIER()
-          RETURN
-        ENDIF
-      ENDIF
-C-----------------------------------------------
       FRIC = INTBUF_TAB%VARIABLES(1)
       GAP = INTBUF_TAB%VARIABLES(2)
       GAPMIN = INTBUF_TAB%VARIABLES(13)
@@ -377,8 +272,6 @@ C-----------------------------------------------
       IF(INTTH > 0) IFRIC =IPARI(50,NIN)
       XFRIC  = INTBUF_TAB%VARIABLES(34)
       GAPMAX = INTBUF_TAB%VARIABLES(16)
-C     Scalar gap consistent with I7COR3:
-      GAP_FOR_STS = MIN(GAPMAX, MAX(GAPMIN, GAP))
       KMIN   = INTBUF_TAB%VARIABLES(17)
       KMAX   = INTBUF_TAB%VARIABLES(18)
       RSTIF  = INTBUF_TAB%VARIABLES(20)
@@ -402,7 +295,7 @@ C--- Corresponding Friction model
       NSETPRTS = 0
       NPARTFRIC = 0 
       XFILTR_FRIC = ZERO
-
+      
       IF(INTFRIC /= 0) THEN 
          TABCOUPLEPARTS_FRIC => INTBUF_FRIC_TAB(INTFRIC)%TABCOUPLEPARTS_FRIC
          TABCOEF_FRIC => INTBUF_FRIC_TAB(INTFRIC)%TABCOEF_FRIC
@@ -425,157 +318,6 @@ C--- Corresponding Friction model
       NINLOADP = IPARI(95,NIN) ! load pressure related to inter
       DGAPLOADP = INTBUF_TAB%VARIABLES(46)
 
-C-----------------------------------------------
-C     Type 7 STS: voxel broad-phase only (early RETURN), or fatal error.
-C     Requires /SURF user IDs 100 (secondary) and 200 (master) with
-C     non-empty segment lists.
-C-----------------------------------------------
-      IF (NTY == 7 .AND. STS_ACTIVE) THEN
-        IF (STS_VOXEL_DRIVER_DATA_READY(IGRSURF, NSURF, NOINT,
-     &        JTASK == 1, SEC_SURF_ID_STS, MST_SURF_ID_STS)) THEN
-          CALL MY_BARRIER()
-          IF (JTASK == 1) THEN
-C           Set storage capacity for the candidate arrays. 
-            MAX_STS_SIZE_ACTUAL = MAX(1, MIN(
-     &          IGRSURF(SEC_SURF_ID_STS)%NSEG * 128,
-     &          IGRSURF(SEC_SURF_ID_STS)%NSEG *
-     &          IGRSURF(MST_SURF_ID_STS)%NSEG))
-
-C           Allocate / refresh the working arrays consumed by
-C           STS_CONTACTS_ASSEMBLE and I7ASS33 (ASS_FLAG = 2).
-            IF (ALLOCATED(CONT_ELEMENT))    DEALLOCATE(CONT_ELEMENT)
-            IF (ALLOCATED(load_arr))        DEALLOCATE(load_arr)
-            IF (ALLOCATED(STS_STIF))        DEALLOCATE(STS_STIF)
-            IF (ALLOCATED(CAND_SEC_SEG_ID)) DEALLOCATE(CAND_SEC_SEG_ID)
-            IF (ALLOCATED(CAND_MST_SEG_ID)) DEALLOCATE(CAND_MST_SEG_ID)
-            IF (ALLOCATED(node_id_load))    DEALLOCATE(node_id_load)
-            ALLOCATE(CONT_ELEMENT(MAX_STS_SIZE_ACTUAL,3,8))
-            ALLOCATE(load_arr(MAX_STS_SIZE_ACTUAL,8,4))
-            ALLOCATE(STS_STIF(MAX_STS_SIZE_ACTUAL))
-            ALLOCATE(CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
-            ALLOCATE(CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
-            ALLOCATE(node_id_load(MAX_STS_SIZE_ACTUAL*8))
-            CONT_ELEMENT  = ZERO
-            load_arr      = ZERO
-            STS_STIF      = ZERO
-            CAND_SEC_SEG_ID = 0
-            CAND_MST_SEG_ID = 0
-            node_id_load    = 0
-
-C           Per-pair friction history.
-            IP_MAX = 2
-            IF (.NOT. ALLOCATED(XI1_HIST) .OR.
-     &          MAX_STS_SIZE_ACTUAL > MAX_STS_SIZE_HIST .OR.
-     &          IP_MAX /= IP_MAX_HIST) THEN
-              IF (ALLOCATED(XI1_HIST)) DEALLOCATE(
-     &          XI1_HIST, XI2_HIST, TTRIAL1_HIST, TTRIAL2_HIST)
-              ALLOCATE(XI1_HIST   (MAX_STS_SIZE_ACTUAL,IP_MAX,IP_MAX))
-              ALLOCATE(XI2_HIST   (MAX_STS_SIZE_ACTUAL,IP_MAX,IP_MAX))
-              ALLOCATE(TTRIAL1_HIST(MAX_STS_SIZE_ACTUAL,IP_MAX,IP_MAX))
-              ALLOCATE(TTRIAL2_HIST(MAX_STS_SIZE_ACTUAL,IP_MAX,IP_MAX))
-              XI1_HIST    = 0.d0
-              XI2_HIST    = 0.d0
-              TTRIAL1_HIST = 0.d0
-              TTRIAL2_HIST = 0.d0
-              MAX_STS_SIZE_HIST = MAX_STS_SIZE_ACTUAL
-              IP_MAX_HIST       = IP_MAX
-            ENDIF
-            CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, IP_MAX)
-
-C           Voxel broad phase populates CAND_*_SEG_ID and CONT_ELEMENT.
-            CALL STS_VOXEL_BROAD_PHASE(
-     &          IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
-     &          X, NUMNOD, GAP_FOR_STS, MAX_STS_SIZE_ACTUAL,
-     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
-     &          COUNT, STS_VOXEL_OVERFLOW)
-            IF (STS_VOXEL_OVERFLOW) THEN
-              WRITE(*,'(A,I8,A,I10,A,I10)') 
-     &          ' WARNING INTERFACE ', NOINT, 
-     &          ': STS voxel pair overflow, kept ', COUNT, 
-     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
-              WRITE(* ,'(A,I8,A,I10,A,I10)') 
-     &          ' WARNING INTERFACE ', NOINT, 
-     &          ': STS voxel pair overflow, kept ', COUNT, 
-     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
-            END IF
-
-C           Friction model 
-C           TODO: placeholder part-ID mapping; proper part-ID resolution is a separate task.
-            IF (COUNT > 0) THEN
-              DO I = 1, MIN(COUNT, MVSIZ)
-                IPARTFRICSI(I) = 0
-                IPARTFRICMI(I) = 0
-              ENDDO
-              IF (IORTHFRIC == 0) THEN
-                JLT_TIED = 0
-                CALL FRICTIONPARTS_MODEL_ISOT(
-     1               INTFRIC,        MIN(COUNT,MVSIZ),  IPARTFRICSI,
-     2               IPARTFRICMI,    ADPARTS_FRIC,
-     3               NSETPRTS,       TABCOUPLEPARTS_FRIC,NPARTFRIC,
-     4               TABPARTS_FRIC,  TABCOEF_FRIC,
-     5               FRIC,           VISCF,            INTBUF_TAB%FRIC_P,
-     6               FRIC_COEFS,     FRICC,
-     7               VISCFFRIC,      NTY,              MFROT,
-     8               IORTHFRIC,      IFRIC,
-     9               JLT_TIED,       TINT,             TEMPI,
-     A               NPC,            TF,
-     B               TEMP,           H1,               H2,
-     C               H3,             H4,
-     D               IX1,            IX2,              IX3,
-     E               IX4,            IFORM)
-              ENDIF
-
-C     	    Calculate Contact Stiffness for STS pairs.
-            CALL STS_CONTACT_STIFFNESS(
-     &        CAND_MST_SEG_ID, CAND_SEC_SEG_ID, COUNT,
-     &        MAX_STS_SIZE_ACTUAL,
-     &        INTBUF_TAB%IRECTM, INTBUF_TAB%STFM, NRTM,
-     &        INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, NUMNOD,
-     &        IGSTI, KMIN, KMAX, STIGLO, STS_STIF)
-
-C           STS Gauss contact search.
-            OPTION = 0
-            QFRICT = 0.d0
-            ALPHA0 = XFILTR_FRIC
-            CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
-     &        NOINT, NCYCLE, TT,
-     &        CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
-     &        load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
-     &        MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
-
-
-C           Fall back to Lobatto contact search if Gauss contact search reported no contact.
-            IF (IMPACT_glob == 0) THEN
-              OPTION = 1
-              QFRICT = 0.d0
-              ALPHA0 = XFILTR_FRIC
-              CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
-     &          NOINT, NCYCLE, TT,
-     &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
-     &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
-     &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
-            ENDIF
-
-C           Scatter the per-pair load_arr / node_id_load directly into A / STIFN. 
-            IF (IMPACT_glob /= 0) THEN
-              IPARI(29,NIN) = 1
-              IF (DEBUG(3) >= 1) NB_JLT_NEW = NB_JLT_NEW + L - 1
-              CALL I7ASS0_STS(A, STIFN, load_arr, node_id_load, L,
-     &          MAX_STS_SIZE_ACTUAL, FCONT, H3D_DATA)
-            ENDIF
-            ENDIF ! COUNT > 0
-          ENDIF
-          CALL MY_BARRIER()
-          RETURN
-        ENDIF
-        CALL MY_BARRIER()
-        IF (JTASK == 1) THEN
-          CALL ANCMSG(MSGID=324, ANMODE=ANINFO, I1=NOINT)
-        ENDIF
-        CALL MY_BARRIER()
-        CALL ARRET(2)
-      ENDIF
-C-----------------------------------------------
       IF(NTY == 7)THEN
         IF(INACTI == 7) TYPE18 = .TRUE.
         IF(TYPE18 .AND. IPARI(34,NIN) == -2) RETURN
@@ -779,23 +521,16 @@ c------------------------------------------------
            CALL ARRET(2)
           ENDIF
         ENDIF
-
-       !--------------------------------------------------------
+        
+        !--------------------------------------------------------
         ! FORCE COMPUTATION : 
         !    inter 7 & inter 18
         !--------------------------------------------------------
 C!$OMP ORDERED
         DO NFT = 0 , I_STOK - 1 , NVSIZ
           JLT = MIN( NVSIZ, I_STOK - NFT )
-!--------------------------------------------------------
-! Initialize candidate data
-!--------------------------------------------------------
-
+          ! preparing retained candidates
           CALL I7CDCOR3(JLT,INDEX2(NFT+1),INTBUF_TAB%CAND_E,INTBUF_TAB%CAND_N,CAND_E_N,CAND_N_N)
-
-!--------------------------------------------------------
-! Coordinate transformation and preparation for contact analysis
-!--------------------------------------------------------
           ! cand_n & cand_e replaced with cand_n_n & cand_e_n
           CALL I7COR3(
      1  JLT       ,X       ,INTBUF_TAB%IRECTM,INTBUF_TAB%NSV,CAND_E_N,
@@ -835,7 +570,7 @@ C!$OMP ORDERED
      C        INDEX2(NFT+1) ,VXI       ,VYI               ,ITAB                       ,XCELL                      ,
      D        VZI           ,MSI       ,KINI              ,
      E        IGAP          ,MULTI_FVM ,S_XCELL_REMOTE ,XCELL_REMOTE)
- 
+
             IF( MULTI_FVM%IS_INT18_LAW151 ) THEN
               MSI_APPEND(1:MVSIZ) = ZERO
               MSI_APPEND(MVSIZ+1:2*MVSIZ) = MSI(1:MVSIZ)
@@ -875,112 +610,8 @@ C!$OMP ORDERED
      O          H3D_DATA          ,ELBUF_TAB         ,IDIR             )
             ENDIF
             
-       ELSE ! NOT TYPE18
-
-
-C     The maximum number of contact pairs is limited by the number of candidates
-C
-      MAX_STS_SIZE_ACTUAL = 1  ! Minimum size
-      IF (INTBUF_TAB%S_CAND_N > 0) THEN
-        ! Maximum contact pairs cannot exceed number of candidates
-        MAX_STS_SIZE_ACTUAL = MAX(MAX_STS_SIZE_ACTUAL, INTBUF_TAB%S_CAND_N)
-      ENDIF
-      ! Add safety factor (some candidates might map to same segment pair, but we need buffer)
-      MAX_STS_SIZE_ACTUAL = MAX_STS_SIZE_ACTUAL * 2  ! Safety factor      
-
-      ! Adjust working array sizes to match MAX_STS_SIZE_ACTUAL
-      IF (ALLOCATED(CONT_ELEMENT)) DEALLOCATE(CONT_ELEMENT)
-      IF (ALLOCATED(load_arr))     DEALLOCATE(load_arr)
-      IF (ALLOCATED(CAND_SEC_SEG_ID)) DEALLOCATE(CAND_SEC_SEG_ID)
-      IF (ALLOCATED(CAND_MST_SEG_ID)) DEALLOCATE(CAND_MST_SEG_ID)
-      IF (ALLOCATED(node_id_load))    DEALLOCATE(node_id_load)
-
-      ALLOCATE(CONT_ELEMENT(MAX_STS_SIZE_ACTUAL,3,8))
-      ALLOCATE(load_arr(MAX_STS_SIZE_ACTUAL,8,4))
-      ALLOCATE(CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
-      ALLOCATE(CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
-      ALLOCATE(node_id_load(MAX_STS_SIZE_ACTUAL*8))
-
-C-----------------------------------------------
-C   Allocate/Reallocate History Arrays for Friction
-C-----------------------------------------------
-      ! Quadrature order (currently fixed to 2, but make it flexible)
-      IP_MAX = 2  ! Current quadrature order
-      
-      ! Maximum number of Gauss points for STS pairs (all secondary elements)
-      ! Used for 1D global Gauss point state arrays
-      MAX_GLOBAL_GP_LOC = MAX_STS_SIZE_ACTUAL * IP_MAX * IP_MAX
-      
-      ! Check if reallocation is needed for element-based history arrays
-      IF (.NOT. ALLOCATED(XI1_HIST) .OR. 
-     &    MAX_STS_SIZE_ACTUAL > MAX_STS_SIZE_HIST .OR.
-     &    IP_MAX /= IP_MAX_HIST) THEN
-        
-        ! Deallocate if already allocated
-        IF (ALLOCATED(XI1_HIST)) THEN
-          DEALLOCATE(XI1_HIST, XI2_HIST, TTRIAL1_HIST, TTRIAL2_HIST)
-        ENDIF
-        
-        ! Allocate with new size
-        ALLOCATE(XI1_HIST(MAX_STS_SIZE_ACTUAL, IP_MAX, IP_MAX))
-        ALLOCATE(XI2_HIST(MAX_STS_SIZE_ACTUAL, IP_MAX, IP_MAX))
-        ALLOCATE(TTRIAL1_HIST(MAX_STS_SIZE_ACTUAL, IP_MAX, IP_MAX))
-        ALLOCATE(TTRIAL2_HIST(MAX_STS_SIZE_ACTUAL, IP_MAX, IP_MAX))
-
-        ! Initialize to zero (will be set on first contact)
-        XI1_HIST = 0.d0
-        XI2_HIST = 0.d0
-        TTRIAL1_HIST = 0.d0
-        TTRIAL2_HIST = 0.d0
-        
-        ! Store current size
-        MAX_STS_SIZE_HIST = MAX_STS_SIZE_ACTUAL
-        IP_MAX_HIST = IP_MAX
-      ENDIF
-
-C-----------------------------------------------
-C   Allocate/Reallocate Global Gauss Point State Arrays
-C-----------------------------------------------
-      CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, IP_MAX)
-
-      IF (.NOT. ALLOCATED(GP_GLOBAL_ID) .OR.
-     &    MAX_STS_SIZE_ACTUAL > MAX_STS_SIZE_HIST .OR.
-     &    IP_MAX /= IP_MAX_HIST) THEN
-
-        ! Deallocate if already allocated
-        IF (ALLOCATED(GP_GLOBAL_ID))        DEALLOCATE(GP_GLOBAL_ID)
-        IF (ALLOCATED(GP_SECONDARY_EL_ID))  DEALLOCATE(GP_SECONDARY_EL_ID)
-        IF (ALLOCATED(GP_MASTER_EL_ID))     DEALLOCATE(GP_MASTER_EL_ID)
-        IF (ALLOCATED(GP_MASTER_EL_ID_PREV)) DEALLOCATE(GP_MASTER_EL_ID_PREV)
-
-        ! Allocate auxiliary global Gauss point identification arrays
-        ALLOCATE(GP_GLOBAL_ID       (MAX_GLOBAL_GP_LOC))
-        ALLOCATE(GP_SECONDARY_EL_ID (MAX_GLOBAL_GP_LOC))
-        ALLOCATE(GP_MASTER_EL_ID    (MAX_GLOBAL_GP_LOC))
-        ALLOCATE(GP_MASTER_EL_ID_PREV(MAX_GLOBAL_GP_LOC))
-
-        ! Initialize IDs
-        GP_GLOBAL_ID        = 0
-        GP_SECONDARY_EL_ID  = 0
-        GP_MASTER_EL_ID     = 0
-        GP_MASTER_EL_ID_PREV= 0
-      ENDIF
-
-C==========================================================
-
-        IF (.NOT. STS_ACTIVE) THEN
-C==========================================================
-C OLD NTS ALGORITHM
-C==========================================================
-        ! WRITE(*,*) 
-        ! WRITE(*,*) "***********************************"
-        ! WRITE(*,*) "NTS ALGORITHM STARTED"
-        ! WRITE(*,*) "***********************************"
-
-        !----------------------------------------------------------
-        ! Distance calculation and projection for contact detection
-        !----------------------------------------------------------  
-        CALL I7DST3(
+          ELSE
+            CALL I7DST3(
      1        JLT          ,CAND_N_N,CAND_E_N,CN_LOC ,CE_LOC       ,
      2        X1           ,X2      ,X3      ,X4     ,Y1           ,
      3        Y2           ,Y3      ,Y4      ,Z1     ,Z2           ,
@@ -1004,11 +635,7 @@ C==========================================================
      L        IREP_FRICMI  ,DIR_FRICMI,DGAPLOADP)
 
             JLT = JLT_NEW
-            
-            !DEBUG
-            !IF (JLT_NEW==0) write(*,*) "NO IMPACT FOUND WITH NTS"
-            
-            IF (IMONM > 0 .AND. JTASK == 1) CALL STARTIME(TIMERS,20)    
+            IF (IMONM > 0 .AND. JTASK == 1) CALL STARTIME(TIMERS,20)
             IF(JLT_NEW /= 0) THEN
               IPARI(29,NIN) = 1
               IF (DEBUG(3)>=1) NB_JLT_NEW = NB_JLT_NEW + JLT_NEW
@@ -1043,10 +670,7 @@ C==========================================================
             ENDIF
             IF(ITASK==1) CALL STOPTIME(TIMERS,MACRO_TIMER_FRIC)
 
-    !--------------------------------------------------------
-    ! FORCE
-    !--------------------------------------------------------
-                CALL I7FOR3(OUTPUT,
+              CALL I7FOR3(OUTPUT,
      1  JLT          ,A         ,V            ,IBC         ,ICODT    ,
      2  FSAV         ,GAP       ,FRIC         ,MS          ,VISC     ,
      3  VISCF        ,NOINT     ,INTBUF_TAB%STFNS,ITAB     ,CN_LOC   ,
@@ -1089,8 +713,8 @@ C==========================================================
      9  KLOADPINTER  ,LOADPINTER ,LOADP_HYD_INTER,INTBUF_TAB%TYPSUB    ,  
      .                                            INTBUF_TAB%INFLG_SUBS,
      A  INTBUF_TAB%INFLG_SUBM,NINLOADP,DGAPLOADINT,S_LOADPINTER,DGAPLOADP,
-     B  INTEREFRIC   )        
-            
+     B  INTEREFRIC   )
+
               IF( INTTH > 0 ) THEN 
                  CALL I7THERM(JLT   ,IPARG ,PM  ,IXS   ,IFORM ,X      ,   
      1                        XI    ,YI    ,ZI  ,X1   ,Y1    ,Z1      ,
@@ -1104,7 +728,7 @@ C==========================================================
      8                        H4    ,theaccfact)      
               ENDIF
 
-              CALL I7ASS33(
+      CALL I7ASS33(
      1  JLT       ,A         ,NOINT     ,ITAB      ,STIFN     ,
      2 STIF      ,FSKYI      ,ISKY      ,FCONT     ,IX1       ,
      3  IX2       ,IX3       ,IX4       ,NSVG      ,NELTST    ,
@@ -1122,19 +746,11 @@ C==========================================================
      F  CONDN     ,CONDINT   ,CONDNSKYI ,IXIG3D    ,KXIG3D    ,
      J  WIGE      ,KNOT      ,IGEO      ,INTBUF_TAB%NIGE      ,
      K  INTBUF_TAB%RIGE      ,X         ,H3D_DATA  ,KNOTLOCPC ,
-     L  KNOTLOCEL ,IFORM     ,NODADT_THERM, ASS_FLAG, load_arr, node_id_load, L, MAX_STS_SIZE_ACTUAL ) 
+     L  KNOTLOCEL ,IFORM     ,NODADT_THERM) 
 
-        !WRITE(*,*) 
-        !WRITE(*,*) "BALANCE PRIMARY-SECONDARY:", 
-        !&       sum(FZ1(1:JLT))+sum(FZ2(1:JLT))+sum(FZ3(1:JLT))+sum(FZ4(1:JLT))-sum(FZI(1:JLT))
+            ENDIF
+          ENDIF
 
-           ENDIF !(JLT_NEW/=0) THEN
-      ELSE
-C       STS mode should always RETURN via voxel broad-phase above.
-        CALL ANCMSG(MSGID=324, ANMODE=ANINFO, I1=NOINT)
-        CALL ARRET(2)
-        ENDIF ! STS_ACTIVE branch of IF (.NOT. STS_ACTIVE)
-        ENDIF ! TYPE18
 C-----------------------------------------------
 C
           IF (IMONM > 0 .AND. JTASK == 1) CALL STOPTIME(TIMERS,20)
@@ -1174,4 +790,5 @@ C       I7KGLO = 1 => mis ds inttri
       ENDIF
 C
       RETURN
-         END
+      END
+

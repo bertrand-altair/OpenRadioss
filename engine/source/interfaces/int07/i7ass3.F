@@ -54,8 +54,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      F                  CONDN     ,CONDINT   ,CONDNSKYI,IXIG3D   ,KXIG3D    ,
      J                  WIGE      ,KNOT      ,IGEO      ,NIGE     ,RIGE      ,
      K                  X         ,H3D_DATA  ,KNOTLOCPC ,KNOTLOCEL,IFORM     ,
-     L                  NODADT_THERM, ASS_FLAG, load_arr, node_id_load, COUNT,
-     M                  MAX_STS_SIZE_ACTUAL)
+     L                  NODADT_THERM)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -85,7 +84,7 @@ C-----------------------------------------------
 C-----------------------------------------------
 C   D u m m y   A r g u m e n t s
 C-----------------------------------------------
-      INTEGER NELTST,ITYPTST,JLT,NIN,NOINT,ISECIN,JTASK,NISKYFI,INTTH,IFORM, ASS_FLAG
+      INTEGER NELTST,ITYPTST,JLT,NIN,NOINT,ISECIN,JTASK,NISKYFI,INTTH,IFORM
 
       INTEGER IX1(MVSIZ), IX2(MVSIZ), IX3(MVSIZ), IX4(MVSIZ),
      .        NSVG(MVSIZ),ITAB(*), ISKY(*), NSTRF(*),
@@ -113,11 +112,6 @@ C-----------------------------------------------
       my_real
      .   WIGE(*),KNOT(*),RIGE(3,*),KNOTLOCPC(*),KNOTLOCEL(*)
       TYPE(H3D_DATABASE) :: H3D_DATA
-      
-      my_real load_arr(MAX_STS_SIZE_ACTUAL,8,4)
-      integer COUNT
-      integer node_id_load(MAX_STS_SIZE_ACTUAL*8)
-      INTEGER MAX_STS_SIZE_ACTUAL
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
@@ -125,7 +119,7 @@ C-----------------------------------------------
       my_real
      .   DTI
 C-------------------------------------------------------------------------------
-C   
+C
       IF(IDTMINS==2.OR.IDTMINS_INT/=0)THEN
         DTI=DT2T
         CALL I7SMS2(JLT   ,IX1   ,IX2  ,IX3  ,IX4  ,
@@ -171,18 +165,13 @@ c
             ENDIF
           ENDDO
           IF(TAGIGEO==0) THEN
-            if(ASS_FLAG == 0) THEN
-              CALL I7ASS0(JLT   ,IX1  ,IX2  ,IX3  ,IX4    ,
+            CALL I7ASS0(JLT   ,IX1  ,IX2  ,IX3  ,IX4    ,
      2                  NSVG  ,H1   ,H2   ,H3   ,H4     ,STIF ,
      3                  FX1   ,FY1  ,FZ1  ,FX2  ,FY2    ,FZ2  ,
      4                  FX3   ,FY3  ,FZ3  ,FX4  ,FY4    ,FZ4  ,
      5                  FXI   ,FYI  ,FZI  ,A    ,STIFN  ,NIN  ,
      6                  INTTH ,PHI  ,FTHE ,PHI1 , PHI2  ,PHI3 ,
      7                  PHI4  ,CONDN,CONDINT,JTASK,IFORM,NODADT_THERM)
-            else  
-              call I7ASS0_STS(A ,STIFN, load_arr, node_id_load,
-     &          count, MAX_STS_SIZE_ACTUAL, FCONT, H3D_DATA)
-            endif
           ELSE
             CALL I7ASSIGEO0(JLT   ,IX1  ,IX2  ,IX3  ,IX4    ,
      2                  NSVG  ,H1   ,H2   ,H3   ,H4     ,STIF ,
@@ -208,8 +197,7 @@ C
       ELSE
         IF(KDTINT==0)THEN
           IF(TAGIGEO==0) THEN
-              if(ASS_FLAG == 0) THEN
-                  CALL I7ASS2(JLT   ,IX1   ,IX2  ,IX3  ,IX4  ,
+            CALL I7ASS2(JLT   ,IX1   ,IX2  ,IX3  ,IX4  ,
      2                  NSVG  ,H1    ,H2   ,H3   ,H4   ,STIF   ,
      3                  FX1   ,FY1   ,FZ1  ,FX2  ,FY2  ,FZ2    ,
      4                  FX3   ,FY3   ,FZ3  ,FX4  ,FY4  ,FZ4    ,
@@ -217,30 +205,6 @@ C
      6                  NIN   ,NOINT ,INTTH,PHI  ,FTHESKYI ,PHI1,
      7                  PHI2  ,PHI3 , PHI4 ,CONDNSKYI,CONDINT,
      A                  IFORM ,NODADT_THERM)
-              ELSE
-                  CALL I7ASS2_STS(JLT   ,IX1   ,IX2  ,IX3  ,IX4  ,
-     2                  NSVG  ,H1    ,H2   ,H3   ,H4   ,STIF   ,
-     3                  FX1   ,FY1   ,FZ1  ,FX2  ,FY2  ,FZ2    ,
-     4                  FX3   ,FY3   ,FZ3  ,FX4  ,FY4  ,FZ4    ,
-     5                  FXI   ,FYI   ,FZI  ,FSKYI,ISKY ,NISKYFI,
-     6                  NIN   ,NOINT ,INTTH,PHI  ,FTHESKYI ,PHI1,
-     7                  PHI2  ,PHI3 , PHI4 ,CONDNSKYI,CONDINT,
-     A                  IFORM, load_arr, node_id_load, count, MAX_STS_SIZE_ACTUAL)
-              ENDIF
-              !write(*,*) 
-              !write(*,*) "Assembled Forces:"
-              !write(*,*) FSKYI(1:18,3)
-              !write(*,*) FSKYI(1:NISKYL,3)
-              !write(*,*)
-              !write(*,*) "Assembled Stiffness:"
-              !write(*,*) FSKYI(1:18,4)
-              !write(*,*) FSKYI(1:NISKYL,4)
-              !write(*,*)      
-              !write(*,*) "To Internal Nodes:"
-              !write(*,*) ISKY(1:18)
-              !write(*,*) ISKY(1:NISKYL)
-              !write(*,*) 
-              
           ELSE
 c         CALL I7ASSIGEO2(JLT   ,IX1  ,IX2  ,IX3  ,IX4    ,
 c     2               NSVG  ,H1   ,H2   ,H3   ,H4     ,STIF ,
@@ -883,7 +847,7 @@ C
             FTHE(J1) = FTHE(J1) + PHI4(I)
           ENDDO
         ENDIF
-      ENDIF        
+      ENDIF
 C
       !---FLUID REACTION FORCE
       !
@@ -896,7 +860,7 @@ C
             A(1,IG)=A(1,IG)-FXI(I)
             A(2,IG)=A(2,IG)-FYI(I)
             A(3,IG)=A(3,IG)-FZI(I)
-            STIFN(IG) = STIFN(IG) + STIF(I)           
+            STIFN(IG) = STIFN(IG) + STIF(I)
           ELSE
             IG = -IG
             AFI(NIN)%P(1,IG+ISHIFT)=AFI(NIN)%P(1,IG+ISHIFT)-FXI(I)

@@ -299,9 +299,9 @@
             IF (PTS_S(3,IS) > ZMAX_S) ZMAX_S = PTS_S(3,IS)
           END DO
 !
-          CALL INTER_BP_TOL_PAD_CELL( &
-     &        MAX(EPS_SPAN, TRIGGER_TOL), SEARCH_PADDING, CELL_SIZE)
-          SEARCH_RADIUS = SEARCH_PADDING
+          TOL = MAX(EPS_SPAN, TRIGGER_TOL)
+          CELL_SIZE      = 10.0*STS_VOXEL_CELL_SIZE_FACTOR * TOL
+          SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR  * TOL
 !
 !         Coarse AABB rejection (use unpadded master AABB vs secondary AABB)
           DX = MAX(ZERO, MAX(XMIN_S - XMAX_M, XMIN_M - XMAX_S))
