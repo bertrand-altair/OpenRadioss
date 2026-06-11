@@ -36,6 +36,7 @@ C   M o d u l e s
 C-----------------------------------------------
       USE ELBUFDEF_MOD
       use element_mod , only : nixr
+      use DEBUG_MOD
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -85,7 +86,8 @@ C--------> Loop over spring elements -------
             IGTYP =  IGEO(11,IG)
               NUVAR =  NINT(GEO(25,IG))
             NV = NUVAR*(I-1) + 1
-            IF (IGTYP==45 .OR. (IGTYP==23 .AND. ILAW == 135)) THEN    
+            IF (IGTYP==45 .OR. (IGTYP==23 .AND. ILAW == 135).OR.
+     .         (IGTYP==23 .AND. ILAW == 108)) THEN    
 C           
 C--------> Calcul pas de temps nodal RB1 -------         
                 IRB = NINT(GBUF%VAR(NV + 37))
@@ -97,7 +99,7 @@ C--------> Calcul pas de temps nodal RB1 -------
                 DTRB1 = DTFAC1(11)*SQRT(TWO*MS(M1)/MAX(EM20,STIFN(M1))) !NORMALLY NODAL DT > ELEMENT DT
               IF (IN(M1) > 0) THEN
                   DTRB1 = MIN(DTRB1,DTFAC1(11)*SQRT(TWO*IN(M1)/MAX(EM20,STIFR(M1))))
-              ENDIF                               
+              ENDIF       
 C
 C--------> Calcul pas de temps nodal RB2 ------- 
                 IRB = NINT(GBUF%VAR(NV + 38))
@@ -109,7 +111,7 @@ C--------> Calcul pas de temps nodal RB2 -------
                 DTRB2 = DTFAC1(11)*SQRT(TWO*MS(M2)/MAX(EM20,STIFN(M2)))
               IF (IN(M2) > 0) THEN
                   DTRB2 = MIN(DTRB2,DTFAC1(11)*SQRT(TWO*IN(M2)/MAX(EM20,STIFR(M2))))
-              ENDIF
+              ENDIF       
 C
 C--------> Calculation of Joint time step -------
                 DT = MIN(DTRB1,DTRB2)                

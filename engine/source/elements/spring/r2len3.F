@@ -34,7 +34,8 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      3   MS,      IN,      MSRT,    DMELRT,
      4   G_DT,    DTEL,    NGL,     XCR,
      5   XIN,     XM,      XKM,     XCM,
-     6   XKR,     NC1,     NC2,     JSMS)
+     6   XKR,     NC1,     NC2,     JSMS,
+     7   RBMASS)
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -65,6 +66,7 @@ C-----------------------------------------------
      .   XM(MVSIZ),XKM(MVSIZ),XCM(MVSIZ),XKR(MVSIZ)
       my_real,INTENT(INOUT) :: DTEL(JFT:JLT)
       INTEGER,INTENT(IN)    :: G_DT
+      my_real,INTENT(IN)    :: RBMASS(JFT:JLT)
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
@@ -73,6 +75,7 @@ C-----------------------------------------------
      .   DT(MVSIZ),DTC(MVSIZ),
      .   A, MASS2, IN2, DTA, DTB, MX
 C-----------------------------------------------
+C
       IF(NODADT/=0.OR.IDTMINS==2)THEN
 C
        DO I=JFT,JLT
@@ -83,6 +86,7 @@ C
        IF(OFF(I)>ZERO)THEN
         IF(MS(NC1(I))/=ZERO)THEN
          MASS2 = TWO * MS(NC1(I))
+         IF (RBMASS(4*(I-1)+1) > MS(NC1(I))) MASS2 =  TWO * RBMASS(4*(I-1)+1)
         ELSE
          MASS2 = XM(I)
         ENDIF
@@ -98,6 +102,7 @@ C
 C
         IF(MS(NC2(I))/=ZERO)THEN
          MASS2 = TWO * MS(NC2(I))
+         IF (RBMASS(4*(I-1)+3) > MS(NC2(I))) MASS2 =  TWO * RBMASS(4*(I-1)+3)
         ELSE
          MASS2 = XM(I)
         ENDIF
@@ -113,6 +118,7 @@ C
 C
         IF(IN(NC1(I))/=ZERO)THEN
          IN2 = TWO * IN(NC1(I))
+         IF (RBMASS(4*(I-1)+2) > IN(NC1(I))) IN2 =  TWO * RBMASS(4*(I-1)+2)
         ELSE
          IN2 = XIN(I)
         ENDIF
@@ -128,6 +134,7 @@ C
 C
         IF(IN(NC2(I))/=ZERO)THEN
          IN2 = TWO * IN(NC2(I))
+         IF (RBMASS(4*(I-1)+4) > IN(NC2(I))) IN2 =  TWO * RBMASS(4*(I-1)+4)
         ELSE
          IN2 = XIN(I)
         ENDIF
@@ -182,7 +189,7 @@ C
           DT(I)=XM(I)/MAX(EM15,SQRT(XCM(I)*XCM(I)+XM(I)*XKM(I))+XCM(I))
           IF(XCR(I)+XKR(I)<EM15)XIN(I)=ONE
           XKR(I)= MAX(EM15,XKR(I))
-        DTC(I)=XIN(I)/MAX(EM15,SQRT(XCR(I)*XCR(I)+XIN(I)*XKR(I))+XCR(I))
+          DTC(I)=XIN(I)/MAX(EM15,SQRT(XCR(I)*XCR(I)+XIN(I)*XKR(I))+XCR(I))
           DT(I)= MIN(DT(I),DTC(I))
         ENDDO
 C
@@ -238,7 +245,7 @@ C
        DO  I=JFT,JLT
          IF(XCR(I)+XKR(I)<EM15)XIN(I)=ONE
          XKR(I)= MAX(EM15,XKR(I))
-        DTC(I)=XIN(I)/MAX(EM15,SQRT(XCR(I)*XCR(I)+XIN(I)*XKR(I))+XCR(I))
+         DTC(I)=XIN(I)/MAX(EM15,SQRT(XCR(I)*XCR(I)+XIN(I)*XKR(I))+XCR(I))
          DT(I)= MIN(DT(I),DTC(I))
        ENDDO
 C

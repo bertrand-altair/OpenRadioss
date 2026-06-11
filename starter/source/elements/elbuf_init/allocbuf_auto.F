@@ -639,6 +639,8 @@ C
         GBUF%YIELD_IN_COMP = ZERO
       ALLOCATE (GBUF%XXOLD_IN_COMP(NEL*GBUF%G_XXOLD_IN_COMP)     ,STAT=Stat)
         GBUF%XXOLD_IN_COMP = ZERO
+      ALLOCATE (GBUF%RBODY_MASS(NEL*GBUF%G_RBODY_MASS)           ,STAT=Stat)
+        GBUF%RBODY_MASS = 0
 c---
 C seatbelt elements
 c---
