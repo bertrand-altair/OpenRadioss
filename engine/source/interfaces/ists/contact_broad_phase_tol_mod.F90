@@ -43,6 +43,7 @@
 
         PUBLIC :: INTER_BP_TOL_GAP_PHYS
         PUBLIC :: INTER_BP_TOL_MESH_SCALE
+        PUBLIC :: INTER_BP_TOL_MESH_SCALE_SURF
         PUBLIC :: INTER_BP_TOL_SEARCH
         PUBLIC :: INTER_BP_TOL_PAD_CELL
 
@@ -87,6 +88,53 @@
             INTER_BP_TOL_MESH_SCALE = D_SUM / REAL(NCOUNT, WP)
           END IF
         END FUNCTION INTER_BP_TOL_MESH_SCALE
+
+!----------------------------------------------------------------------
+! O(NSEG) mesh scale from segment corner geometry (STS voxel broad phase).
+! Characteristic length per segment = longest quad edge; return the mean.
+!----------------------------------------------------------------------
+        REAL(KIND=WP) FUNCTION INTER_BP_TOL_MESH_SCALE_SURF( &
+     &      IGRSURF, NSURF, SURF_IDX, X, NUMNOD)
+          USE GROUPDEF_MOD, ONLY : SURF_
+          INTEGER, INTENT(IN) :: NSURF, SURF_IDX, NUMNOD
+          TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
+          REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
+
+          INTEGER :: ISEG, NSEG, K, N1, N2
+          REAL(KIND=WP) :: DX, DY, DZ, EDGE_LEN, H_SEG, H_SUM
+          INTEGER :: H_COUNT
+
+          INTER_BP_TOL_MESH_SCALE_SURF = INTER_BP_TOL_GAP_FALLBACK
+          IF (SURF_IDX <= 0 .OR. SURF_IDX > NSURF) RETURN
+          NSEG = IGRSURF(SURF_IDX)%NSEG
+          IF (NSEG <= 0) RETURN
+          IF (.NOT. ALLOCATED(IGRSURF(SURF_IDX)%NODES)) RETURN
+
+          H_SUM = ZERO
+          H_COUNT = 0
+          DO ISEG = 1, NSEG
+            H_SEG = ZERO
+            DO K = 1, 4
+              N1 = IGRSURF(SURF_IDX)%NODES(ISEG, K)
+              N2 = IGRSURF(SURF_IDX)%NODES(ISEG, MOD(K, 4) + 1)
+              IF (N1 <= 0 .OR. N1 > NUMNOD) CYCLE
+              IF (N2 <= 0 .OR. N2 > NUMNOD) CYCLE
+              DX = X(1, N2) - X(1, N1)
+              DY = X(2, N2) - X(2, N1)
+              DZ = X(3, N2) - X(3, N1)
+              EDGE_LEN = SQRT(DX*DX + DY*DY + DZ*DZ)
+              H_SEG = MAX(H_SEG, EDGE_LEN)
+            END DO
+            IF (H_SEG > ZERO) THEN
+              H_SUM = H_SUM + H_SEG
+              H_COUNT = H_COUNT + 1
+            END IF
+          END DO
+
+          IF (H_COUNT > 0) THEN
+            INTER_BP_TOL_MESH_SCALE_SURF = H_SUM / REAL(H_COUNT, WP)
+          END IF
+        END FUNCTION INTER_BP_TOL_MESH_SCALE_SURF
 
         SUBROUTINE INTER_BP_TOL_SEARCH(GAP_USER, H_MESH_A, H_MESH_B, TOL_SEARCH)
           REAL(KIND=WP), INTENT(IN) :: GAP_USER, H_MESH_A, H_MESH_B

@@ -120,40 +120,40 @@
         IF (IMPACT == 1) THEN
           IMPACT_glob = 1
 
-!         Export two rows per contact pair:
-!         - surface 1 (primary nodes 1..4)
-!         - surface 2 (secondary nodes 5..8)
-          fx_prim = 0.0D0
-          fy_prim = 0.0D0
-          fz_prim = 0.0D0
-          fxf_prim = 0.0D0
-          fyf_prim = 0.0D0
-          fzf_prim = 0.0D0
-          DO J = 1, 4
-            fx_prim = fx_prim + p_load_new(3*(J-1)+1)
-            fy_prim = fy_prim + p_load_new(3*(J-1)+2)
-            fz_prim = fz_prim + p_load_new(3*(J-1)+3)
-            fxf_prim = fxf_prim + p_friction(3*(J-1)+1)
-            fyf_prim = fyf_prim + p_friction(3*(J-1)+2)
-            fzf_prim = fzf_prim + p_friction(3*(J-1)+3)
-          ENDDO
-
-          fx_sec = 0.0D0
-          fy_sec = 0.0D0
-          fz_sec = 0.0D0
-          fxf_sec = 0.0D0
-          fyf_sec = 0.0D0
-          fzf_sec = 0.0D0
-          DO J = 5, 8
-            fx_sec = fx_sec + p_load_new(3*(J-1)+1)
-            fy_sec = fy_sec + p_load_new(3*(J-1)+2)
-            fz_sec = fz_sec + p_load_new(3*(J-1)+3)
-            fxf_sec = fxf_sec + p_friction(3*(J-1)+1)
-            fyf_sec = fyf_sec + p_friction(3*(J-1)+2)
-            fzf_sec = fzf_sec + p_friction(3*(J-1)+3)
-          ENDDO
-
           IF (CSV_OUTPUT_ENABLED) THEN
+!           Export two rows per contact pair:
+!           - surface 1 (primary nodes 1..4)
+!           - surface 2 (secondary nodes 5..8)
+            fx_prim = 0.0D0
+            fy_prim = 0.0D0
+            fz_prim = 0.0D0
+            fxf_prim = 0.0D0
+            fyf_prim = 0.0D0
+            fzf_prim = 0.0D0
+            DO J = 1, 4
+              fx_prim = fx_prim + p_load_new(3*(J-1)+1)
+              fy_prim = fy_prim + p_load_new(3*(J-1)+2)
+              fz_prim = fz_prim + p_load_new(3*(J-1)+3)
+              fxf_prim = fxf_prim + p_friction(3*(J-1)+1)
+              fyf_prim = fyf_prim + p_friction(3*(J-1)+2)
+              fzf_prim = fzf_prim + p_friction(3*(J-1)+3)
+            ENDDO
+
+            fx_sec = 0.0D0
+            fy_sec = 0.0D0
+            fz_sec = 0.0D0
+            fxf_sec = 0.0D0
+            fyf_sec = 0.0D0
+            fzf_sec = 0.0D0
+            DO J = 5, 8
+              fx_sec = fx_sec + p_load_new(3*(J-1)+1)
+              fy_sec = fy_sec + p_load_new(3*(J-1)+2)
+              fz_sec = fz_sec + p_load_new(3*(J-1)+3)
+              fxf_sec = fxf_sec + p_friction(3*(J-1)+1)
+              fyf_sec = fyf_sec + p_friction(3*(J-1)+2)
+              fzf_sec = fzf_sec + p_friction(3*(J-1)+3)
+            ENDDO
+
             CALL STS_CONTACT_EXPORT_CSV_PAIR(LUX_STS, NCYCLE_IN, TIME_CUR, STS_INTERFACE_ID, &
      &          CAND_MST_SEG_ID(I,1), CAND_SEC_SEG_ID(I,1), pair_max_penetration, &
      &          fx_prim, fy_prim, fz_prim, fxf_prim, fyf_prim, fzf_prim, &

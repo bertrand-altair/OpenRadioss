@@ -81,7 +81,7 @@
       real*8  pm(24), pm_friction(24)
       real*8  eta1(10), eta2(10), wi1(10), wi2(10)
       real*8  energy
-      real*8  active_area, area_weight
+      real*8  area_weight
       real*8  gap_distance
       real*8  N_xi(3,4), N_eta(3,4)
       real*8  norm_secondary(3), sec_t1(3), sec_t2(3)
@@ -92,11 +92,12 @@
       INTEGER gp_index, secondary_el_id
       INTEGER MAX_GLOBAL_GP_LOCAL
 
-      INTEGER, PARAMETER :: DEBUG_NODE = 1
-!     Deep-penetration guard, mirrors NTS i7for3 (PREC = FIVEEM4):
+      INTEGER, PARAMETER :: DEBUG_NODE = 0
+!     Deep-penetration guard PREC_CLEAR, mirrors NTS i7for3:
 !     limits the penalty amplification to FAC <= 1/PREC_CLEAR = 2000,
-!     preventing force blow-up (MSG 259) when the clearance approaches 0.
-      real*8, PARAMETER :: PREC_CLEAR = 5.0d-4
+!     preventing force blow-up (currently deactivated).
+      real*8, PARAMETER :: PREC_CLEAR = 0
+
       CHARACTER*7 FRICTION_QUAD_TYPE
       CHARACTER*7 STICK_STATE
 
@@ -118,6 +119,8 @@
       real*8  rhoxi1_fric(3), rhoxi2_fric(3)
       real*8  wi1_fric, wi2_fric, eta1_fric, eta2_fric
       logical use_gauss_for_friction
+      logical calc_fric_this_pair
+      real*8  fric_weight
 !-----------------------------------------------
 !   I n i t i a l i z a t i o n
 !-----------------------------------------------
@@ -125,40 +128,41 @@
       PAIR_MAX_PENETRATION = 0.0D0
       ip = 2 ! Quadrature order
       pair_fric_idx = MIN(MAX(EL_NR, 1), MVSIZ)
+      calc_fric_this_pair = CALC_FRICTION .AND. FRICC(pair_fric_idx) .GT. 0.0d0
       
       ! Calculate maximum global GP index for bounds checking
       MAX_GLOBAL_GP_LOCAL = MAX_STS_SIZE * ip * ip
       
       ! Get quadrature points and weights
-      
-      ! Always initialize Gauss quadrature for friction calculation
-      call sts_gausspt(ip, eta1_gauss, wi1_gauss)
-      call sts_gausspt(ip, eta2_gauss, wi2_gauss)    
-      
-      ! Initialize quadrature points and weights for normal contact calculation
       IF (OPTION == 0) THEN
-        ! Gauss: reuse Gauss quadrature points and weights
-        eta1 = eta1_gauss
-        eta2 = eta2_gauss
-        wi1 = wi1_gauss
-        wi2 = wi2_gauss
+        ! Gauss: one quadrature rule for normal and friction
+        call sts_gausspt(ip, eta1, wi1)
+        call sts_gausspt(ip, eta2, wi2)
+        eta1_gauss = eta1
+        eta2_gauss = eta2
+        wi1_gauss = wi1
+        wi2_gauss = wi2
       ELSE
-        ! Lobatto: use Lobatto quadrature points and weights
+        ! Lobatto for normal contact; Gauss only when friction is active
         call sts_lobattopt(ip, eta1, wi1)
         call sts_lobattopt(ip, eta2, wi2)
+        IF (calc_fric_this_pair) THEN
+          call sts_gausspt(ip, eta1_gauss, wi1_gauss)
+          call sts_gausspt(ip, eta2_gauss, wi2_gauss)
+        ENDIF
       ENDIF
 
       ! Initialize force arrays
       DO i=1,24
         pm(i) = 0.d0
         pm_friction(i) = 0.d0
+        p(i) = 0.d0
         p_friction(i) = 0.d0
       ENDDO
       GAPV = GAP ! Effective scalar gap (MIN(GAPMAX,MAX(GAPMIN,GAP))).
       energy = 0.0d0
       EFRICT = 0.d0
       XMU(1) = FRICC(pair_fric_idx) ! Friction coefficient mu
-      active_area = 0.0d0
       node_stiff = 0.0d0
       FAC = 1.0d0
 !-----------------------------------------------
@@ -172,7 +176,9 @@
           call sts_project(XUPD, xi1, xi2, eta1(z), eta2(q))
           
           ! Check if projection is valid
-          IF ((dabs(xi1) .GT. 1.05d0) .OR. (dabs(xi2) .GT. 1.05d0)) THEN
+          IF ((xi1 .NE. xi1) .OR. (xi2 .NE. xi2) .OR. &
+     &        (dabs(xi1) .GT. 1.05d0) .OR. &
+     &        (dabs(xi2) .GT. 1.05d0)) THEN
             CYCLE
           ENDIF
           
@@ -186,7 +192,9 @@
           area_weight = wi1(z) * wi2(q) * dsqrt(detm)
 
           ! ==== GAUSS PROJECTION FOR FRICTION ====
-          IF (OPTION == 0) THEN
+          IF (.NOT. calc_fric_this_pair) THEN
+            gauss_valid = .FALSE.
+          ELSE IF (OPTION == 0) THEN
             ! Gauss algorithm: current projection IS Gauss projection
             ! Reuse coordinates and geometry
             xi1_gauss = xi1
@@ -218,7 +226,9 @@
      &                     eta1_gauss(z), eta2_gauss(q))
             
             ! Check if Gauss projection is valid for friction calculation
-            gauss_valid = (dabs(xi1_gauss) .LE. 1.05d0 .AND. &
+            gauss_valid = (xi1_gauss .EQ. xi1_gauss .AND. &
+     &                     xi2_gauss .EQ. xi2_gauss .AND. &
+     &                     dabs(xi1_gauss) .LE. 1.05d0 .AND. &
      &                     dabs(xi2_gauss) .LE. 1.05d0)
             
             IF (gauss_valid) THEN
@@ -232,6 +242,10 @@
      &                        daeta1_gauss, daeta2_gauss, &
      &                        norm_gauss, rhoxi1_gauss, rhoxi2_gauss, &
      &                        m_ij_gauss, detm_gauss, mij, detmPrimary)
+              IF ((detm_gauss .NE. detm_gauss) .OR. &
+     &            (detmPrimary .NE. detmPrimary)) THEN
+                gauss_valid = .FALSE.
+              ENDIF
             ENDIF
           ENDIF
 
@@ -280,14 +294,10 @@
             CYCLE
           ENDIF
           
-          ! Penetration detected
-          IMPACT = 1
           penetr = PENE
-          active_area = active_area + area_weight
-          PAIR_MAX_PENETRATION = MAX(PAIR_MAX_PENETRATION, DABS(PENE))
 
           ! Calculate penalty parameter.
-          ! Clamp the clearance to PREC_CLEAR*GAP so FAC stays bounded
+          ! Clamp the clearance to PREC_CLEAR*GAP so FAC stays bounded (currenctly deactive)
           ! (<= 2000) for deep penetration, as in NTS i7for3.
           d1 = STIF
           IF (DABS(GAPV) .GT. EM10) THEN
@@ -297,9 +307,15 @@
             FAC = 1.0d0
           ENDIF
           d1 = 0.5d0 * d1 * FAC
+          IF ((d1 .NE. d1) .OR. DABS(d1) .GT. HUGE(1.0d0) .OR. &
+     &        d1 .LE. 0.0d0) CYCLE
+
+          ! Penetration detected with a valid integrated force contribution.
+          IMPACT = 1
+          PAIR_MAX_PENETRATION = MAX(PAIR_MAX_PENETRATION, DABS(PENE))
 
 !         Accumulate nodal stiffness with the same shape-function
-!         weighting used by NTS/Q1NP before the final area average.
+!         area integration used by NTS/Q1NP.
           call sts_shape(xi1, xi2, N_xi)
           DO j = 1, 4
             node_stiff(j) = node_stiff(j) &
@@ -327,7 +343,7 @@
           !XMU(1) = 0.6
           ! ------------------------------------------------------------------          
           ! ===== FRICTION CALCULATION =====
-          IF (XMU(1) .GT. 0.0d0) THEN
+          IF (calc_fric_this_pair) THEN
             
             ! Map to global Gauss point index for history-based friction
             gp_index = GET_GLOBAL_GP_INDEX(EL_NR, z, q, ip)
@@ -454,33 +470,32 @@
             ENDIF
 
             ! ===== ACCUMULATE FRICTION FORCES TO NODES =====
-            call sts_shape(xi1_fric, xi2_fric, N_xi)
-            call sts_shape(eta1_fric, eta2_fric, N_eta)
+            fric_weight = wi1_fric * wi2_fric * dsqrt(detm_fric)
+            IF (use_gauss_for_friction .AND. OPTION == 0) THEN
+              ! Reuse shape functions already evaluated for normal forces
+            ELSE
+              call sts_shape(xi1_fric, xi2_fric, N_xi)
+              call sts_shape(eta1_fric, eta2_fric, N_eta)
+            ENDIF
             ! Primary nodes (1-4): subtract friction
             DO j=1,4
               pm_friction((j-1)*3+1) = pm_friction((j-1)*3+1) - &
-     &                               N_xi(1,j) * FXT * wi1_fric * &
-     &                               wi2_fric * dsqrt(detm_fric)
+     &                               N_xi(1,j) * FXT * fric_weight
               pm_friction((j-1)*3+2) = pm_friction((j-1)*3+2) - &
-     &                               N_xi(1,j) * FYT * wi1_fric * &
-     &                               wi2_fric * dsqrt(detm_fric)
+     &                               N_xi(1,j) * FYT * fric_weight
               pm_friction((j-1)*3+3) = pm_friction((j-1)*3+3) - &
-     &                               N_xi(1,j) * FZT * wi1_fric * &
-     &                               wi2_fric * dsqrt(detm_fric)
+     &                               N_xi(1,j) * FZT * fric_weight
             ENDDO
             
             ! Secondary nodes (5-8): add friction
             DO j=1,4
               pm_friction(12+(j-1)*3+1) = pm_friction(12+(j-1)*3+1) + &
-     &                                  N_eta(1,j) * FXT * wi1_fric * &
-     &                                  wi2_fric * dsqrt(detm_fric)
+     &                                  N_eta(1,j) * FXT * fric_weight
               pm_friction(12+(j-1)*3+2) = pm_friction(12+(j-1)*3+2) + &
-     &                                  N_eta(1,j) * FYT * wi1_fric * &
-     &                                  wi2_fric * dsqrt(detm_fric)
+     &                                  N_eta(1,j) * FYT * fric_weight
               pm_friction(12+(j-1)*3+3) = pm_friction(12+(j-1)*3+3) + &
-     &                                  N_eta(1,j) * FZT * wi1_fric * &
-     &                                  wi2_fric * dsqrt(detm_fric)
-      ENDDO
+     &                                  N_eta(1,j) * FZT * fric_weight
+            ENDDO
                
             ! Energy calculation
             ! Calculate tangential velocity from relative velocity
@@ -502,17 +517,6 @@
 !-----------------------------------------------
 !   F i n a l   R e s u l t s
 !-----------------------------------------------
-      IF (active_area .GT. 1.0d-30) THEN
-        DO i = 1, 24
-          pm(i) = pm(i) / active_area
-          pm_friction(i) = pm_friction(i) / active_area
-        ENDDO
-        DO i = 1, 8
-          node_stiff(i) = node_stiff(i) / active_area
-        ENDDO
-        energy = energy / active_area
-      ENDIF
-
       ! Set output forces
       ! Combine normal and friction forces
       DO i=1,24

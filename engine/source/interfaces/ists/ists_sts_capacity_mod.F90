@@ -1,0 +1,93 @@
+!||====================================================================
+!||    ists_sts_capacity_mod  ../engine/source/interfaces/ists/ists_sts_capacity_mod.F90
+!||--- called by ------------------------------------------------------
+!||    ists_mainf              ../engine/source/interfaces/ists/ists_mainf.F
+!||====================================================================
+      MODULE ISTS_STS_CAPACITY_MOD
+#include      "my_real.inc"
+        IMPLICIT NONE
+        PRIVATE
+        PUBLIC :: ISTS_STS_INIT_CAPACITY
+        PUBLIC :: ISTS_STS_ENSURE_BUFFERS
+        PUBLIC :: ISTS_STS_TRY_GROW_CAPACITY
+
+      CONTAINS
+
+!=======================================================================
+!   ISTS_STS_INIT_CAPACITY
+!   Initial STS pair-buffer capacity and hard cap from segment counts.
+!=======================================================================
+        SUBROUTINE ISTS_STS_INIT_CAPACITY(NSEG_SEC, NSEG_MST, &
+     &    STS_WB_CAPACITY, MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT)
+          INTEGER, INTENT(IN) :: NSEG_SEC, NSEG_MST
+          INTEGER, INTENT(IN) :: STS_WB_CAPACITY
+          INTEGER, INTENT(OUT) :: MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT
+          INTEGER :: CAP_INIT
+          INTEGER, PARAMETER :: ISTS_STS_CAP_MIN_INIT = 1024
+          INTEGER, PARAMETER :: ISTS_STS_CAP_PER_SEG = 64
+          INTEGER, PARAMETER :: ISTS_STS_CAP_SEC_SCALE = 512
+
+          STS_CAP_LIMIT = MIN(MAX(0, NSEG_SEC) * MAX(0, NSEG_MST),&
+     &      MAX(0, NSEG_SEC) * ISTS_STS_CAP_SEC_SCALE)
+          STS_CAP_LIMIT = MAX(1, STS_CAP_LIMIT)
+
+          CAP_INIT = MAX(ISTS_STS_CAP_MIN_INIT,&
+     &      MAX(1, NSEG_SEC) * ISTS_STS_CAP_PER_SEG)
+          MAX_STS_SIZE_ACTUAL = MIN(CAP_INIT, STS_CAP_LIMIT)
+          IF (STS_WB_CAPACITY > MAX_STS_SIZE_ACTUAL) THEN
+            MAX_STS_SIZE_ACTUAL = MIN(STS_WB_CAPACITY, STS_CAP_LIMIT)
+          ENDIF
+        END SUBROUTINE ISTS_STS_INIT_CAPACITY
+
+!=======================================================================
+!   ISTS_STS_ENSURE_BUFFERS
+!   (Re)allocate persistent STS working buffers when capacity grows.
+!=======================================================================
+        SUBROUTINE ISTS_STS_ENSURE_BUFFERS(CAPACITY, WB_CAPACITY, &
+     &    CONT_ELEMENT, load_arr, STS_STIF, &
+     &    CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+          INTEGER, INTENT(IN) :: CAPACITY
+          INTEGER, INTENT(INOUT) :: WB_CAPACITY
+          my_real, ALLOCATABLE, INTENT(INOUT) :: CONT_ELEMENT(:,:,:)
+          my_real, ALLOCATABLE, INTENT(INOUT) :: load_arr(:,:,:)
+          my_real, ALLOCATABLE, INTENT(INOUT) :: STS_STIF(:)
+          INTEGER, ALLOCATABLE, INTENT(INOUT) :: CAND_SEC_SEG_ID(:,:)
+          INTEGER, ALLOCATABLE, INTENT(INOUT) :: CAND_MST_SEG_ID(:,:)
+          INTEGER, ALLOCATABLE, INTENT(INOUT) :: node_id_load(:)
+
+          IF (.NOT. ALLOCATED(CONT_ELEMENT) .OR. &
+     &        WB_CAPACITY < CAPACITY) THEN
+            IF (ALLOCATED(CONT_ELEMENT)) THEN
+              DEALLOCATE(CONT_ELEMENT, load_arr, STS_STIF, &
+     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+            ENDIF
+            ALLOCATE(CONT_ELEMENT(CAPACITY,3,8))
+            ALLOCATE(load_arr(CAPACITY,8,4))
+            ALLOCATE(STS_STIF(CAPACITY))
+            ALLOCATE(CAND_SEC_SEG_ID(CAPACITY,5))
+            ALLOCATE(CAND_MST_SEG_ID(CAPACITY,5))
+            ALLOCATE(node_id_load(CAPACITY*8))
+            WB_CAPACITY = CAPACITY
+          ENDIF
+        END SUBROUTINE ISTS_STS_ENSURE_BUFFERS
+
+!=======================================================================
+!   ISTS_STS_TRY_GROW_CAPACITY
+!   Double pair capacity on broad-phase overflow, up to STS_CAP_LIMIT.
+!=======================================================================
+        SUBROUTINE ISTS_STS_TRY_GROW_CAPACITY(BP_OVERFLOW, &
+     &    MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT, RETRY)
+          LOGICAL, INTENT(IN) :: BP_OVERFLOW
+          INTEGER, INTENT(INOUT) :: MAX_STS_SIZE_ACTUAL
+          INTEGER, INTENT(IN) :: STS_CAP_LIMIT
+          LOGICAL, INTENT(OUT) :: RETRY
+
+          RETRY = .FALSE.
+          IF (.NOT. BP_OVERFLOW) RETURN
+          IF (MAX_STS_SIZE_ACTUAL >= STS_CAP_LIMIT) RETURN
+          MAX_STS_SIZE_ACTUAL = MIN(STS_CAP_LIMIT,&
+     &        MAX_STS_SIZE_ACTUAL + MAX_STS_SIZE_ACTUAL)
+          RETRY = .TRUE.
+        END SUBROUTINE ISTS_STS_TRY_GROW_CAPACITY
+
+      END MODULE ISTS_STS_CAPACITY_MOD

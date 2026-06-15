@@ -8,6 +8,9 @@
         IMPLICIT NONE
         PRIVATE
 
+        INTEGER, PARAMETER :: STS_HASH_MIN_SLOTS = 1024
+        REAL(KIND=WP), PARAMETER :: STS_EPS_STIFF = 1.0E-30_WP
+
         PUBLIC :: STS_CONTACT_STIFFNESS
 
       CONTAINS
@@ -32,23 +35,37 @@
           REAL(KIND=WP), INTENT(IN) :: KMIN, KMAX, STIGLO
           REAL(KIND=WP), INTENT(OUT) :: STIF(MAX_STS_SIZE)
 
-          INTEGER :: I, J, IDX, MST_SEG, NODE_ID, NVALID
-          INTEGER :: NSN_EFF, NRTM_EFF
+          INTEGER :: I, MST_SEG, NODE_ID
+          INTEGER :: NSN_EFF, NRTM_EFF, NPAIR_EFF, HASH_SIZE
           INTEGER, ALLOCATABLE :: NODE_TO_STFNS(:)
-          REAL(KIND=WP) :: K_PRIMARY, K_SECONDARY, K_NODE
-          REAL(KIND=WP) :: SECONDARY_FALLBACK
-          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
+          INTEGER, ALLOCATABLE :: SEG_HASH_KEYS(:,:), SEG_HASH_VALS(:)
+          REAL(KIND=WP) :: K_PRIMARY, K_SECONDARY, SECONDARY_FALLBACK
 
-          STIF(1:MAX_STS_SIZE) = 0.0_WP
+          NPAIR_EFF = MIN(COUNT, MAX_STS_SIZE)
+          IF (NPAIR_EFF <= 0) RETURN
+          STIF(1:NPAIR_EFF) = 0.0_WP
 
-          ! get the effective number of nodes and segments
+          ! Istf=1: constant interface stiffness (STIGLO = -STFAC > 0 in engine).
+          ! eval_pair uses d1 = 0.5*STIF*FAC; store 2*STIGLO to match NTS (STIGLO*FAC).
+          IF (STIGLO > STS_EPS_STIFF) THEN
+            STIF(1:NPAIR_EFF) = 2.0_WP * STIGLO
+            RETURN
+          END IF
+
           NSN_EFF = MIN(NSN, SIZE(NSV), SIZE(STFNS))
           NRTM_EFF = MIN(NRTM, SIZE(STFM), SIZE(IRECTM) / 4)
           SECONDARY_FALLBACK = STS_CONTACT_AVERAGE_POSITIVE( &
      &      STFNS, NSN_EFF, ABS(STIGLO))
 
+          HASH_SIZE = MIN(HUGE(1), MAX(STS_HASH_MIN_SLOTS, &
+     &        2 * MAX(1, NRTM_EFF) + 1))
+          ALLOCATE(SEG_HASH_KEYS(4, HASH_SIZE))
+          ALLOCATE(SEG_HASH_VALS(HASH_SIZE))
+          CALL STS_CONTACT_BUILD_SEG_HASH( &
+     &      IRECTM, NRTM_EFF, SEG_HASH_KEYS, SEG_HASH_VALS, HASH_SIZE)
+
           ALLOCATE(NODE_TO_STFNS(MAX(1, NUMNOD)))
-          NODE_TO_STFNS(:) = 0
+          NODE_TO_STFNS = 0
           DO I = 1, NSN_EFF
             NODE_ID = NSV(I)
             IF (NODE_ID > 0 .AND. NODE_ID <= NUMNOD) THEN
@@ -56,60 +73,237 @@
             END IF
           END DO
 
-          DO I = 1, MIN(COUNT, MAX_STS_SIZE)
-            ! Istf=1: constant interface stiffness (STIGLO = -STFAC > 0 in engine).
-            ! eval_pair uses d1 = 0.5*STIF*FAC; store 2*STIGLO to match NTS (STIGLO*FAC).
-            IF (STIGLO > 0.0_WP) THEN
-              STIF(I) = 2.0_WP * STIGLO
-              CYCLE
-            END IF
-
+          DO I = 1, NPAIR_EFF
             ! find the primary segment
             ! IRECTM is prepared in starter and passed here as IRECTM/IRECT (INTBUF_TAB%IRECTM).
-            MST_SEG = STS_CONTACT_FIND_PRIMARY_SEG( &
+            MST_SEG = STS_CONTACT_FIND_PRIMARY_SEG_HASH( &
      &        CAND_MST_SEG_ID(I, 2:5), CAND_MST_SEG_ID(I, 1), &
-     &        IRECTM, NRTM_EFF)
-
-            ! get the primary segment stiffness
-            K_PRIMARY = 0.0_WP
-            IF (MST_SEG > 0 .AND. MST_SEG <= NRTM_EFF) THEN
-              K_PRIMARY = STFM(MST_SEG)
-            END IF
-
-            K_SECONDARY = 0.0_WP
+     &        IRECTM, NRTM_EFF, SEG_HASH_KEYS, SEG_HASH_VALS, &
+     &        HASH_SIZE)
+            
+     ! get the primary segment stiffness
+            K_PRIMARY = STS_CONTACT_PRIMARY_STIFFNESS( &
+     &        MST_SEG, STFM, NRTM_EFF)
+            IF (K_PRIMARY <= STS_EPS_STIFF) CYCLE
             ! get the secondary stiffness
-            ! NVALID is the number of valid secondary nodes
-            NVALID = 0
-            DO J = 2, 5
-              NODE_ID = CAND_SEC_SEG_ID(I, J)
-              IF (NODE_ID <= 0 .OR. NODE_ID > NUMNOD) CYCLE
-
-              IDX = NODE_TO_STFNS(NODE_ID)
-              IF (IDX <= 0 .OR. IDX > NSN_EFF .OR. IDX > SIZE(STFNS)) CYCLE
-
-              K_NODE = ABS(STFNS(IDX))
-              IF (K_NODE <= EPS_STIFF) CYCLE
-
-              ! Sum only valid mapped secondary stiffness values.
-              K_SECONDARY = K_SECONDARY + K_NODE
-              NVALID = NVALID + 1
-            END DO
-            IF (NVALID > 0) THEN
-              ! Average over valid mapped nodes.
-              K_SECONDARY = K_SECONDARY / REAL(NVALID, WP)
-            ELSE
-              ! Deterministic fallback when no secondary node maps to NSV.
-              K_SECONDARY = SECONDARY_FALLBACK
-            END IF
-
+            K_SECONDARY = STS_CONTACT_SECONDARY_STIFFNESS( &
+     &        CAND_SEC_SEG_ID(I, 2:5), NODE_TO_STFNS, STFNS, &
+     &        NSN_EFF, NUMNOD, SECONDARY_FALLBACK)
+            IF (K_SECONDARY <= STS_EPS_STIFF) CYCLE
+            
             ! Store the stiffness value in the STS_STIF array
             STIF(I) = STS_CONTACT_STIFFNESS_VALUE( &
      &        K_PRIMARY, K_SECONDARY, IGSTI, KMIN, KMAX)
-
           END DO
 
           DEALLOCATE(NODE_TO_STFNS)
+          DEALLOCATE(SEG_HASH_KEYS, SEG_HASH_VALS)
         END SUBROUTINE STS_CONTACT_STIFFNESS
+
+!=======================================================================
+!   STS_CONTACT_PRIMARY_STIFFNESS
+!=======================================================================
+        REAL(KIND=WP) FUNCTION STS_CONTACT_PRIMARY_STIFFNESS( &
+     &      MST_SEG, STFM, NRTM_EFF)
+          INTEGER, INTENT(IN) :: MST_SEG, NRTM_EFF
+          REAL(KIND=WP), INTENT(IN) :: STFM(:)
+
+          STS_CONTACT_PRIMARY_STIFFNESS = 0.0_WP
+          IF (MST_SEG > 0 .AND. MST_SEG <= NRTM_EFF) THEN
+            STS_CONTACT_PRIMARY_STIFFNESS = STFM(MST_SEG)
+          END IF
+        END FUNCTION STS_CONTACT_PRIMARY_STIFFNESS
+
+!=======================================================================
+!   STS_CONTACT_SECONDARY_STIFFNESS
+!   Average of positive mapped STFNS values on the 4 secondary nodes.
+!=======================================================================
+        REAL(KIND=WP) FUNCTION STS_CONTACT_SECONDARY_STIFFNESS( &
+     &      SEC_NODE_IDS, NODE_TO_STFNS, STFNS, NSN_EFF, NUMNOD, &
+     &      FALLBACK)
+          INTEGER, INTENT(IN) :: SEC_NODE_IDS(4)
+          INTEGER, INTENT(IN) :: NODE_TO_STFNS(:)
+          REAL(KIND=WP), INTENT(IN) :: STFNS(:)
+          INTEGER, INTENT(IN) :: NSN_EFF, NUMNOD
+          REAL(KIND=WP), INTENT(IN) :: FALLBACK
+
+          INTEGER :: J, IDX, NODE_ID, NVALID
+          REAL(KIND=WP) :: K_SUM, K_NODE
+
+          K_SUM = 0.0_WP
+          NVALID = 0
+          ! NVALID is the number of valid mapped secondary stiffness values.
+          DO J = 1, 4
+            NODE_ID = SEC_NODE_IDS(J)
+            IF (NODE_ID <= 0 .OR. NODE_ID > NUMNOD) CYCLE
+
+            IDX = NODE_TO_STFNS(NODE_ID)
+            IF (IDX <= 0 .OR. IDX > NSN_EFF) CYCLE
+
+            K_NODE = ABS(STFNS(IDX))
+            IF (K_NODE <= STS_EPS_STIFF) CYCLE
+            
+            ! Sum only valid mapped secondary stiffness values.
+            K_SUM = K_SUM + K_NODE
+            NVALID = NVALID + 1
+          END DO
+
+          IF (NVALID > 0) THEN
+            ! Average the valid mapped secondary stiffness values.
+            STS_CONTACT_SECONDARY_STIFFNESS = K_SUM / REAL(NVALID, WP)
+          ELSE
+            ! If no valid mapped secondary stiffness values, use the fallback value.
+            STS_CONTACT_SECONDARY_STIFFNESS = FALLBACK
+          END IF
+        END FUNCTION STS_CONTACT_SECONDARY_STIFFNESS
+
+!=======================================================================
+!   STS_CONTACT_BUILD_SEG_HASH
+!=======================================================================
+        SUBROUTINE STS_CONTACT_BUILD_SEG_HASH( &
+     &      IRECTM, NRTM, HASH_KEYS, HASH_VALS, HASH_SIZE)
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: NRTM, HASH_SIZE
+          INTEGER, INTENT(OUT) :: HASH_KEYS(4, HASH_SIZE)
+          INTEGER, INTENT(OUT) :: HASH_VALS(HASH_SIZE)
+
+          INTEGER :: SEG, K, IH
+          INTEGER :: KEY(4), KEY_SORTED(4)
+          LOGICAL :: KEY_MATCH
+
+          HASH_KEYS = 0
+          HASH_VALS = 0
+          IF (NRTM <= 0 .OR. HASH_SIZE <= 0) RETURN
+
+          DO SEG = 1, NRTM
+            DO K = 1, 4
+              KEY(K) = IRECTM(4 * (SEG - 1) + K)
+            END DO
+            CALL STS_CONTACT_CANONICAL_NODES(KEY, KEY_SORTED)
+            IF (.NOT. STS_CONTACT_VALID_SEG_KEY(KEY_SORTED)) CYCLE
+
+            CALL STS_CONTACT_HASH_PROBE(KEY_SORTED, HASH_SIZE, HASH_KEYS, &
+     &        HASH_VALS, IH, KEY_MATCH)
+            IF (KEY_MATCH) CYCLE
+
+            IF (HASH_VALS(IH) == 0) THEN
+              HASH_KEYS(:, IH) = KEY_SORTED(:)
+              HASH_VALS(IH) = SEG
+            END IF
+          END DO
+        END SUBROUTINE STS_CONTACT_BUILD_SEG_HASH
+
+!=======================================================================
+!   STS_CONTACT_FIND_PRIMARY_SEG_HASH
+!=======================================================================
+        INTEGER FUNCTION STS_CONTACT_FIND_PRIMARY_SEG_HASH( &
+     &      PRIMARY_NODES, CAND_SEG, IRECTM, NRTM, HASH_KEYS, &
+     &      HASH_VALS, HASH_SIZE)
+          INTEGER, INTENT(IN) :: PRIMARY_NODES(4)
+          INTEGER, INTENT(IN) :: CAND_SEG, NRTM, HASH_SIZE
+          INTEGER, INTENT(IN) :: IRECTM(:)
+          INTEGER, INTENT(IN) :: HASH_KEYS(4, HASH_SIZE)
+          INTEGER, INTENT(IN) :: HASH_VALS(HASH_SIZE)
+
+          INTEGER :: KEY(4), IH
+          LOGICAL :: KEY_MATCH
+
+          STS_CONTACT_FIND_PRIMARY_SEG_HASH = 0
+
+          IF (CAND_SEG > 0 .AND. CAND_SEG <= NRTM) THEN
+            IF (STS_CONTACT_SAME_SEG_NODES(PRIMARY_NODES, IRECTM, CAND_SEG)) THEN
+              STS_CONTACT_FIND_PRIMARY_SEG_HASH = CAND_SEG
+              RETURN
+            END IF
+          END IF
+
+          IF (NRTM <= 0 .OR. HASH_SIZE <= 0) RETURN
+          CALL STS_CONTACT_CANONICAL_NODES(PRIMARY_NODES, KEY)
+          IF (.NOT. STS_CONTACT_VALID_SEG_KEY(KEY)) RETURN
+
+          CALL STS_CONTACT_HASH_PROBE(KEY, HASH_SIZE, HASH_KEYS, &
+     &      HASH_VALS, IH, KEY_MATCH)
+          IF (KEY_MATCH) THEN
+            STS_CONTACT_FIND_PRIMARY_SEG_HASH = HASH_VALS(IH)
+            RETURN
+          END IF
+
+          STS_CONTACT_FIND_PRIMARY_SEG_HASH = STS_CONTACT_FIND_PRIMARY_SEG( &
+     &      PRIMARY_NODES, CAND_SEG, IRECTM, NRTM)
+        END FUNCTION STS_CONTACT_FIND_PRIMARY_SEG_HASH
+
+!=======================================================================
+!   STS_CONTACT_HASH_PROBE
+!   Open-addressing lookup: KEY_MATCH=.TRUE. when slot holds KEY.
+!=======================================================================
+        SUBROUTINE STS_CONTACT_HASH_PROBE(KEY, HASH_SIZE, HASH_KEYS, &
+     &      HASH_VALS, IH, KEY_MATCH)
+          INTEGER, INTENT(IN) :: KEY(4), HASH_SIZE
+          INTEGER, INTENT(IN) :: HASH_KEYS(4, HASH_SIZE)
+          INTEGER, INTENT(IN) :: HASH_VALS(HASH_SIZE)
+          INTEGER, INTENT(OUT) :: IH
+          LOGICAL, INTENT(OUT) :: KEY_MATCH
+
+          INTEGER :: PROBE
+
+          IH = STS_CONTACT_SEG_HASH(KEY, HASH_SIZE)
+          KEY_MATCH = .FALSE.
+          PROBE = 0
+          DO WHILE (HASH_VALS(IH) /= 0 .AND. PROBE < HASH_SIZE)
+            IF (ALL(KEY(:) == HASH_KEYS(:, IH))) THEN
+              KEY_MATCH = .TRUE.
+              RETURN
+            END IF
+            IH = IH + 1
+            IF (IH > HASH_SIZE) IH = 1
+            PROBE = PROBE + 1
+          END DO
+        END SUBROUTINE STS_CONTACT_HASH_PROBE
+
+!=======================================================================
+!   STS_CONTACT_CANONICAL_NODES
+!=======================================================================
+        SUBROUTINE STS_CONTACT_CANONICAL_NODES(NODES_IN, NODES_OUT)
+          INTEGER, INTENT(IN) :: NODES_IN(4)
+          INTEGER, INTENT(OUT) :: NODES_OUT(4)
+          INTEGER :: I, J, TMP
+
+          NODES_OUT(:) = NODES_IN(:)
+          DO I = 1, 3
+            DO J = I + 1, 4
+              IF (NODES_OUT(J) < NODES_OUT(I)) THEN
+                TMP = NODES_OUT(I)
+                NODES_OUT(I) = NODES_OUT(J)
+                NODES_OUT(J) = TMP
+              END IF
+            END DO
+          END DO
+        END SUBROUTINE STS_CONTACT_CANONICAL_NODES
+
+!=======================================================================
+!   STS_CONTACT_VALID_SEG_KEY
+!=======================================================================
+        LOGICAL FUNCTION STS_CONTACT_VALID_SEG_KEY(KEY)
+          INTEGER, INTENT(IN) :: KEY(4)
+
+          STS_CONTACT_VALID_SEG_KEY = ALL(KEY(:) > 0)
+        END FUNCTION STS_CONTACT_VALID_SEG_KEY
+
+!=======================================================================
+!   STS_CONTACT_SEG_HASH
+!=======================================================================
+        INTEGER FUNCTION STS_CONTACT_SEG_HASH(KEY, HASH_SIZE)
+          INTEGER, INTENT(IN) :: KEY(4), HASH_SIZE
+          INTEGER :: I
+          INTEGER(KIND=8) :: H
+
+          H = 0_8
+          DO I = 1, 4
+            H = MOD(H * INT(1315423911, KIND=8) + &
+     &        INT(KEY(I), KIND=8), INT(HASH_SIZE, KIND=8))
+          END DO
+          STS_CONTACT_SEG_HASH = INT(H) + 1
+        END FUNCTION STS_CONTACT_SEG_HASH
 
 !=======================================================================
 !   STS_CONTACT_FIND_PRIMARY_SEG
@@ -157,7 +351,7 @@
 
           DO I = 1, 4
             NODE_ID = PRIMARY_NODES(I)
-            IF (NODE_ID <= 0) CYCLE
+            IF (NODE_ID <= 0) RETURN
             FOUND = .FALSE.
             DO J = 1, 4
               ! check if the node NODE_ID is in the segment SEG
@@ -175,37 +369,36 @@
 
 !=======================================================================
 !   STS_CONTACT_STIFFNESS_VALUE
+!   INT7 IGSTI policy (aligned with Q1NP_CONTACT_STIFFNESS).
 !=======================================================================
         REAL(KIND=WP) FUNCTION STS_CONTACT_STIFFNESS_VALUE(K_PRIMARY, K_SECONDARY, IGSTI, KMIN, KMAX)
           REAL(KIND=WP), INTENT(IN) :: K_PRIMARY, K_SECONDARY
           REAL(KIND=WP), INTENT(IN) :: KMIN, KMAX
           INTEGER, INTENT(IN) :: IGSTI
-          REAL(KIND=WP), PARAMETER :: EPS_DEN = 1.0E-30_WP
+          REAL(KIND=WP) :: K_SEC
 
+          K_SEC = ABS(K_SECONDARY)
+          
           ! IGSTI is the interface stiffness selection flag (how primary and secondary are combined).
           ! IGSTI = 1: product
           ! IGSTI = 2: average
           ! IGSTI = 3: maximum
           ! IGSTI = 4: minimum
           ! IGSTI = 5: harmonic-like blend
-
-          IF (IGSTI <= 1) THEN
-            STS_CONTACT_STIFFNESS_VALUE = K_PRIMARY * ABS(K_SECONDARY)
-          ELSEIF (IGSTI == 2) THEN
-            STS_CONTACT_STIFFNESS_VALUE = 0.5_WP * (K_PRIMARY + ABS(K_SECONDARY))
-            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(STS_CONTACT_STIFFNESS_VALUE, KMAX))
-          ELSEIF (IGSTI == 3) THEN
-            STS_CONTACT_STIFFNESS_VALUE = MAX(K_PRIMARY, ABS(K_SECONDARY))
-            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(STS_CONTACT_STIFFNESS_VALUE, KMAX))
-          ELSEIF (IGSTI == 4) THEN
-            STS_CONTACT_STIFFNESS_VALUE = MIN(K_PRIMARY, ABS(K_SECONDARY))
-            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(STS_CONTACT_STIFFNESS_VALUE, KMAX))
-          ELSEIF (IGSTI == 5) THEN
-            STS_CONTACT_STIFFNESS_VALUE = K_PRIMARY * ABS(K_SECONDARY) / MAX(EPS_DEN, K_PRIMARY + ABS(K_SECONDARY))
-            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(STS_CONTACT_STIFFNESS_VALUE, KMAX))
-          ELSE
-            STS_CONTACT_STIFFNESS_VALUE = K_PRIMARY * ABS(K_SECONDARY)
-          END IF
+          SELECT CASE (IGSTI)
+          CASE (:1)
+            STS_CONTACT_STIFFNESS_VALUE = K_PRIMARY * K_SEC
+          CASE (2)
+            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(0.5_WP * (K_PRIMARY + K_SEC), KMAX))
+          CASE (3)
+            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(MAX(K_PRIMARY, K_SEC), KMAX))
+          CASE (4)
+            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(MIN(K_PRIMARY, K_SEC), KMAX))
+          CASE (5)
+            STS_CONTACT_STIFFNESS_VALUE = MAX(KMIN, MIN(K_PRIMARY * K_SEC / MAX(STS_EPS_STIFF, K_PRIMARY + K_SEC), KMAX))
+          CASE DEFAULT
+            STS_CONTACT_STIFFNESS_VALUE = K_PRIMARY * K_SEC
+          END SELECT
         END FUNCTION STS_CONTACT_STIFFNESS_VALUE
 
 !=======================================================================
@@ -219,7 +412,6 @@
 
           INTEGER :: I, NLOC, COUNT_POS
           REAL(KIND=WP) :: SUM_POS, VABS
-          REAL(KIND=WP), PARAMETER :: EPS_STIFF = 1.0E-30_WP
 
           STS_CONTACT_AVERAGE_POSITIVE = FALLBACK
           NLOC = MIN(N_EFF, SIZE(VALUES))
@@ -229,7 +421,7 @@
           COUNT_POS = 0
           DO I = 1, NLOC
             VABS = ABS(VALUES(I))
-            IF (VABS <= EPS_STIFF) CYCLE
+            IF (VABS <= STS_EPS_STIFF) CYCLE
             SUM_POS = SUM_POS + VABS
             COUNT_POS = COUNT_POS + 1
           END DO

@@ -77,6 +77,7 @@ C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
       USE TIMER_MOD
+      USE ISTS_STS_CAPACITY_MOD
       USE INTBUFDEF_MOD
       USE H3D_MOD
       USE INTBUF_FRIC_MOD
@@ -84,7 +85,6 @@ C-----------------------------------------------
       USE sts_gp_state_mod
       USE Q1NP_CONTACT_DRIVER_MOD, ONLY: Q1NP_CONTACT_DRIVER_INT7,
      &  Q1NP_CONTACT_INIT_GRID_NODES
-      USE STS_VOXEL_DRIVER_MOD, ONLY: STS_VOXEL_DRIVER_DATA_READY
       USE STS_BROAD_PHASE_VOXEL_MOD, ONLY: STS_VOXEL_BROAD_PHASE
       USE STS_CONTACT_STIFFNESS_MOD, ONLY: STS_CONTACT_STIFFNESS
 C-----------------------------------------------
@@ -136,15 +136,16 @@ C-----------------------------------------------
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_SEC_SEG_ID   !secondary segment nodes
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_MST_SEG_ID   !primary segment nodes
       INTEGER, DIMENSION(:),       ALLOCATABLE :: node_id_load      !node id array (8 nodes per element)
+      INTEGER, SAVE :: STS_WB_CAPACITY = 0
       INTEGER COUNT !count for the number of contact elements found
       INTEGER :: MAX_STS_SIZE_ACTUAL !actual calculated sts array size needed      
       INTEGER OPTION !option for the contact algorithm
       INTEGER IMPACT_glob !global impact flag, 0 if no impact, 1 if impact
-      LOGICAL :: STS_ACTIVE !true if STS is active, false if NTS is active
-      INTEGER :: IP_MAX
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
+      INTEGER ISTS_STS_IP_MAX
+      PARAMETER (ISTS_STS_IP_MAX = 2)
       INTEGER I, L, IFQ, MFROT, IGSTI,
      .        JLT_TIED, INTTH, IFORM,
      .        INTFRIC, NSETPRTS, NPARTFRIC, IORTHFRIC
@@ -175,18 +176,16 @@ C-----------------------------------------------
       INTEGER :: STS_FLAG
       INTEGER :: SEC_SURF_ID_STS
       INTEGER :: MST_SURF_ID_STS
-      INTEGER :: NSEG_SEC, NSEG_MST
 !     Secondary / master surfaces from IPARI(45/46); voxel broad-phase
 !     populates candidate segment pairs up to MAX_STS_SIZE_ACTUAL.
-      LOGICAL :: STS_VOXEL_OVERFLOW                       ! voxel broad-phase overflow flag
+      LOGICAL :: STS_BP_OVERFLOW                          ! broad-phase pair overflow flag
+      LOGICAL :: STS_BP_RETRY                             ! retry broad phase after capacity grow
+      INTEGER :: STS_CAP_LIMIT
       LOGICAL, SAVE :: INT7_CONTACT_MODE_MSG_DONE = .FALSE. ! one-time flag for the contact-mode banner
       LOGICAL, SAVE :: STS_VOXEL_OVERFLOW_WARN_DONE = .FALSE.
 C-----------------------------------------------
 C   S o u r c e   L i n e s
 C-----------------------------------------------
-      STS_ACTIVE = .FALSE. ! .FALSE. = NTS (node-to-surface); .TRUE. = STS (segment-to-segment)      
-      IF (IPARI(105,NIN) == 1) STS_ACTIVE = .TRUE.
-C      
       NRTM = IPARI(4,NIN)
       NSN = IPARI(5,NIN)
       NTY = IPARI(7,NIN)
@@ -211,10 +210,9 @@ C-----------------------------------------------
       IF (NTY == 7 .AND. JTASK == 1 .AND. .NOT. INT7_CONTACT_MODE_MSG_DONE) THEN
         IF (ABS(TT) <= 1.0E-20 .OR. NCYCLE <= 0) THEN
           IF (STS_FLAG == 2) THEN
-            WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = Q1NP (NURBS)'
-          ELSE IF (STS_ACTIVE .AND. STS_VOXEL_DRIVER_DATA_READY(IGRSURF, NSURF, NOINT,
-     &                .FALSE., SEC_SURF_ID_STS, MST_SURF_ID_STS)) THEN
-            WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = STS (voxel broad-phase)'
+            WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = Q1NP (NURBS surface-to-surface)'
+          ELSE IF (STS_FLAG == 1) THEN
+            WRITE(6,*) 'INT7 (NIN=', NIN,'): contact mode = STS (surface-to-surface)'
           ELSE
             WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = NTS (node-to-surface)'
           ENDIF
@@ -270,54 +268,43 @@ C
         SEC_SURF_ID_STS = IPARI(45,NIN)
 C
         IF (JTASK == 1) THEN
-C          Set storage capacity for the candidate arrays.
-C          Upper bound: all unique (sec, mst) pairs; practical cap:
-C          NSEG_sec * 512 (matches prior i7mainf STS voxel sizing).
-          NSEG_SEC = IGRSURF(SEC_SURF_ID_STS)%NSEG
-          NSEG_MST = IGRSURF(MST_SURF_ID_STS)%NSEG
-          MAX_STS_SIZE_ACTUAL = MAX(1, MIN(NSEG_SEC * NSEG_MST,
-     &                                    NSEG_SEC * 512))
+C          Set storage capacity for the candidate arrays. Start small,
+C          grow on broad-phase overflow, and keep grown buffers alive.
+          CALL ISTS_STS_INIT_CAPACITY(
+     &        IGRSURF(SEC_SURF_ID_STS)%NSEG,
+     &        IGRSURF(MST_SURF_ID_STS)%NSEG,
+     &        STS_WB_CAPACITY, MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT)
 
-C         Allocate / refresh the working arrays consumed by
-C         STS_CONTACTS_ASSEMBLE and I7ASS33 (ASS_FLAG = 2).
-          IF (ALLOCATED(CONT_ELEMENT))    DEALLOCATE(CONT_ELEMENT)
-          IF (ALLOCATED(load_arr))        DEALLOCATE(load_arr)
-          IF (ALLOCATED(STS_STIF))        DEALLOCATE(STS_STIF)
-          IF (ALLOCATED(CAND_SEC_SEG_ID)) DEALLOCATE(CAND_SEC_SEG_ID)
-          IF (ALLOCATED(CAND_MST_SEG_ID)) DEALLOCATE(CAND_MST_SEG_ID)
-          IF (ALLOCATED(node_id_load))    DEALLOCATE(node_id_load)
-          ALLOCATE(CONT_ELEMENT(MAX_STS_SIZE_ACTUAL,3,8))
-          ALLOCATE(load_arr(MAX_STS_SIZE_ACTUAL,8,4))
-          ALLOCATE(STS_STIF(MAX_STS_SIZE_ACTUAL))
-          ALLOCATE(CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
-          ALLOCATE(CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL,5))
-          ALLOCATE(node_id_load(MAX_STS_SIZE_ACTUAL*8))
-          CONT_ELEMENT  = ZERO
-          load_arr      = ZERO
-          STS_STIF      = ZERO
-          CAND_SEC_SEG_ID = 0
-          CAND_MST_SEG_ID = 0
-          node_id_load    = 0
-
-          IP_MAX = 2
-          CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, IP_MAX)
-
-C         Voxel broad phase populates CAND_*_SEG_ID and CONT_ELEMENT.
+C         Broad phase populates CAND_*_SEG_ID and CONT_ELEMENT. If the
+C         compact starting capacity overflows, grow and retry.
           IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STARTIME(TIMERS,35)
-          CALL STS_VOXEL_BROAD_PHASE(
-     &          IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
-     &          X, NUMNOD, GAP_FOR_STS, MAX_STS_SIZE_ACTUAL,
-     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
-     &          COUNT, STS_VOXEL_OVERFLOW)
+          STS_BP_RETRY = .TRUE.
+          DO WHILE (STS_BP_RETRY)
+            STS_BP_RETRY = .FALSE.
+            CALL ISTS_STS_ENSURE_BUFFERS(MAX_STS_SIZE_ACTUAL,
+     &          STS_WB_CAPACITY, CONT_ELEMENT, load_arr, STS_STIF,
+     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+
+            CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, ISTS_STS_IP_MAX)
+
+            CALL STS_VOXEL_BROAD_PHASE(
+     &            IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
+     &            X, NUMNOD, GAP_FOR_STS, MAX_STS_SIZE_ACTUAL,
+     &            CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
+     &            COUNT, STS_BP_OVERFLOW)
+
+            CALL ISTS_STS_TRY_GROW_CAPACITY(STS_BP_OVERFLOW,
+     &          MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT, STS_BP_RETRY)
+          ENDDO
           IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STOPTIME(TIMERS,35)
 
-          IF (STS_VOXEL_OVERFLOW .AND. .NOT. STS_VOXEL_OVERFLOW_WARN_DONE) THEN
-            WRITE(*,'(A,I8,A,I10,A,I10)') 
-     &        ' WARNING INTERFACE ', NOINT, 
-     &        ': STS voxel pair overflow, kept ', COUNT, 
+          IF (STS_BP_OVERFLOW .AND. .NOT. STS_VOXEL_OVERFLOW_WARN_DONE) THEN
+            WRITE(*,'(A,I8,A,I10,A,I10)')
+     &        ' WARNING INTERFACE ', NOINT,
+     &        ': STS voxel pair overflow, kept ', COUNT,
      &        ' / capacity ', MAX_STS_SIZE_ACTUAL
             STS_VOXEL_OVERFLOW_WARN_DONE = .TRUE.
-          END IF
+          ENDIF
 
 C         Friction model 
 C         TODO: placeholder part-ID mapping; proper part-ID resolution is a separate task.
@@ -384,27 +371,20 @@ C           Scatter the per-pair load_arr / node_id_load directly into A / STIFN
           ENDIF ! COUNT > 0
         ENDIF  
         CALL MY_BARRIER()
-C          
-C       Array deallocation
-        IF (ALLOCATED(CONT_ELEMENT)) DEALLOCATE(CONT_ELEMENT)
-        IF (ALLOCATED(load_arr))     DEALLOCATE(load_arr)
-        IF (ALLOCATED(CAND_SEC_SEG_ID)) DEALLOCATE(CAND_SEC_SEG_ID)
-        IF (ALLOCATED(CAND_MST_SEG_ID)) DEALLOCATE(CAND_MST_SEG_ID)
-        IF (ALLOCATED(node_id_load))    DEALLOCATE(node_id_load)
 C        
       ELSEIF ((NTY == 7).AND.(STS_FLAG == 2)) THEN
-C        
-        KMIN   = INTBUF_TAB%VARIABLES(17)
-        KMAX   = INTBUF_TAB%VARIABLES(18)
+C
         ! Q1NP_CONTACT_INIT_GRID_NODES:Returns IXS, NIXS, NUMELS for FCONT scatter in the force assembly.
         CALL Q1NP_CONTACT_INIT_GRID_NODES(IXS, NIXS, NUMELS)
         CALL MY_BARRIER()
         IF (JTASK == 1) THEN
           CALL Q1NP_CONTACT_DRIVER_INT7(NCYCLE, NUMNOD, X, A, STIFN,
-     &                                  GAP, IGSTI, KMIN, KMAX, INTBUF_TAB%IRECTM,
+     &                                  GAP, FRIC, IGSTI, KMIN, KMAX, INTBUF_TAB%IRECTM,
      &                                  INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, INTBUF_TAB%STFM, NRTM,
      &                                  FCONT, INCONV == 1 .AND.
-     &                                  ANIM_V(4)+OUTP_V(4)+H3D_DATA%N_VECT_CONT > 0)
+     &                                  ANIM_V(4)+OUTP_V(4)+H3D_DATA%N_VECT_CONT > 0,
+     &                                  IMPACT_glob)
+          IF (IMPACT_glob > 0) IPARI(29,NIN) = 1
         ENDIF
         CALL MY_BARRIER()
 C            

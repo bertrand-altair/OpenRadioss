@@ -49,7 +49,7 @@
 !
       MODULE STS_BROAD_PHASE_VOXEL_MOD
         USE PRECISION_MOD, ONLY : WP
-        USE CONSTANT_MOD,  ONLY : ZERO, ONE, TWO, THREE, FOUR, HALF
+        USE CONSTANT_MOD,  ONLY : ZERO, ONE, THREE
         USE GROUPDEF_MOD,  ONLY : SURF_
         USE CONTACT_BROAD_PHASE_TOL_MOD
         IMPLICIT NONE
@@ -60,10 +60,14 @@
 !       Default number of samples per segment (4 corners + centroid).
         INTEGER, PARAMETER, PUBLIC :: STS_VOXEL_NSAMPLES_PER_SEG = 5
 !       Voxel grid / AABB padding factors (aligned with Q1NP and legacy STS).
-!       Do not use INTER_BP_TOL_PAD_CELL (4.0) here: coarse cells plus a tight
-!       SEARCH_RADIUS drop valid segment pairs; a loose radius floods the buffer.
+!       CELL_SIZE is tied to mesh scale (not gap) so a small gap does not
+!       explode the voxel count; SEARCH_RADIUS still uses gap + mesh scale.
         REAL(KIND=WP), PARAMETER :: STS_VOXEL_CELL_SIZE_FACTOR = 1.25_WP
         REAL(KIND=WP), PARAMETER :: STS_VOXEL_PADDING_FACTOR  = 1.25_WP
+!       Hard cap on voxel cells to avoid OOM / pathological runtimes.
+        INTEGER, PARAMETER :: STS_VOXEL_MAX_CELLS = 4194304
+        INTEGER, PARAMETER :: STS_VOXEL_HASH_MIN_SLOTS = 1024
+        REAL(KIND=WP), PARAMETER :: STS_VOXEL_EPS_SPAN = 1.0E-12_WP
 !
         PUBLIC :: STS_VOXEL_BROAD_PHASE
 !
@@ -104,15 +108,11 @@
           INTEGER :: NPTS_S, NPTS_M
           REAL(KIND=WP), ALLOCATABLE :: PTS_S(:,:), PTS_M(:,:)
           INTEGER, ALLOCATABLE :: SEG_OF_PT_S(:), SEG_OF_PT_M(:)
-          REAL(KIND=WP) :: TRIGGER_TOL, H_MESH_S, H_MESH_M
 !-----------------------------------------------
 !         Initialization
 !-----------------------------------------------
           COUNT = 0
           OVERFLOW = .FALSE.
-          CAND_SEC_SEG_ID(:,:) = 0
-          CAND_MST_SEG_ID(:,:) = 0
-          CONT_ELEMENT(:,:,:)  = ZERO
 !
           IF (SEC_SURF_IDX <= 0 .OR. SEC_SURF_IDX > NSURF) RETURN
           IF (MST_SURF_IDX <= 0 .OR. MST_SURF_IDX > NSURF) RETURN
@@ -146,17 +146,14 @@
             RETURN
           END IF
 
-          H_MESH_S = INTER_BP_TOL_MESH_SCALE(PTS_S, NPTS_S)
-          H_MESH_M = INTER_BP_TOL_MESH_SCALE(PTS_M, NPTS_M)
-          CALL INTER_BP_TOL_SEARCH(GAP, H_MESH_S, H_MESH_M, TRIGGER_TOL)
 !-----------------------------------------------
 !         Voxel pair search and pair emission
 !-----------------------------------------------
           CALL STS_VOXEL_PAIR_SEARCH( &
      &        IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
-     &        PTS_S, SEG_OF_PT_S, NPTS_S, &
-     &        PTS_M, SEG_OF_PT_M, NPTS_M, &
-     &        TRIGGER_TOL, MAX_STS_SIZE_ACTUAL, &
+     &        GAP, PTS_S, SEG_OF_PT_S, NPTS_S, &
+     &        PTS_M, SEG_OF_PT_M, NPTS_M, NSEG_SEC, &
+     &        MAX_STS_SIZE_ACTUAL, &
      &        CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
      &        COUNT, OVERFLOW)
 
@@ -191,16 +188,14 @@
           INTEGER, INTENT(OUT) :: NPTS_OUT
 !
           INTEGER :: ISEG, NSEG, K, NID, NVALID
-          REAL(KIND=WP) :: XC, YC, ZC, INV_NV
+          REAL(KIND=WP) :: XCENT(3)
 !
           NPTS_OUT = 0
           NSEG = IGRSURF(SURF_IDX)%NSEG
           IF (NSEG <= 0) RETURN
 !
           DO ISEG = 1, NSEG
-            XC = ZERO
-            YC = ZERO
-            ZC = ZERO
+            XCENT = ZERO
             NVALID = 0
 !
 !           4 corner samples
@@ -212,24 +207,74 @@
               PTS(2, NPTS_OUT) = X(2, NID)
               PTS(3, NPTS_OUT) = X(3, NID)
               SEG_OF_PT(NPTS_OUT) = ISEG
-              XC = XC + X(1, NID)
-              YC = YC + X(2, NID)
-              ZC = ZC + X(3, NID)
+              XCENT(1) = XCENT(1) + X(1, NID)
+              XCENT(2) = XCENT(2) + X(2, NID)
+              XCENT(3) = XCENT(3) + X(3, NID)
               NVALID = NVALID + 1
             END DO
 !
 !           Centroid sample (only if requested and at least one valid corner).
             IF (NSAMPLES_PER_SEG >= 5 .AND. NVALID > 0) THEN
-              INV_NV = ONE / REAL(NVALID, WP)
               NPTS_OUT = NPTS_OUT + 1
-              PTS(1, NPTS_OUT) = XC * INV_NV
-              PTS(2, NPTS_OUT) = YC * INV_NV
-              PTS(3, NPTS_OUT) = ZC * INV_NV
+              PTS(1, NPTS_OUT) = XCENT(1) / REAL(NVALID, WP)
+              PTS(2, NPTS_OUT) = XCENT(2) / REAL(NVALID, WP)
+              PTS(3, NPTS_OUT) = XCENT(3) / REAL(NVALID, WP)
               SEG_OF_PT(NPTS_OUT) = ISEG
             END IF
           END DO
 !
         END SUBROUTINE STS_VOXEL_BUILD_SEG_POINTS
+!=======================================================================
+!   STS_VOXEL_AABB
+!   Axis-aligned bounding box of a 3 x NPTS point cloud.
+!=======================================================================
+        SUBROUTINE STS_VOXEL_AABB(PTS, NPTS, XMIN, XMAX, YMIN, YMAX, ZMIN, ZMAX)
+          INTEGER, INTENT(IN) :: NPTS
+          REAL(KIND=WP), INTENT(IN) :: PTS(3, NPTS)
+          REAL(KIND=WP), INTENT(OUT) :: XMIN, XMAX, YMIN, YMAX, ZMIN, ZMAX
+          INTEGER :: I
+
+          XMIN = PTS(1, 1)
+          XMAX = PTS(1, 1)
+          YMIN = PTS(2, 1)
+          YMAX = PTS(2, 1)
+          ZMIN = PTS(3, 1)
+          ZMAX = PTS(3, 1)
+          DO I = 2, NPTS
+            IF (PTS(1, I) < XMIN) XMIN = PTS(1, I)
+            IF (PTS(1, I) > XMAX) XMAX = PTS(1, I)
+            IF (PTS(2, I) < YMIN) YMIN = PTS(2, I)
+            IF (PTS(2, I) > YMAX) YMAX = PTS(2, I)
+            IF (PTS(3, I) < ZMIN) ZMIN = PTS(3, I)
+            IF (PTS(3, I) > ZMAX) ZMAX = PTS(3, I)
+          END DO
+        END SUBROUTINE STS_VOXEL_AABB
+!=======================================================================
+!   STS_VOXEL_PT_TO_CELL
+!   Map a point into clamped voxel indices and a linear cell id.
+!=======================================================================
+        SUBROUTINE STS_VOXEL_PT_TO_CELL( &
+     &      PX, PY, PZ, XMIN, YMIN, ZMIN, &
+     &      NBX, NBY, NBZ, SPAN_X, SPAN_Y, SPAN_Z, NVOXELS, &
+     &      IX, IY, IZ, CELLID)
+          REAL(KIND=WP), INTENT(IN) :: PX, PY, PZ
+          REAL(KIND=WP), INTENT(IN) :: XMIN, YMIN, ZMIN
+          REAL(KIND=WP), INTENT(IN) :: SPAN_X, SPAN_Y, SPAN_Z
+          INTEGER, INTENT(IN) :: NBX, NBY, NBZ, NVOXELS
+          INTEGER, INTENT(OUT) :: IX, IY, IZ, CELLID
+          REAL(KIND=WP) :: RX, RY, RZ
+
+          RX = REAL(NBX, WP) * (PX - XMIN) / MAX(SPAN_X, STS_VOXEL_EPS_SPAN)
+          RY = REAL(NBY, WP) * (PY - YMIN) / MAX(SPAN_Y, STS_VOXEL_EPS_SPAN)
+          RZ = REAL(NBZ, WP) * (PZ - ZMIN) / MAX(SPAN_Z, STS_VOXEL_EPS_SPAN)
+          IF (RX /= RX) RX = ZERO
+          IF (RY /= RY) RY = ZERO
+          IF (RZ /= RZ) RZ = ZERO
+          IX = MAX(0, MIN(NBX - 1, INT(RX)))
+          IY = MAX(0, MIN(NBY - 1, INT(RY)))
+          IZ = MAX(0, MIN(NBZ - 1, INT(RZ)))
+          CELLID = MAX(1, MIN(NVOXELS, IZ * NBX * NBY + IY * NBX + IX + 1))
+        END SUBROUTINE STS_VOXEL_PT_TO_CELL
 !=======================================================================
 !   STS_VOXEL_PAIR_SEARCH
 !
@@ -244,20 +289,20 @@
 !=======================================================================
         SUBROUTINE STS_VOXEL_PAIR_SEARCH( &
      &      IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
-     &      PTS_S, SEG_OF_PT_S, NPTS_S, &
-     &      PTS_M, SEG_OF_PT_M, NPTS_M, &
-     &      TRIGGER_TOL, MAX_STS_SIZE_ACTUAL, &
+     &      GAP, PTS_S, SEG_OF_PT_S, NPTS_S, &
+     &      PTS_M, SEG_OF_PT_M, NPTS_M, NSEG_SEC, &
+     &      MAX_STS_SIZE_ACTUAL, &
      &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
      &      COUNT, OVERFLOW)
           INTEGER, INTENT(IN)  :: NSURF, SEC_SURF_IDX, MST_SURF_IDX
           TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
           INTEGER, INTENT(IN)  :: NUMNOD
           REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
+          REAL(KIND=WP), INTENT(IN) :: GAP
           INTEGER, INTENT(IN)  :: NPTS_S, NPTS_M
           REAL(KIND=WP), INTENT(IN) :: PTS_S(3, NPTS_S), PTS_M(3, NPTS_M)
           INTEGER, INTENT(IN)  :: SEG_OF_PT_S(NPTS_S), SEG_OF_PT_M(NPTS_M)
-          REAL(KIND=WP), INTENT(IN) :: TRIGGER_TOL
-          INTEGER, INTENT(IN)  :: MAX_STS_SIZE_ACTUAL
+          INTEGER, INTENT(IN)  :: NSEG_SEC, MAX_STS_SIZE_ACTUAL
           INTEGER, INTENT(INOUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
           INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
           REAL(KIND=WP), INTENT(INOUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
@@ -266,61 +311,43 @@
 !
           REAL(KIND=WP) :: XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M
           REAL(KIND=WP) :: XMIN_S, XMAX_S, YMIN_S, YMAX_S, ZMIN_S, ZMAX_S
-          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING, SEARCH_RADIUS
-          REAL(KIND=WP) :: SPAN_X, SPAN_Y, SPAN_Z
-          REAL(KIND=WP) :: SPAN_X_SAFE, SPAN_Y_SAFE, SPAN_Z_SAFE
-          REAL(KIND=WP) :: DX, DY, DZ, AABB_DIST, DIST_SQ
-          REAL(KIND=WP) :: RX, RY, RZ, TOL_BASE
-          REAL(KIND=WP), PARAMETER :: EPS_SPAN = 1.0E-12_WP
-          INTEGER :: NBX, NBY, NBZ, NVOXELS
+          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING, H_MESH, TRIGGER_TOL
+          REAL(KIND=WP) :: H_MESH_S, H_MESH_M, SPAN_X, SPAN_Y, SPAN_Z
+          REAL(KIND=WP) :: DX, DY, DZ, AABB_DIST, DIST_SQ, PAD_SQ
+          REAL(KIND=WP) :: COARSE_SCALE
+          INTEGER :: NBX, NBY, NBZ, NVOXELS, N_CELL_RADIUS
           INTEGER :: IM, IS, IX, IY, IZ, JX, JY, JZ, CELLID, JJ
           INTEGER :: IX_LO, IX_HI, IY_LO, IY_HI, IZ_LO, IZ_HI
+          INTEGER :: HASH_SIZE, HASH_STRIDE
           INTEGER, ALLOCATABLE :: VOXEL(:), NEXT_PT(:)
+          INTEGER(KIND=8), ALLOCATABLE :: HASH_KEYS(:)
           INTEGER :: SEG_S, SEG_M
 !
-!         Build master AABB
-          XMIN_M = PTS_M(1, 1); XMAX_M = PTS_M(1, 1)
-          YMIN_M = PTS_M(2, 1); YMAX_M = PTS_M(2, 1)
-          ZMIN_M = PTS_M(3, 1); ZMAX_M = PTS_M(3, 1)
-          DO IM = 2, NPTS_M
-            IF (PTS_M(1,IM) < XMIN_M) XMIN_M = PTS_M(1,IM)
-            IF (PTS_M(1,IM) > XMAX_M) XMAX_M = PTS_M(1,IM)
-            IF (PTS_M(2,IM) < YMIN_M) YMIN_M = PTS_M(2,IM)
-            IF (PTS_M(2,IM) > YMAX_M) YMAX_M = PTS_M(2,IM)
-            IF (PTS_M(3,IM) < ZMIN_M) ZMIN_M = PTS_M(3,IM)
-            IF (PTS_M(3,IM) > ZMAX_M) ZMAX_M = PTS_M(3,IM)
-          END DO
+          H_MESH_S = INTER_BP_TOL_MESH_SCALE_SURF( &
+     &        IGRSURF, NSURF, SEC_SURF_IDX, X, NUMNOD)
+          H_MESH_M = INTER_BP_TOL_MESH_SCALE_SURF( &
+     &        IGRSURF, NSURF, MST_SURF_IDX, X, NUMNOD)
+          CALL INTER_BP_TOL_SEARCH(GAP, H_MESH_S, H_MESH_M, TRIGGER_TOL)
 !
-!         Build secondary AABB
-          XMIN_S = PTS_S(1, 1); XMAX_S = PTS_S(1, 1)
-          YMIN_S = PTS_S(2, 1); YMAX_S = PTS_S(2, 1)
-          ZMIN_S = PTS_S(3, 1); ZMAX_S = PTS_S(3, 1)
-          DO IS = 2, NPTS_S
-            IF (PTS_S(1,IS) < XMIN_S) XMIN_S = PTS_S(1,IS)
-            IF (PTS_S(1,IS) > XMAX_S) XMAX_S = PTS_S(1,IS)
-            IF (PTS_S(2,IS) < YMIN_S) YMIN_S = PTS_S(2,IS)
-            IF (PTS_S(2,IS) > YMAX_S) YMAX_S = PTS_S(2,IS)
-            IF (PTS_S(3,IS) < ZMIN_S) ZMIN_S = PTS_S(3,IS)
-            IF (PTS_S(3,IS) > ZMAX_S) ZMAX_S = PTS_S(3,IS)
-          END DO
+          CALL STS_VOXEL_AABB(PTS_M, NPTS_M, &
+     &        XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M)
+          CALL STS_VOXEL_AABB(PTS_S, NPTS_S, &
+     &        XMIN_S, XMAX_S, YMIN_S, YMAX_S, ZMIN_S, ZMAX_S)
 !
-!         STS voxel grid (1.25 x TRIGGER_TOL, same as Q1NP / legacy STS).
-!         Pair cutoff = SEARCH_PADDING so grid extent and sample distance
-!         filter stay consistent. TRIGGER_TOL already includes gap + mesh
-!         scale from INTER_BP_TOL_SEARCH.
-          TOL_BASE = MAX(EPS_SPAN, TRIGGER_TOL)
-          CELL_SIZE      = STS_VOXEL_CELL_SIZE_FACTOR * TOL_BASE
-          SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR  * TOL_BASE
-          SEARCH_RADIUS  = SEARCH_PADDING
+!         SEARCH_PADDING follows gap + mesh; CELL_SIZE follows mesh only.
+          H_MESH = MAX(H_MESH_S, H_MESH_M, INTER_BP_TOL_GAP_FALLBACK)
+          SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR * &
+     &        MAX(STS_VOXEL_EPS_SPAN, TRIGGER_TOL)
+          CELL_SIZE = MAX(STS_VOXEL_CELL_SIZE_FACTOR * H_MESH, SEARCH_PADDING)
+          PAD_SQ = SEARCH_PADDING * SEARCH_PADDING
 !
-!         Coarse AABB rejection (use unpadded master AABB vs secondary AABB)
+!         Coarse AABB rejection (unpadded master vs secondary AABB).
           DX = MAX(ZERO, MAX(XMIN_S - XMAX_M, XMIN_M - XMAX_S))
           DY = MAX(ZERO, MAX(YMIN_S - YMAX_M, YMIN_M - YMAX_S))
           DZ = MAX(ZERO, MAX(ZMIN_S - ZMAX_M, ZMIN_M - ZMAX_S))
           AABB_DIST = SQRT(DX*DX + DY*DY + DZ*DZ)
           IF (AABB_DIST > SEARCH_PADDING) RETURN
 !
-!         Pad master AABB
           XMIN_M = XMIN_M - SEARCH_PADDING
           XMAX_M = XMAX_M + SEARCH_PADDING
           YMIN_M = YMIN_M - SEARCH_PADDING
@@ -331,77 +358,71 @@
           SPAN_X = XMAX_M - XMIN_M
           SPAN_Y = YMAX_M - YMIN_M
           SPAN_Z = ZMAX_M - ZMIN_M
-          SPAN_X_SAFE = MAX(SPAN_X, EPS_SPAN)
-          SPAN_Y_SAFE = MAX(SPAN_Y, EPS_SPAN)
-          SPAN_Z_SAFE = MAX(SPAN_Z, EPS_SPAN)
 !
           NBX = MAX(1, CEILING(SPAN_X / CELL_SIZE))
           NBY = MAX(1, CEILING(SPAN_Y / CELL_SIZE))
           NBZ = MAX(1, CEILING(SPAN_Z / CELL_SIZE))
           NVOXELS = NBX * NBY * NBZ
 !
-          ALLOCATE(VOXEL(NVOXELS))
-          ALLOCATE(NEXT_PT(NPTS_M))
-          VOXEL(1:NVOXELS) = 0
-          NEXT_PT(1:NPTS_M) = 0
+!         Coarsen cells if the grid would exceed the hard cap.
+          IF (NVOXELS > STS_VOXEL_MAX_CELLS) THEN
+            COARSE_SCALE = (REAL(NVOXELS, WP) / &
+     &                      REAL(STS_VOXEL_MAX_CELLS, WP)) ** (ONE/THREE)
+            CELL_SIZE = CELL_SIZE * COARSE_SCALE
+            NBX = MAX(1, CEILING(SPAN_X / CELL_SIZE))
+            NBY = MAX(1, CEILING(SPAN_Y / CELL_SIZE))
+            NBZ = MAX(1, CEILING(SPAN_Z / CELL_SIZE))
+            NVOXELS = NBX * NBY * NBZ
+          END IF
 !
-!         Fill voxel grid with master points (linked-list per cell)
+          N_CELL_RADIUS = MAX(1, CEILING(SEARCH_PADDING / CELL_SIZE))
+!
+!         Open-addressing hash for unique (sec_seg, mst_seg) pairs.
+          HASH_SIZE = MIN(HUGE(1), MAX(STS_VOXEL_HASH_MIN_SLOTS, &
+     &        2 * MAX_STS_SIZE_ACTUAL + 1))
+          HASH_STRIDE = MAX(NSEG_SEC, 1) + 1
+          ALLOCATE(VOXEL(NVOXELS), NEXT_PT(NPTS_M), HASH_KEYS(HASH_SIZE))
+          VOXEL = 0
+          NEXT_PT = 0
+          HASH_KEYS = 0_8
+!
+!         Fill voxel grid with master points (linked-list per cell).
           DO IM = 1, NPTS_M
-            RX = REAL(NBX, WP) * (PTS_M(1,IM) - XMIN_M) / SPAN_X_SAFE
-            RY = REAL(NBY, WP) * (PTS_M(2,IM) - YMIN_M) / SPAN_Y_SAFE
-            RZ = REAL(NBZ, WP) * (PTS_M(3,IM) - ZMIN_M) / SPAN_Z_SAFE
-            IF (RX /= RX) RX = ZERO
-            IF (RY /= RY) RY = ZERO
-            IF (RZ /= RZ) RZ = ZERO
-            IX = INT(RX)
-            IY = INT(RY)
-            IZ = INT(RZ)
-            IX = MAX(0, MIN(NBX - 1, IX))
-            IY = MAX(0, MIN(NBY - 1, IY))
-            IZ = MAX(0, MIN(NBZ - 1, IZ))
-            CELLID = IZ * NBX * NBY + IY * NBX + IX + 1
-            CELLID = MAX(1, MIN(NVOXELS, CELLID))
+            CALL STS_VOXEL_PT_TO_CELL( &
+     &          PTS_M(1, IM), PTS_M(2, IM), PTS_M(3, IM), &
+     &          XMIN_M, YMIN_M, ZMIN_M, &
+     &          NBX, NBY, NBZ, SPAN_X, SPAN_Y, SPAN_Z, NVOXELS, &
+     &          IX, IY, IZ, CELLID)
             NEXT_PT(IM) = VOXEL(CELLID)
             VOXEL(CELLID) = IM
           END DO
 !
-!         Query: for each secondary point inside the padded box, scan the
-!         3x3x3 neighborhood and emit unique pairs.
+!         Query secondary points inside the padded master box.
           DO IS = 1, NPTS_S
-            IF (PTS_S(1,IS) < XMIN_M) CYCLE
-            IF (PTS_S(1,IS) > XMAX_M) CYCLE
-            IF (PTS_S(2,IS) < YMIN_M) CYCLE
-            IF (PTS_S(2,IS) > YMAX_M) CYCLE
-            IF (PTS_S(3,IS) < ZMIN_M) CYCLE
-            IF (PTS_S(3,IS) > ZMAX_M) CYCLE
+            IF (PTS_S(1, IS) < XMIN_M .OR. PTS_S(1, IS) > XMAX_M) CYCLE
+            IF (PTS_S(2, IS) < YMIN_M .OR. PTS_S(2, IS) > YMAX_M) CYCLE
+            IF (PTS_S(3, IS) < ZMIN_M .OR. PTS_S(3, IS) > ZMAX_M) CYCLE
 !
-            RX = REAL(NBX, WP) * (PTS_S(1,IS) - XMIN_M) / SPAN_X_SAFE
-            RY = REAL(NBY, WP) * (PTS_S(2,IS) - YMIN_M) / SPAN_Y_SAFE
-            RZ = REAL(NBZ, WP) * (PTS_S(3,IS) - ZMIN_M) / SPAN_Z_SAFE
-            IF (RX /= RX) RX = ZERO
-            IF (RY /= RY) RY = ZERO
-            IF (RZ /= RZ) RZ = ZERO
-            IX = INT(RX)
-            IY = INT(RY)
-            IZ = INT(RZ)
-            IX = MAX(0, MIN(NBX - 1, IX))
-            IY = MAX(0, MIN(NBY - 1, IY))
-            IZ = MAX(0, MIN(NBZ - 1, IZ))
+            CALL STS_VOXEL_PT_TO_CELL( &
+     &          PTS_S(1, IS), PTS_S(2, IS), PTS_S(3, IS), &
+     &          XMIN_M, YMIN_M, ZMIN_M, &
+     &          NBX, NBY, NBZ, SPAN_X, SPAN_Y, SPAN_Z, NVOXELS, &
+     &          IX, IY, IZ, CELLID)
 !
-            IX_LO = MAX(0, IX - 1)
-            IX_HI = MIN(NBX - 1, IX + 1)
-            IY_LO = MAX(0, IY - 1)
-            IY_HI = MIN(NBY - 1, IY + 1)
-            IZ_LO = MAX(0, IZ - 1)
-            IZ_HI = MIN(NBZ - 1, IZ + 1)
+            IX_LO = MAX(0, IX - N_CELL_RADIUS)
+            IX_HI = MIN(NBX - 1, IX + N_CELL_RADIUS)
+            IY_LO = MAX(0, IY - N_CELL_RADIUS)
+            IY_HI = MIN(NBY - 1, IY + N_CELL_RADIUS)
+            IZ_LO = MAX(0, IZ - N_CELL_RADIUS)
+            IZ_HI = MIN(NBZ - 1, IZ + N_CELL_RADIUS)
 !
             SEG_S = SEG_OF_PT_S(IS)
 !
             DO JZ = IZ_LO, IZ_HI
               DO JY = IY_LO, IY_HI
                 DO JX = IX_LO, IX_HI
-                  CELLID = JZ * NBX * NBY + JY * NBX + JX + 1
-                  CELLID = MAX(1, MIN(NVOXELS, CELLID))
+                  CELLID = MAX(1, MIN(NVOXELS, &
+     &                JZ * NBX * NBY + JY * NBX + JX + 1))
                   JJ = VOXEL(CELLID)
                   DO WHILE (JJ > 0)
                     IF (JJ > NPTS_M) EXIT
@@ -411,11 +432,11 @@
                       DY = PTS_S(2, IS) - PTS_M(2, JJ)
                       DZ = PTS_S(3, IS) - PTS_M(3, JJ)
                       DIST_SQ = DX*DX + DY*DY + DZ*DZ
-                      IF (DIST_SQ <= SEARCH_RADIUS*SEARCH_RADIUS) THEN
+                      IF (DIST_SQ <= PAD_SQ) THEN
                         CALL STS_VOXEL_EMIT_PAIR( &
      &                    IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
-     &                    X, NUMNOD, SEG_S, SEG_M, &
-     &                    MAX_STS_SIZE_ACTUAL, &
+     &                    X, NUMNOD, SEG_S, SEG_M, HASH_STRIDE, &
+     &                    HASH_SIZE, HASH_KEYS, MAX_STS_SIZE_ACTUAL, &
      &                    CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
      &                    CONT_ELEMENT, COUNT, OVERFLOW)
                         IF (OVERFLOW) EXIT
@@ -433,7 +454,7 @@
             IF (OVERFLOW) EXIT
           END DO
 !
-          DEALLOCATE(VOXEL, NEXT_PT)
+          DEALLOCATE(VOXEL, NEXT_PT, HASH_KEYS)
 !
         END SUBROUTINE STS_VOXEL_PAIR_SEARCH
 !=======================================================================
@@ -445,14 +466,16 @@
 !=======================================================================
         SUBROUTINE STS_VOXEL_EMIT_PAIR( &
      &      IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
-     &      SEC_SEG, MST_SEG, MAX_STS_SIZE_ACTUAL, &
+     &      SEC_SEG, MST_SEG, HASH_STRIDE, HASH_SIZE, HASH_KEYS, &
+     &      MAX_STS_SIZE_ACTUAL, &
      &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
      &      COUNT, OVERFLOW)
           INTEGER, INTENT(IN) :: NSURF, SEC_SURF_IDX, MST_SURF_IDX
           TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
           INTEGER, INTENT(IN) :: NUMNOD
           REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
-          INTEGER, INTENT(IN) :: SEC_SEG, MST_SEG
+          INTEGER, INTENT(IN) :: SEC_SEG, MST_SEG, HASH_STRIDE, HASH_SIZE
+          INTEGER(KIND=8), INTENT(INOUT) :: HASH_KEYS(HASH_SIZE)
           INTEGER, INTENT(IN) :: MAX_STS_SIZE_ACTUAL
           INTEGER, INTENT(INOUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
           INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
@@ -460,15 +483,22 @@
           INTEGER, INTENT(INOUT) :: COUNT
           LOGICAL, INTENT(INOUT) :: OVERFLOW
 !
-          INTEGER :: K, J, NID
+          INTEGER :: K, J, NID, IH, PROBE
+          INTEGER(KIND=8) :: PAIR_KEY
 !
           IF (OVERFLOW) RETURN
 !
-!         Quick duplicate check (linear scan; expected COUNT is small for
-!         realistic STS interfaces).
-          DO K = 1, COUNT
-            IF (CAND_SEC_SEG_ID(K, 1) == SEC_SEG .AND. &
-     &          CAND_MST_SEG_ID(K, 1) == MST_SEG) RETURN
+!         Open-addressing hash lookup for duplicate (sec_seg, mst_seg) pairs.
+          PAIR_KEY = INT(MST_SEG, KIND=8) * INT(HASH_STRIDE, KIND=8) + &
+     &      INT(SEC_SEG, KIND=8)
+          IH = INT(MOD(PAIR_KEY, INT(HASH_SIZE, KIND=8))) + 1
+          PROBE = 0
+          DO WHILE (HASH_KEYS(IH) /= 0_8)
+            IF (HASH_KEYS(IH) == PAIR_KEY) RETURN
+            IH = IH + 1
+            IF (IH > HASH_SIZE) IH = 1
+            PROBE = PROBE + 1
+            IF (PROBE >= HASH_SIZE) RETURN
           END DO
 !
           IF (COUNT >= MAX_STS_SIZE_ACTUAL) THEN
@@ -477,6 +507,7 @@
           END IF
 !
           COUNT = COUNT + 1
+          HASH_KEYS(IH) = PAIR_KEY
 !
 !         Secondary segment metadata
           CAND_SEC_SEG_ID(COUNT, 1) = SEC_SEG
@@ -524,6 +555,7 @@
 
 !=======================================================================
 !   STS_VOXEL_SORT_PAIRS
+!   Heap sort by (mst_seg, sec_seg) for stable pair-indexed friction history.
 !=======================================================================
         SUBROUTINE STS_VOXEL_SORT_PAIRS( &
      &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
@@ -533,30 +565,107 @@
           INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
           REAL(KIND=WP), INTENT(INOUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
 
-          INTEGER :: I, J
+          INTEGER :: START, FINISH
+
+          IF (COUNT <= 1) RETURN
+
+          DO START = COUNT / 2, 1, -1
+            CALL STS_VOXEL_SIFT_DOWN(CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &        CONT_ELEMENT, START, COUNT, MAX_STS_SIZE_ACTUAL)
+          END DO
+
+          DO FINISH = COUNT, 2, -1
+            CALL STS_VOXEL_SWAP_PAIR(CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &        CONT_ELEMENT, 1, FINISH, MAX_STS_SIZE_ACTUAL)
+            CALL STS_VOXEL_SIFT_DOWN(CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &        CONT_ELEMENT, 1, FINISH - 1, MAX_STS_SIZE_ACTUAL)
+          END DO
+        END SUBROUTINE STS_VOXEL_SORT_PAIRS
+
+!=======================================================================
+!   STS_VOXEL_SIFT_DOWN
+!   Sift down the root of the heap
+!=======================================================================
+        SUBROUTINE STS_VOXEL_SIFT_DOWN( &
+     &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
+     &      START, FINISH, MAX_STS_SIZE_ACTUAL)
+          INTEGER, INTENT(IN) :: START, FINISH, MAX_STS_SIZE_ACTUAL
+          INTEGER, INTENT(INOUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          REAL(KIND=WP), INTENT(INOUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
+          INTEGER :: ROOT, CHILD, SWAP_IDX
+
+          ROOT = START
+          DO WHILE (ROOT * 2 <= FINISH)
+            CHILD = ROOT * 2
+            SWAP_IDX = ROOT
+
+            IF (STS_VOXEL_PAIR_LESS(CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &          SWAP_IDX, CHILD, MAX_STS_SIZE_ACTUAL)) THEN
+              SWAP_IDX = CHILD
+            END IF
+
+            IF (CHILD + 1 <= FINISH) THEN
+              IF (STS_VOXEL_PAIR_LESS(CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &            SWAP_IDX, CHILD + 1, MAX_STS_SIZE_ACTUAL)) THEN
+                SWAP_IDX = CHILD + 1
+              END IF
+            END IF
+
+            IF (SWAP_IDX == ROOT) RETURN
+
+            CALL STS_VOXEL_SWAP_PAIR(CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &        CONT_ELEMENT, ROOT, SWAP_IDX, MAX_STS_SIZE_ACTUAL)
+            ROOT = SWAP_IDX
+          END DO
+        END SUBROUTINE STS_VOXEL_SIFT_DOWN
+
+!=======================================================================
+!   STS_VOXEL_PAIR_LESS
+!   Compare two pairs by primary segment index
+!=======================================================================
+        LOGICAL FUNCTION STS_VOXEL_PAIR_LESS( &
+     &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, I, J, MAX_STS_SIZE_ACTUAL)
+          INTEGER, INTENT(IN) :: I, J, MAX_STS_SIZE_ACTUAL
+          INTEGER, INTENT(IN) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          INTEGER, INTENT(IN) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+
+          IF (CAND_MST_SEG_ID(I,1) == CAND_MST_SEG_ID(J,1)) THEN
+            STS_VOXEL_PAIR_LESS = CAND_SEC_SEG_ID(I,1) < &
+     &                             CAND_SEC_SEG_ID(J,1)
+          ELSE
+            STS_VOXEL_PAIR_LESS = CAND_MST_SEG_ID(I,1) < &
+     &                             CAND_MST_SEG_ID(J,1)
+          END IF
+        END FUNCTION STS_VOXEL_PAIR_LESS
+
+!=======================================================================
+!   STS_VOXEL_SWAP_PAIR
+!   Swap two pairs
+!=======================================================================
+        SUBROUTINE STS_VOXEL_SWAP_PAIR( &
+     &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
+     &      I, J, MAX_STS_SIZE_ACTUAL)
+          INTEGER, INTENT(IN) :: I, J, MAX_STS_SIZE_ACTUAL
+          INTEGER, INTENT(INOUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          REAL(KIND=WP), INTENT(INOUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
           INTEGER :: SEC_TMP(5), MST_TMP(5)
           REAL(KIND=WP) :: XYZ_TMP(3, 8)
 
-          DO I = 2, COUNT
-            SEC_TMP(1:5) = CAND_SEC_SEG_ID(I, 1:5)
-            MST_TMP(1:5) = CAND_MST_SEG_ID(I, 1:5)
-            XYZ_TMP(1:3, 1:8) = CONT_ELEMENT(I, 1:3, 1:8)
+          IF (I == J) RETURN
 
-            J = I - 1
-            DO WHILE (J >= 1 .AND. ( &
-     &        CAND_MST_SEG_ID(J,1) > MST_TMP(1) .OR. &
-     &       (CAND_MST_SEG_ID(J,1) == MST_TMP(1) .AND. &
-     &        CAND_SEC_SEG_ID(J,1) > SEC_TMP(1)) ))
-              CAND_SEC_SEG_ID(J+1, 1:5) = CAND_SEC_SEG_ID(J, 1:5)
-              CAND_MST_SEG_ID(J+1, 1:5) = CAND_MST_SEG_ID(J, 1:5)
-              CONT_ELEMENT(J+1, 1:3, 1:8) = CONT_ELEMENT(J, 1:3, 1:8)
-              J = J - 1
-            END DO
+          SEC_TMP(1:5) = CAND_SEC_SEG_ID(I, 1:5)
+          MST_TMP(1:5) = CAND_MST_SEG_ID(I, 1:5)
+          XYZ_TMP(1:3, 1:8) = CONT_ELEMENT(I, 1:3, 1:8)
 
-            CAND_SEC_SEG_ID(J+1, 1:5) = SEC_TMP(1:5)
-            CAND_MST_SEG_ID(J+1, 1:5) = MST_TMP(1:5)
-            CONT_ELEMENT(J+1, 1:3, 1:8) = XYZ_TMP(1:3, 1:8)
-          END DO
-        END SUBROUTINE STS_VOXEL_SORT_PAIRS
+          CAND_SEC_SEG_ID(I, 1:5) = CAND_SEC_SEG_ID(J, 1:5)
+          CAND_MST_SEG_ID(I, 1:5) = CAND_MST_SEG_ID(J, 1:5)
+          CONT_ELEMENT(I, 1:3, 1:8) = CONT_ELEMENT(J, 1:3, 1:8)
+
+          CAND_SEC_SEG_ID(J, 1:5) = SEC_TMP(1:5)
+          CAND_MST_SEG_ID(J, 1:5) = MST_TMP(1:5)
+          CONT_ELEMENT(J, 1:3, 1:8) = XYZ_TMP(1:3, 1:8)
+        END SUBROUTINE STS_VOXEL_SWAP_PAIR
 !
       END MODULE STS_BROAD_PHASE_VOXEL_MOD
