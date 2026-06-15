@@ -24,6 +24,9 @@
 !||    sts_broad_phase_voxel_mod   ../engine/source/interfaces/ists/ists_broad_phase_voxel.F90
 !||--- uses       -----------------------------------------------------
 !||    contact_broad_phase_tol_mod   ../engine/source/interfaces/ists/contact_broad_phase_tol_mod.F90
+!||    ists_sts_voxel_grid_mod        ../engine/source/interfaces/ists/ists_sts_voxel_grid_mod.F90
+!||--- called by ------------------------------------------------------
+!||    ists_mainf              ../engine/source/interfaces/ists/ists_mainf.F
 !||====================================================================
 !
 !   STS voxel broad-phase: produce (master_seg, secondary_seg) candidate
@@ -52,6 +55,7 @@
         USE CONSTANT_MOD,  ONLY : ZERO, ONE, THREE
         USE GROUPDEF_MOD,  ONLY : SURF_
         USE CONTACT_BROAD_PHASE_TOL_MOD
+        USE ISTS_STS_VOXEL_GRID_MOD
         IMPLICIT NONE
         PRIVATE
 !-----------------------------------------------------------------------
@@ -59,13 +63,8 @@
 !-----------------------------------------------------------------------
 !       Default number of samples per segment (4 corners + centroid).
         INTEGER, PARAMETER, PUBLIC :: STS_VOXEL_NSAMPLES_PER_SEG = 5
-!       Voxel grid / AABB padding factors (aligned with Q1NP and legacy STS).
-!       CELL_SIZE is tied to mesh scale (not gap) so a small gap does not
-!       explode the voxel count; SEARCH_RADIUS still uses gap + mesh scale.
-        REAL(KIND=WP), PARAMETER :: STS_VOXEL_CELL_SIZE_FACTOR = 1.25_WP
-        REAL(KIND=WP), PARAMETER :: STS_VOXEL_PADDING_FACTOR  = 1.25_WP
+
 !       Hard cap on voxel cells to avoid OOM / pathological runtimes.
-        INTEGER, PARAMETER :: STS_VOXEL_MAX_CELLS = 4194304
         INTEGER, PARAMETER :: STS_VOXEL_HASH_MIN_SLOTS = 1024
         REAL(KIND=WP), PARAMETER :: STS_VOXEL_EPS_SPAN = 1.0E-12_WP
 !
@@ -82,13 +81,14 @@
 !   saturated and not all candidate pairs could be stored.
 !=======================================================================
         SUBROUTINE STS_VOXEL_BROAD_PHASE( &
-     &      IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
+     &      NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
      &      X, NUMNOD, GAP, MAX_STS_SIZE_ACTUAL, &
      &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
-     &      COUNT, OVERFLOW)
+     &      COUNT, OVERFLOW, D_MIN)
 !-----------------------------------------------
 !         Dummy arguments
 !-----------------------------------------------
+          INTEGER, INTENT(IN)  :: NIN
           INTEGER, INTENT(IN)  :: NSURF
           TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
           INTEGER, INTENT(IN)  :: SEC_SURF_IDX, MST_SURF_IDX
@@ -101,6 +101,7 @@
           REAL(KIND=WP), INTENT(OUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
           INTEGER, INTENT(OUT) :: COUNT
           LOGICAL, INTENT(OUT) :: OVERFLOW
+          REAL(KIND=WP), INTENT(OUT) :: D_MIN
 !-----------------------------------------------
 !         Local variables
 !-----------------------------------------------
@@ -113,6 +114,7 @@
 !-----------------------------------------------
           COUNT = 0
           OVERFLOW = .FALSE.
+          D_MIN = HUGE(ONE)
 !
           IF (SEC_SURF_IDX <= 0 .OR. SEC_SURF_IDX > NSURF) RETURN
           IF (MST_SURF_IDX <= 0 .OR. MST_SURF_IDX > NSURF) RETURN
@@ -150,12 +152,12 @@
 !         Voxel pair search and pair emission
 !-----------------------------------------------
           CALL STS_VOXEL_PAIR_SEARCH( &
-     &        IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
+     &        NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
      &        GAP, PTS_S, SEG_OF_PT_S, NPTS_S, &
      &        PTS_M, SEG_OF_PT_M, NPTS_M, NSEG_SEC, &
      &        MAX_STS_SIZE_ACTUAL, &
      &        CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
-     &        COUNT, OVERFLOW)
+     &        COUNT, OVERFLOW, D_MIN)
 
 !         Keep pair ordering across cycles so pair-indexed
 !         history (friction) stays aligned.
@@ -276,77 +278,41 @@
           CELLID = MAX(1, MIN(NVOXELS, IZ * NBX * NBY + IY * NBX + IX + 1))
         END SUBROUTINE STS_VOXEL_PT_TO_CELL
 !=======================================================================
-!   STS_VOXEL_PAIR_SEARCH
+!   STS_VOXEL_INIT_GRID_PARAMS
 !
-!   Voxel grid neighborhood search:
-!     1) Compute master AABB and pad it by SEARCH_PADDING.
-!     2) Coarse AABB-vs-AABB rejection: if minimum distance > padding,
-!        return COUNT = 0.
-!     3) Build a linked-list voxel grid containing master sample points.
-!     4) For each secondary point inside the padded box, look up the
-!        3x3x3 cell neighborhood and emit unique (mst_seg, sec_seg)
-!        pairs into the output arrays.
+!   Compute CELL_SIZE, SEARCH_PADDING, and N_CELL_RADIUS once from
+!   initial geometry and store them in ISTS_STS_VOXEL_GRID_MOD.
 !=======================================================================
-        SUBROUTINE STS_VOXEL_PAIR_SEARCH( &
-     &      IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
-     &      GAP, PTS_S, SEG_OF_PT_S, NPTS_S, &
-     &      PTS_M, SEG_OF_PT_M, NPTS_M, NSEG_SEC, &
-     &      MAX_STS_SIZE_ACTUAL, &
-     &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
-     &      COUNT, OVERFLOW)
-          INTEGER, INTENT(IN)  :: NSURF, SEC_SURF_IDX, MST_SURF_IDX
+        SUBROUTINE STS_VOXEL_INIT_GRID_PARAMS( &
+     &      NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
+     &      X, NUMNOD, GAP, PTS_S, NPTS_S, PTS_M, NPTS_M)
+          INTEGER, INTENT(IN) :: NIN, NSURF, SEC_SURF_IDX, MST_SURF_IDX
+          INTEGER, INTENT(IN) :: NUMNOD, NPTS_S, NPTS_M
           TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
-          INTEGER, INTENT(IN)  :: NUMNOD
           REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
           REAL(KIND=WP), INTENT(IN) :: GAP
-          INTEGER, INTENT(IN)  :: NPTS_S, NPTS_M
           REAL(KIND=WP), INTENT(IN) :: PTS_S(3, NPTS_S), PTS_M(3, NPTS_M)
-          INTEGER, INTENT(IN)  :: SEG_OF_PT_S(NPTS_S), SEG_OF_PT_M(NPTS_M)
-          INTEGER, INTENT(IN)  :: NSEG_SEC, MAX_STS_SIZE_ACTUAL
-          INTEGER, INTENT(INOUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
-          INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
-          REAL(KIND=WP), INTENT(INOUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
-          INTEGER, INTENT(INOUT) :: COUNT
-          LOGICAL, INTENT(INOUT) :: OVERFLOW
 !
           REAL(KIND=WP) :: XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M
-          REAL(KIND=WP) :: XMIN_S, XMAX_S, YMIN_S, YMAX_S, ZMIN_S, ZMAX_S
-          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING, H_MESH, TRIGGER_TOL
+          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING, H_MESH
           REAL(KIND=WP) :: H_MESH_S, H_MESH_M, SPAN_X, SPAN_Y, SPAN_Z
-          REAL(KIND=WP) :: DX, DY, DZ, AABB_DIST, DIST_SQ, PAD_SQ
-          REAL(KIND=WP) :: COARSE_SCALE
+          REAL(KIND=WP) :: PAD_SQ, COARSE_SCALE
           INTEGER :: NBX, NBY, NBZ, NVOXELS, N_CELL_RADIUS
-          INTEGER :: IM, IS, IX, IY, IZ, JX, JY, JZ, CELLID, JJ
-          INTEGER :: IX_LO, IX_HI, IY_LO, IY_HI, IZ_LO, IZ_HI
-          INTEGER :: HASH_SIZE, HASH_STRIDE
-          INTEGER, ALLOCATABLE :: VOXEL(:), NEXT_PT(:)
-          INTEGER(KIND=8), ALLOCATABLE :: HASH_KEYS(:)
-          INTEGER :: SEG_S, SEG_M
+!
+          IF (ISTS_STS_VOXEL_GRID_IS_READY(NIN)) RETURN
 !
           H_MESH_S = INTER_BP_TOL_MESH_SCALE_SURF( &
      &        IGRSURF, NSURF, SEC_SURF_IDX, X, NUMNOD)
           H_MESH_M = INTER_BP_TOL_MESH_SCALE_SURF( &
      &        IGRSURF, NSURF, MST_SURF_IDX, X, NUMNOD)
-          CALL INTER_BP_TOL_SEARCH(GAP, H_MESH_S, H_MESH_M, TRIGGER_TOL)
+          CALL INTER_BP_TOL_SEARCH(GAP, H_MESH_S, H_MESH_M, SEARCH_PADDING)
 !
           CALL STS_VOXEL_AABB(PTS_M, NPTS_M, &
      &        XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M)
-          CALL STS_VOXEL_AABB(PTS_S, NPTS_S, &
-     &        XMIN_S, XMAX_S, YMIN_S, YMAX_S, ZMIN_S, ZMAX_S)
 !
-!         SEARCH_PADDING follows gap + mesh; CELL_SIZE follows mesh only.
-          H_MESH = MAX(H_MESH_S, H_MESH_M, INTER_BP_TOL_GAP_FALLBACK)
-          SEARCH_PADDING = STS_VOXEL_PADDING_FACTOR * &
-     &        MAX(STS_VOXEL_EPS_SPAN, TRIGGER_TOL)
-          CELL_SIZE = MAX(STS_VOXEL_CELL_SIZE_FACTOR * H_MESH, SEARCH_PADDING)
+          CELL_SIZE = SEARCH_PADDING
+
           PAD_SQ = SEARCH_PADDING * SEARCH_PADDING
-!
-!         Coarse AABB rejection (unpadded master vs secondary AABB).
-          DX = MAX(ZERO, MAX(XMIN_S - XMAX_M, XMIN_M - XMAX_S))
-          DY = MAX(ZERO, MAX(YMIN_S - YMAX_M, YMIN_M - YMAX_S))
-          DZ = MAX(ZERO, MAX(ZMIN_S - ZMAX_M, ZMIN_M - ZMAX_S))
-          AABB_DIST = SQRT(DX*DX + DY*DY + DZ*DZ)
-          IF (AABB_DIST > SEARCH_PADDING) RETURN
 !
           XMIN_M = XMIN_M - SEARCH_PADDING
           XMAX_M = XMAX_M + SEARCH_PADDING
@@ -364,29 +330,117 @@
           NBZ = MAX(1, CEILING(SPAN_Z / CELL_SIZE))
           NVOXELS = NBX * NBY * NBZ
 !
-!         Coarsen cells if the grid would exceed the hard cap.
-          IF (NVOXELS > STS_VOXEL_MAX_CELLS) THEN
-            COARSE_SCALE = (REAL(NVOXELS, WP) / &
-     &                      REAL(STS_VOXEL_MAX_CELLS, WP)) ** (ONE/THREE)
-            CELL_SIZE = CELL_SIZE * COARSE_SCALE
-            NBX = MAX(1, CEILING(SPAN_X / CELL_SIZE))
-            NBY = MAX(1, CEILING(SPAN_Y / CELL_SIZE))
-            NBZ = MAX(1, CEILING(SPAN_Z / CELL_SIZE))
-            NVOXELS = NBX * NBY * NBZ
-          END IF
-!
           N_CELL_RADIUS = MAX(1, CEILING(SEARCH_PADDING / CELL_SIZE))
 !
-!         Open-addressing hash for unique (sec_seg, mst_seg) pairs.
-          HASH_SIZE = MIN(HUGE(1), MAX(STS_VOXEL_HASH_MIN_SLOTS, &
-     &        2 * MAX_STS_SIZE_ACTUAL + 1))
+          CALL ISTS_STS_VOXEL_GRID_SET(NIN, CELL_SIZE, SEARCH_PADDING, PAD_SQ, N_CELL_RADIUS)
+!
+        END SUBROUTINE STS_VOXEL_INIT_GRID_PARAMS
+!=======================================================================
+!   STS_VOXEL_PAIR_SEARCH
+!
+!   Voxel grid neighborhood search:
+!     1) Compute master AABB and pad it by SEARCH_PADDING.
+!     2) Coarse AABB-vs-AABB rejection: if minimum distance > padding,
+!        return COUNT = 0.
+!     3) Build a linked-list voxel grid containing master sample points.
+!     4) For each secondary point inside the padded box, look up the
+!        3x3x3 cell neighborhood and emit unique (mst_seg, sec_seg)
+!        pairs into the output arrays.
+!=======================================================================
+        SUBROUTINE STS_VOXEL_PAIR_SEARCH( &
+     &      NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
+     &      GAP, PTS_S, SEG_OF_PT_S, NPTS_S, &
+     &      PTS_M, SEG_OF_PT_M, NPTS_M, NSEG_SEC, &
+     &      MAX_STS_SIZE_ACTUAL, &
+     &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
+     &      COUNT, OVERFLOW, D_MIN_OUT)
+          INTEGER, INTENT(IN)  :: NIN, NSURF, SEC_SURF_IDX, MST_SURF_IDX
+          TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
+          INTEGER, INTENT(IN)  :: NUMNOD
+          REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
+          REAL(KIND=WP), INTENT(IN) :: GAP
+          INTEGER, INTENT(IN)  :: NPTS_S, NPTS_M
+          REAL(KIND=WP), INTENT(IN) :: PTS_S(3, NPTS_S), PTS_M(3, NPTS_M)
+          INTEGER, INTENT(IN)  :: SEG_OF_PT_S(NPTS_S), SEG_OF_PT_M(NPTS_M)
+          INTEGER, INTENT(IN)  :: NSEG_SEC, MAX_STS_SIZE_ACTUAL
+          INTEGER, INTENT(INOUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          INTEGER, INTENT(INOUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
+          REAL(KIND=WP), INTENT(INOUT) :: CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8)
+          INTEGER, INTENT(INOUT) :: COUNT
+          LOGICAL, INTENT(INOUT) :: OVERFLOW
+          REAL(KIND=WP), INTENT(OUT) :: D_MIN_OUT
+!
+          REAL(KIND=WP) :: XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M
+          REAL(KIND=WP) :: XMIN_S, XMAX_S, YMIN_S, YMAX_S, ZMIN_S, ZMAX_S
+          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING, SPAN_X, SPAN_Y, SPAN_Z
+          REAL(KIND=WP) :: DX, DY, DZ, AABB_DIST, DIST_SQ, PAD_SQ, D_MIN_SQ
+          INTEGER :: NBX, NBY, NBZ, NVOXELS, N_CELL_RADIUS
+          INTEGER :: IM, IS, IX, IY, IZ, JX, JY, JZ, CELLID, JJ
+          INTEGER :: IX_LO, IX_HI, IY_LO, IY_HI, IZ_LO, IZ_HI
+          INTEGER :: HASH_SIZE, HASH_STRIDE
+          INTEGER, ALLOCATABLE :: VOXEL(:), NEXT_PT(:)
+          INTEGER(KIND=8), ALLOCATABLE :: HASH_KEYS(:)
+          INTEGER :: SEG_S, SEG_M
+!
+          ! First time initialization of the voxel grid parameters
+          IF (.NOT. ISTS_STS_VOXEL_GRID_IS_READY(NIN)) THEN
+            CALL STS_VOXEL_INIT_GRID_PARAMS( &
+     &          NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
+     &          X, NUMNOD, GAP, PTS_S, NPTS_S, PTS_M, NPTS_M)
+          END IF
+          ! Get the voxel grid parameters from the module
+          CALL ISTS_STS_VOXEL_GRID_GET(NIN, CELL_SIZE, SEARCH_PADDING, &
+     &        PAD_SQ, N_CELL_RADIUS)
+!
+          ! Compute the AABB of the master and secondary points
+          CALL STS_VOXEL_AABB(PTS_M, NPTS_M, &
+     &        XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M)
+          CALL STS_VOXEL_AABB(PTS_S, NPTS_S, &
+     &        XMIN_S, XMAX_S, YMIN_S, YMAX_S, ZMIN_S, ZMAX_S)
+!
+!         Coarse AABB rejection (unpadded primary vs secondary AABB).
+          DX = MAX(ZERO, MAX(XMIN_S - XMAX_M, XMIN_M - XMAX_S))
+          DY = MAX(ZERO, MAX(YMIN_S - YMAX_M, YMIN_M - YMAX_S))
+          DZ = MAX(ZERO, MAX(ZMIN_S - ZMAX_M, ZMIN_M - ZMAX_S))
+          AABB_DIST = SQRT(DX*DX + DY*DY + DZ*DZ)
+          
+          ! If the AABB distance is greater than the search padding, return
+          IF (AABB_DIST > SEARCH_PADDING) THEN
+            D_MIN_OUT = AABB_DIST
+            RETURN
+          END IF
+
+          D_MIN_SQ = AABB_DIST * AABB_DIST
+!
+          ! Pad the master and secondary AABB
+          XMIN_M = XMIN_M - SEARCH_PADDING
+          XMAX_M = XMAX_M + SEARCH_PADDING
+          YMIN_M = YMIN_M - SEARCH_PADDING
+          YMAX_M = YMAX_M + SEARCH_PADDING
+          ZMIN_M = ZMIN_M - SEARCH_PADDING
+          ZMAX_M = ZMAX_M + SEARCH_PADDING
+!
+          ! Compute the span of the padded master and secondary AABB
+          SPAN_X = XMAX_M - XMIN_M
+          SPAN_Y = YMAX_M - YMIN_M
+          SPAN_Z = ZMAX_M - ZMIN_M
+!
+          ! Compute the number of cells in the voxel grid
+          NBX = MAX(1, CEILING(SPAN_X / CELL_SIZE))
+          NBY = MAX(1, CEILING(SPAN_Y / CELL_SIZE))
+          NBZ = MAX(1, CEILING(SPAN_Z / CELL_SIZE))
+          NVOXELS = NBX * NBY * NBZ
+!
+          ! Compute the size of the hash table (needed for the linked-list per cell)
+          HASH_SIZE = MIN(HUGE(1), MAX(STS_VOXEL_HASH_MIN_SLOTS, 2 * MAX_STS_SIZE_ACTUAL + 1))
           HASH_STRIDE = MAX(NSEG_SEC, 1) + 1
           ALLOCATE(VOXEL(NVOXELS), NEXT_PT(NPTS_M), HASH_KEYS(HASH_SIZE))
+          ! Initialize the voxel grid and the linked-list per cell
           VOXEL = 0
           NEXT_PT = 0
           HASH_KEYS = 0_8
 !
-!         Fill voxel grid with master points (linked-list per cell).
+          ! Fill voxel grid with master points (linked-list per cell)
           DO IM = 1, NPTS_M
             CALL STS_VOXEL_PT_TO_CELL( &
      &          PTS_M(1, IM), PTS_M(2, IM), PTS_M(3, IM), &
@@ -397,12 +451,13 @@
             VOXEL(CELLID) = IM
           END DO
 !
-!         Query secondary points inside the padded master box.
+          ! Query secondary points inside the padded master box
           DO IS = 1, NPTS_S
             IF (PTS_S(1, IS) < XMIN_M .OR. PTS_S(1, IS) > XMAX_M) CYCLE
             IF (PTS_S(2, IS) < YMIN_M .OR. PTS_S(2, IS) > YMAX_M) CYCLE
             IF (PTS_S(3, IS) < ZMIN_M .OR. PTS_S(3, IS) > ZMAX_M) CYCLE
 !
+            ! Map the secondary point to the voxel grid (to find the cell)
             CALL STS_VOXEL_PT_TO_CELL( &
      &          PTS_S(1, IS), PTS_S(2, IS), PTS_S(3, IS), &
      &          XMIN_M, YMIN_M, ZMIN_M, &
@@ -432,29 +487,33 @@
                       DY = PTS_S(2, IS) - PTS_M(2, JJ)
                       DZ = PTS_S(3, IS) - PTS_M(3, JJ)
                       DIST_SQ = DX*DX + DY*DY + DZ*DZ
+                      IF (DIST_SQ < D_MIN_SQ) D_MIN_SQ = DIST_SQ
+                      ! If the distance is less than the search padding, emit the pair
                       IF (DIST_SQ <= PAD_SQ) THEN
+                        ! Appends a single (sec_seg, mst_seg) pair to the output arrays unless it already exists
                         CALL STS_VOXEL_EMIT_PAIR( &
      &                    IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
      &                    X, NUMNOD, SEG_S, SEG_M, HASH_STRIDE, &
      &                    HASH_SIZE, HASH_KEYS, MAX_STS_SIZE_ACTUAL, &
      &                    CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
      &                    CONT_ELEMENT, COUNT, OVERFLOW)
-                        IF (OVERFLOW) EXIT
+                      !  IF (OVERFLOW) EXIT
                       END IF
                     END IF
                     JJ = NEXT_PT(JJ)
                     IF (JJ < 0) EXIT
                   END DO
-                  IF (OVERFLOW) EXIT
+                  ! IF (OVERFLOW) EXIT
                 END DO
-                IF (OVERFLOW) EXIT
+                !IF (OVERFLOW) EXIT
               END DO
-              IF (OVERFLOW) EXIT
+              !IF (OVERFLOW) EXIT
             END DO
             IF (OVERFLOW) EXIT
           END DO
 !
           DEALLOCATE(VOXEL, NEXT_PT, HASH_KEYS)
+          D_MIN_OUT = SQRT(D_MIN_SQ)
 !
         END SUBROUTINE STS_VOXEL_PAIR_SEARCH
 !=======================================================================

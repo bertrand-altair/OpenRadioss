@@ -51,8 +51,9 @@
 !=======================================================================
         SUBROUTINE Q1NP_CONTACT_DRIVER_INT7(NCYCLE, NUMNOD, X, A, &
      &      STIFN, GAP, IGSTI, KMIN, KMAX, IRECTM, NSV, STFNS, NSN, &
-     &      STFM, NRTM, FCONT, DO_FCONT)
+     &      STFM, NRTM, FCONT, DO_FCONT, IMPACT_glob)
           INTEGER, INTENT(IN) :: NCYCLE, NUMNOD, IGSTI, NSN, NRTM
+          INTEGER, INTENT(OUT) :: IMPACT_glob
           INTEGER, INTENT(IN) :: IRECTM(:)
           INTEGER, INTENT(IN) :: NSV(:)
           REAL(KIND=WP), INTENT(IN) :: X(3,NUMNOD)
@@ -72,6 +73,7 @@
             CALL Q1NP_CONTACT_EXPORT_BEGIN_CYCLE(NCYCLE, NUMELQ1NP_G)
             Q1NP_CONTACT_INT7_ALREADY = .FALSE.
           END IF
+          IMPACT_glob = 0
           IF (Q1NP_CONTACT_INT7_ALREADY) RETURN
 
 !         --- Adaptive skip ---
@@ -102,6 +104,7 @@
 
 !         --- Force assembly (penalty forces + FCONT scatter) ---
           IF (N_PAIRS > 0) THEN
+            IMPACT_glob = 1
             CALL Q1NP_CONTACT_FORCE_ASSEMBLY( &
      &        PAIRS, N_PAIRS, &
      &        KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, &

@@ -87,6 +87,8 @@ C-----------------------------------------------
      &  Q1NP_CONTACT_INIT_GRID_NODES
       USE STS_BROAD_PHASE_VOXEL_MOD, ONLY: STS_VOXEL_BROAD_PHASE
       USE STS_CONTACT_STIFFNESS_MOD, ONLY: STS_CONTACT_STIFFNESS
+      USE ISTS_STS_SKIP_MOD, ONLY: ISTS_STS_SKIP_TICK, ISTS_STS_SKIP_UPDATE
+      USE ISTS_STS_VOXEL_GRID_MOD, ONLY: ISTS_STS_VOXEL_GRID_IS_READY, ISTS_STS_VOXEL_GRID_GET
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -180,7 +182,11 @@ C-----------------------------------------------
 !     populates candidate segment pairs up to MAX_STS_SIZE_ACTUAL.
       LOGICAL :: STS_BP_OVERFLOW                          ! broad-phase pair overflow flag
       LOGICAL :: STS_BP_RETRY                             ! retry broad phase after capacity grow
+      LOGICAL :: STS_DO_SKIP                              ! adaptive skip active this cycle
       INTEGER :: STS_CAP_LIMIT
+      INTEGER :: STS_N_CELL_RADIUS_SKIP
+      my_real :: STS_D_MIN, STS_CELL_SIZE_SKIP
+      my_real :: STS_SEARCH_PADDING_SKIP, STS_PAD_SQ_SKIP
       LOGICAL, SAVE :: INT7_CONTACT_MODE_MSG_DONE = .FALSE. ! one-time flag for the contact-mode banner
       LOGICAL, SAVE :: STS_VOXEL_OVERFLOW_WARN_DONE = .FALSE.
 C-----------------------------------------------
@@ -264,6 +270,7 @@ C     Type 7 STS (STS_FLAG == 1): voxel broad-phase via IPARI(45/46).
 C-----------------------------------------------
       IF (NTY == 7 .AND. STS_FLAG == 1) THEN
 C
+        IMPACT_glob = 0
         MST_SURF_ID_STS = IPARI(46,NIN)
         SEC_SURF_ID_STS = IPARI(45,NIN)
 C
@@ -275,101 +282,114 @@ C          grow on broad-phase overflow, and keep grown buffers alive.
      &        IGRSURF(MST_SURF_ID_STS)%NSEG,
      &        STS_WB_CAPACITY, MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT)
 
-C         Broad phase populates CAND_*_SEG_ID and CONT_ELEMENT. If the
-C         compact starting capacity overflows, grow and retry.
-          IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STARTIME(TIMERS,35)
-          STS_BP_RETRY = .TRUE.
-          DO WHILE (STS_BP_RETRY)
-            STS_BP_RETRY = .FALSE.
-            CALL ISTS_STS_ENSURE_BUFFERS(MAX_STS_SIZE_ACTUAL,
-     &          STS_WB_CAPACITY, CONT_ELEMENT, load_arr, STS_STIF,
-     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+          CALL ISTS_STS_SKIP_TICK(NIN, STS_DO_SKIP)
 
-            CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, ISTS_STS_IP_MAX)
-
-            CALL STS_VOXEL_BROAD_PHASE(
-     &            IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
-     &            X, NUMNOD, GAP_FOR_STS, MAX_STS_SIZE_ACTUAL,
-     &            CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
-     &            COUNT, STS_BP_OVERFLOW)
-
-            CALL ISTS_STS_TRY_GROW_CAPACITY(STS_BP_OVERFLOW,
-     &          MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT, STS_BP_RETRY)
-          ENDDO
-          IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STOPTIME(TIMERS,35)
-
-          IF (STS_BP_OVERFLOW .AND. .NOT. STS_VOXEL_OVERFLOW_WARN_DONE) THEN
-            WRITE(*,'(A,I8,A,I10,A,I10)')
-     &        ' WARNING INTERFACE ', NOINT,
-     &        ': STS voxel pair overflow, kept ', COUNT,
-     &        ' / capacity ', MAX_STS_SIZE_ACTUAL
-            STS_VOXEL_OVERFLOW_WARN_DONE = .TRUE.
-          ENDIF
-
-C         Friction model 
-C         TODO: placeholder part-ID mapping; proper part-ID resolution is a separate task.
-          IF (COUNT > 0) THEN
-            DO I = 1, MIN(COUNT, MVSIZ)
-              IPARTFRICSI(I) = 0
-              IPARTFRICMI(I) = 0
+          IF (.NOT. STS_DO_SKIP) THEN
+C           Broad phase populates CAND_*_SEG_ID and CONT_ELEMENT. If the
+C           compact starting capacity overflows, grow and retry.
+            IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STARTIME(TIMERS,35)
+            STS_BP_RETRY = .TRUE.
+            DO WHILE (STS_BP_RETRY)
+              STS_BP_RETRY = .FALSE.
+              CALL ISTS_STS_ENSURE_BUFFERS(MAX_STS_SIZE_ACTUAL,
+     &            STS_WB_CAPACITY, CONT_ELEMENT, load_arr, STS_STIF,
+     &            CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+            
+              CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, ISTS_STS_IP_MAX)
+            
+              CALL STS_VOXEL_BROAD_PHASE(
+     &              NIN, IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
+     &              X, NUMNOD, GAP_FOR_STS, MAX_STS_SIZE_ACTUAL,
+     &              CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
+     &              COUNT, STS_BP_OVERFLOW, STS_D_MIN)
+            
+              CALL ISTS_STS_TRY_GROW_CAPACITY(STS_BP_OVERFLOW,
+     &            MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT, STS_BP_RETRY)
             ENDDO
-            IF (IORTHFRIC == 0) THEN
-              JLT_TIED = 0
-              CALL FRICTIONPARTS_MODEL_ISOT(
-     1               INTFRIC,        MIN(COUNT,MVSIZ),  IPARTFRICSI,
-     2               IPARTFRICMI,    ADPARTS_FRIC,
-     3               NSETPRTS,       TABCOUPLEPARTS_FRIC,NPARTFRIC,
-     4               TABPARTS_FRIC,  TABCOEF_FRIC,
-     5               FRIC,           VISCF,            INTBUF_TAB%FRIC_P,
-     6               FRIC_COEFS,     FRICC,
-     7               VISCFFRIC,      NTY,              MFROT,
-     8               IORTHFRIC,      IFRIC,
-     9               JLT_TIED,       TINT,             TEMPI,
-     A               NPC,            TF,
-     B               TEMP,           H1,               H2,
-     C               H3,             H4,
-     D               IX1,            IX2,              IX3,
-     E               IX4,            IFORM)
+            IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STOPTIME(TIMERS,35)
+            
+            IF (STS_BP_OVERFLOW .AND. .NOT. STS_VOXEL_OVERFLOW_WARN_DONE) THEN
+              WRITE(*,'(A,I8,A,I10,A,I10)')
+     &          ' WARNING INTERFACE ', NOINT,
+     &          ': STS voxel pair overflow, kept ', COUNT,
+     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
+              STS_VOXEL_OVERFLOW_WARN_DONE = .TRUE.
             ENDIF
 
-C     	    Calculate Contact Stiffness for STS pairs.
-            CALL STS_CONTACT_STIFFNESS(
-     &        CAND_MST_SEG_ID, CAND_SEC_SEG_ID, COUNT,
-     &        MAX_STS_SIZE_ACTUAL,
-     &        INTBUF_TAB%IRECTM, INTBUF_TAB%STFM, NRTM,
-     &        INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, NUMNOD,
-     &        IGSTI, KMIN, KMAX, STIGLO, STS_STIF)
-
-C           STS Gauss contact search.
-            OPTION = 0
-            QFRICT = 0.d0
-            CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
-     &        NOINT, NCYCLE, TT,
-     &        CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
-     &        load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
-     &        MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
-
-C           Fall back to Lobatto contact search if Gauss contact search reported no contact.
-            IF (IMPACT_glob == 0) THEN
-              OPTION = 1
+C           Friction model 
+C           TODO: placeholder part-ID mapping; proper part-ID resolution is a separate task.
+            IF (COUNT > 0) THEN
+              DO I = 1, MIN(COUNT, MVSIZ)
+                IPARTFRICSI(I) = 0
+                IPARTFRICMI(I) = 0
+              ENDDO
+              IF (IORTHFRIC == 0) THEN
+                JLT_TIED = 0
+                CALL FRICTIONPARTS_MODEL_ISOT(
+     1                 INTFRIC,        MIN(COUNT,MVSIZ),  IPARTFRICSI,
+     2                 IPARTFRICMI,    ADPARTS_FRIC,
+     3                 NSETPRTS,       TABCOUPLEPARTS_FRIC,NPARTFRIC,
+     4                 TABPARTS_FRIC,  TABCOEF_FRIC,
+     5                 FRIC,           VISCF,            INTBUF_TAB%FRIC_P,
+     6                 FRIC_COEFS,     FRICC,
+     7                 VISCFFRIC,      NTY,              MFROT,
+     8                 IORTHFRIC,      IFRIC,
+     9                 JLT_TIED,       TINT,             TEMPI,
+     A                 NPC,            TF,
+     B                 TEMP,           H1,               H2,
+     C                 H3,             H4,
+     D                 IX1,            IX2,              IX3,
+     E                 IX4,            IFORM)
+              ENDIF
+            
+C     	      Calculate Contact Stiffness for STS pairs.
+              CALL STS_CONTACT_STIFFNESS(
+     &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID, COUNT,
+     &          MAX_STS_SIZE_ACTUAL,
+     &          INTBUF_TAB%IRECTM, INTBUF_TAB%STFM, NRTM,
+     &          INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, NUMNOD,
+     &          IGSTI, KMIN, KMAX, STIGLO, STS_STIF)
+            
+C             STS Gauss contact search.
+              OPTION = 0
               QFRICT = 0.d0
               CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
      &          NOINT, NCYCLE, TT,
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
      &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
+            
+C             Fall back to Lobatto contact search if Gauss contact search reported no contact.
+              IF (IMPACT_glob == 0) THEN
+                OPTION = 1
+                QFRICT = 0.d0
+                CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
+     &            NOINT, NCYCLE, TT,
+     &            CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
+     &            load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
+     &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
+              ENDIF
+            
+C             Scatter the per-pair load_arr / node_id_load directly into A / STIFN. 
+              IF (IMPACT_glob /= 0) THEN
+                IPARI(29,NIN) = 1
+                IF (DEBUG(3) >= 1) NB_JLT_NEW = NB_JLT_NEW + L - 1
+                CALL I7ASS0_STS(A, STIFN, load_arr, node_id_load, L,
+     &            MAX_STS_SIZE_ACTUAL, FCONT, H3D_DATA)
+              ENDIF
+            
+            ENDIF ! COUNT > 0
+            
+            IF (ISTS_STS_VOXEL_GRID_IS_READY(NIN)) THEN
+              CALL ISTS_STS_VOXEL_GRID_GET(NIN, STS_CELL_SIZE_SKIP,
+     &            STS_SEARCH_PADDING_SKIP, STS_PAD_SQ_SKIP,
+     &            STS_N_CELL_RADIUS_SKIP)
+              CALL ISTS_STS_SKIP_UPDATE(NIN, STS_D_MIN,
+     &            STS_SEARCH_PADDING_SKIP, IMPACT_glob /= 0)
             ENDIF
 
-C           Scatter the per-pair load_arr / node_id_load directly into A / STIFN. 
-            IF (IMPACT_glob /= 0) THEN
-              IPARI(29,NIN) = 1
-              IF (DEBUG(3) >= 1) NB_JLT_NEW = NB_JLT_NEW + L - 1
-              CALL I7ASS0_STS(A, STIFN, load_arr, node_id_load, L,
-     &          MAX_STS_SIZE_ACTUAL, FCONT, H3D_DATA)
-            ENDIF
-
-          ENDIF ! COUNT > 0
-        ENDIF  
+          ENDIF ! .NOT. STS_DO_SKIP
+        ENDIF ! JTASK == 1
         CALL MY_BARRIER()
 C        
       ELSEIF ((NTY == 7).AND.(STS_FLAG == 2)) THEN
@@ -379,9 +399,10 @@ C
         CALL MY_BARRIER()
         IF (JTASK == 1) THEN
           CALL Q1NP_CONTACT_DRIVER_INT7(NCYCLE, NUMNOD, X, A, STIFN,
-     &                                  GAP, FRIC, IGSTI, KMIN, KMAX, INTBUF_TAB%IRECTM,
-     &                                  INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, INTBUF_TAB%STFM, NRTM,
-     &                                  FCONT, INCONV == 1 .AND.
+     &                                  GAP, IGSTI, KMIN, KMAX, INTBUF_TAB%IRECTM,
+     &                                  INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN,
+     &                                  INTBUF_TAB%STFM, NRTM, FCONT,
+     &                                  INCONV == 1 .AND.
      &                                  ANIM_V(4)+OUTP_V(4)+H3D_DATA%N_VECT_CONT > 0,
      &                                  IMPACT_glob)
           IF (IMPACT_glob > 0) IPARI(29,NIN) = 1

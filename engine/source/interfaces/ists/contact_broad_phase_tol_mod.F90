@@ -143,7 +143,7 @@
 
           GAP_PHYS = INTER_BP_TOL_GAP_PHYS(GAP_USER)
           H_MESH = MAX(H_MESH_A, H_MESH_B, INTER_BP_TOL_GAP_FALLBACK)
-          TOL_SEARCH = GAP_PHYS + INTER_BP_TOL_ALPHA_MESH * H_MESH
+          TOL_SEARCH = GAP_PHYS + H_MESH*0.2 !this factor needs to be tested/tuned; it should be large enough to find all potential contacts, but not too large to cause excessive pairs
         END SUBROUTINE INTER_BP_TOL_SEARCH
 
         SUBROUTINE INTER_BP_TOL_PAD_CELL(TOL_SEARCH, SEARCH_PADDING, CELL_SIZE)
