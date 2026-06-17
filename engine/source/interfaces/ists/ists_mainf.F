@@ -193,6 +193,7 @@ C-----------------------------------------------
       LOGICAL, SAVE :: INT7_CONTACT_MODE_MSG_DONE = .FALSE. ! one-time flag for the contact-mode banner
       LOGICAL, SAVE :: STS_VOXEL_OVERFLOW_WARN_DONE = .FALSE.
       REAL*8 STS_ECONTT_PASS, STS_ECONVT_PASS
+      REAL*8 STS_FN_TOT(3), STS_FT_TOT(3)
 C-----------------------------------------------
 C   S o u r c e   L i n e s
 C-----------------------------------------------
@@ -362,9 +363,16 @@ C             STS Gauss contact search.
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
      &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
-     &          GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS)
+     &          GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS,
+     &          STS_FN_TOT, STS_FT_TOT)
               IF (IMPACT_glob /= 0) THEN
 #include "lockon.inc"
+                FSAV(1) = FSAV(1) - STS_FN_TOT(1) * DT12
+                FSAV(2) = FSAV(2) - STS_FN_TOT(2) * DT12
+                FSAV(3) = FSAV(3) - STS_FN_TOT(3) * DT12
+                FSAV(4) = FSAV(4) - STS_FT_TOT(1) * DT12
+                FSAV(5) = FSAV(5) - STS_FT_TOT(2) * DT12
+                FSAV(6) = FSAV(6) - STS_FT_TOT(3) * DT12
                 FSAV(26) = FSAV(26) + STS_ECONTT_PASS
                 FSAV(27) = FSAV(27) + STS_ECONVT_PASS
 #include "lockoff.inc"
@@ -385,9 +393,16 @@ C             Fall back to Lobatto contact search if Gauss contact search report
      &            CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
      &            load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
-     &            GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS)
+     &            GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS,
+     &            STS_FN_TOT, STS_FT_TOT)
                 IF (IMPACT_glob /= 0) THEN
 #include "lockon.inc"
+                  FSAV(1) = FSAV(1) - STS_FN_TOT(1) * DT12
+                  FSAV(2) = FSAV(2) - STS_FN_TOT(2) * DT12
+                  FSAV(3) = FSAV(3) - STS_FN_TOT(3) * DT12
+                  FSAV(4) = FSAV(4) - STS_FT_TOT(1) * DT12
+                  FSAV(5) = FSAV(5) - STS_FT_TOT(2) * DT12
+                  FSAV(6) = FSAV(6) - STS_FT_TOT(3) * DT12
                   FSAV(26) = FSAV(26) + STS_ECONTT_PASS
                   FSAV(27) = FSAV(27) + STS_ECONVT_PASS
 #include "lockoff.inc"

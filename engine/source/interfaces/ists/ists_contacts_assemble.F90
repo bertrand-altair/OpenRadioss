@@ -9,7 +9,7 @@
      & CAND_MST_SEG_ID, CAND_SEC_SEG_ID, &
      & load_arr, node_id_load, L_out, IMPACT_glob, STIF, &
      & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, QFRICT, GAP, V, &
-     & ECONTT_TOT, ECONVT_TOT)
+     & ECONTT_TOT, ECONVT_TOT, FN_TOT, FT_TOT)
 !-----------------------------------------------
 !   M o d u l e s
 !-----------------------------------------------
@@ -45,6 +45,7 @@
       my_real GAP  ! Gap value from user input
       my_real V(3,*)
       REAL*8 ECONTT_TOT, ECONVT_TOT
+      REAL*8 FN_TOT(3), FT_TOT(3)
 !-----------------------------------------------
 !   L o c a l   V a r i a b l e s
 !-----------------------------------------------
@@ -70,6 +71,8 @@
       IMPACT_glob = 0
       ECONTT_TOT = 0.0D0
       ECONVT_TOT = 0.0D0
+      FN_TOT = 0.0D0
+      FT_TOT = 0.0D0
       
       ! Safety check
       IF (COUNT <= 0) THEN
@@ -127,6 +130,16 @@
           IMPACT_glob = 1
           ECONTT_TOT = ECONTT_TOT + econt_pair
           ECONVT_TOT = ECONVT_TOT + econtv_pair
+
+!         Slave-side force resultants for /TH/INTER (normal = p - p_friction).
+          DO J = 5, 8
+            FN_TOT(1) = FN_TOT(1) + p_load_new(3*(J-1)+1) - p_friction(3*(J-1)+1)
+            FN_TOT(2) = FN_TOT(2) + p_load_new(3*(J-1)+2) - p_friction(3*(J-1)+2)
+            FN_TOT(3) = FN_TOT(3) + p_load_new(3*(J-1)+3) - p_friction(3*(J-1)+3)
+            FT_TOT(1) = FT_TOT(1) + p_friction(3*(J-1)+1)
+            FT_TOT(2) = FT_TOT(2) + p_friction(3*(J-1)+2)
+            FT_TOT(3) = FT_TOT(3) + p_friction(3*(J-1)+3)
+          ENDDO
 
           IF (CSV_OUTPUT_ENABLED) THEN
 !           Export two rows per contact pair:
