@@ -358,6 +358,8 @@ C     	      Calculate Contact Stiffness for STS pairs.
 C             STS Gauss contact search.
               OPTION = 0
               QFRICT = 0.d0
+              ! Begin the cycle for the current Gauss/Lobatto point
+              CALL sts_gp_cycle_begin()
               CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
      &          NOINT, NCYCLE, TT,
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
@@ -414,6 +416,8 @@ C             Fall back to Lobatto contact search if Gauss contact search report
 #include "lockoff.inc"
                 ENDIF
               ENDIF
+              ! End the cycle for the current Gauss/Lobatto point
+              CALL sts_gp_cycle_end()
             
 C             Scatter the per-pair load_arr / node_id_load directly into A / STIFN. 
               IF (IMPACT_glob /= 0) THEN

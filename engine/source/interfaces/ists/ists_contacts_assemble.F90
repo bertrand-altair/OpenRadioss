@@ -117,8 +117,7 @@
         XMU(1) = FRICC(MIN(I,MVSIZ)) ! Friction coefficient mu
       
         ! Call STS_CONTACT_EVAL_PAIR with friction calculation integrated.
-        ! Note: STIF is used for both normal and tangential stiffness
-        ! (STIF0 = STIF for now, until separate tangential stiffness is available)
+        ! Normal penalty: d1 = 0.5*STIF*FAC; friction trial: d1_fric = 0.5*STIF (NTS STIF0).
         CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF(I), p_load_new, IMPACT, I, &
      &                    node_stiff, OPTION, &
      &                    FRICC, XMU, IFPEN, &
@@ -245,26 +244,3 @@
      &    ES23.15, ',', ES23.15, ',', I0, ',', ES23.15)
       END SUBROUTINE STS_CONTACT_EXPORT_CSV_PAIR
       
-!************************************************************************
-!----------------------------------------------------------------------!
-!.... general subroutines
-!----------------------------------------------------------------------!
-!************************************************************************
-      
-      INTEGER FUNCTION GET_GLOBAL_GP_INDEX(PAIR_INDEX, Z, Q, IP_MAX)
-!-----------------------------------------------------------------------
-! Compute global Gauss point index from STS pair index and
-! local Gauss point indices (z, q) for a given quadrature order IP_MAX.
-!
-! gp_index = (pair_index-1) * (IP_MAX*IP_MAX) + local_gp_index + 1
-! local_gp_index = (z-1)*IP_MAX + (q-1)
-!-----------------------------------------------------------------------
-      IMPLICIT NONE
-      INTEGER PAIR_INDEX, Z, Q, IP_MAX
-      INTEGER LOCAL_GP_INDEX
-
-      LOCAL_GP_INDEX = (Z - 1) * IP_MAX + (Q - 1)
-      GET_GLOBAL_GP_INDEX = (PAIR_INDEX - 1) * (IP_MAX*IP_MAX) + LOCAL_GP_INDEX + 1
-
-      RETURN
-      END

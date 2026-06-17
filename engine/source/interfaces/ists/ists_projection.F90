@@ -10,7 +10,9 @@
 !||--- called by ----------------------------------------------------- 
 !||    STS_CONTACT_EVAL_PAIR    ../engine/source/interfaces/ists/ists_contact_eval_pair.F90
 !||====================================================================
-      subroutine sts_project(xupd,xi1,xi2,eta1,eta2)
+      subroutine sts_project(xupd, xi1, xi2, eta1, eta2, &
+     &     xi1_guess, xi2_guess, use_guess)
+
 !-----------------------------------------------
 !   M o d u l e s   /   I m p l i c i t   T y p e s
 !-----------------------------------------------
@@ -22,12 +24,19 @@
 !     xupd   : Coordinates of contact element (3,8)
 !     xi1,xi2: Output parametric coordinates on Primary surface
 !     eta1,eta2: Input parametric coordinates on Secondary surface
+!     xi1_guess, xi2_guess: Warm-start coordinates when use_guess is true
+!     use_guess: If true, start Newton from xi1_guess/xi2_guess
 !-----------------------------------------------          
       real*8  xupd(3,8)     
-      real*8  xi1,xi2,eta1,eta2
+      real*8  xi1, xi2, eta1, eta2
+      real*8  xi1_guess, xi2_guess
+      logical use_guess
 !-----------------------------------------------
 !   L o c a l   V a r i a b l e s
 !-----------------------------------------------
+      INTEGER, PARAMETER :: STS_PROJ_MAX_ITER = 10
+      real*8, PARAMETER :: STS_PROJ_TOL = 1.d-10
+
       INTEGER i, j, iter
       real*8  shape(3,4), N_eta(3,4)
       real*8  rho(3), rhoxi1(3), rhoxi2(3)
@@ -40,8 +49,13 @@
 !-----------------------------------------------
 !   Initialization - set initial guess
 !-----------------------------------------------
-      xi1 = 0.d0
-      xi2 = 0.d0
+      IF (use_guess) THEN
+        xi1 = xi1_guess
+        xi2 = xi2_guess
+      ELSE
+        xi1 = 0.d0
+        xi2 = 0.d0
+      ENDIF
       
 !-----------------------------------------------
 !   Get shape functions for Secondary surface
@@ -63,7 +77,7 @@
 !-----------------------------------------------
 !   Newton's iteration for projection
 !-----------------------------------------------
-      DO iter=1,1
+      DO iter=1, STS_PROJ_MAX_ITER
         ! Get shape functions and derivatives at current xi
         call sts_shape(xi1, xi2, shape)
          
@@ -99,12 +113,15 @@
         detmPrimary = detmPrimary - e**2 + 2.d0*m_ij(1,2)*e
         
         ! Calculate Newton update steps
+        IF (DABS(detmPrimary) .LT. EM30) EXIT
         dxi1 = (m_ij(2,2)*f(1) + (e-m_ij(1,2))*f(2))/detmPrimary
         dxi2 = (m_ij(1,1)*f(2) + (e-m_ij(2,1))*f(1))/detmPrimary
         
         ! Update solution
         xi1 = xi1 + dxi1
         xi2 = xi2 + dxi2
+
+        IF (DABS(dxi1) + DABS(dxi2) .LT. STS_PROJ_TOL) EXIT
       ENDDO
       
       RETURN

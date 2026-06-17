@@ -9,8 +9,10 @@
 !||    sts_pos                 ../engine/source/interfaces/ists/ists_pos.F90
 !||    sts_surfgeom            ../engine/source/interfaces/ists/ists_sts_surfgeom.F90
 !||    sts_penetr              ../engine/source/interfaces/ists/ists_sts_penetr.F90
-!||    sts_tangentvel_global   ../engine/source/interfaces/ists/ists_tangentvel.F90
+!||    sts_gp_update_xi_history ../engine/source/interfaces/ists/ists_tangentvel.F90
+!||    sts_gp_warm_start_xi    ../engine/source/interfaces/ists/ists_tangentvel.F90
 !||    sts_gp_tangential_velocity ../engine/source/interfaces/ists/ists_tangentvel.F90
+!||    sts_gp_covariant_slip      ../engine/source/interfaces/ists/ists_tangentvel.F90
 !||    sts_shape               ../engine/source/interfaces/ists/ists_shape_fct.F90
 !||    com08_mod               ../engine/share/modules/com08_mod.F
 !||====================================================================
@@ -69,8 +71,6 @@
       my_real GAP  ! Gap value from user input
       REAL*8, INTENT(OUT) :: PAIR_MAX_PENETRATION
       REAL*8, INTENT(OUT) :: ECONTT_PAIR, ECONVT_PAIR
-!     interface to global gp index function
-      INTEGER GET_GLOBAL_GP_INDEX
 !-----------------------------------------------
 !   L o c a l   V a r i a b l e s
 !-----------------------------------------------
@@ -78,12 +78,12 @@
       INTEGER pair_fric_idx
       real*8  xi1, xi2
       real*8  penetr, PENE, GAPV, FAC
-      my_real d1
+      my_real d1, d1_fric
       real*8  a(3,24), daxi1(3,24), daxi2(3,24)
       real*8  daeta1(3,24), daeta2(3,24)
       real*8  rhoxi1(3), rhoxi2(3)
       real*8  m_ij(2,2), detm, mij(2,2), detmPrimary
-      real*8  norm_contact(3), norm_gauss(3)
+      real*8  norm_contact(3), norm_gauss(3), norm_fric(3)
       real*8  pm(24), pm_friction(24)
       real*8  eta1(10), eta2(10), wi1(10), wi2(10)
       real*8  energy
@@ -95,8 +95,8 @@
       real*8  FXT, FYT, FZT, PHI, FN
       real*8  v_tang(3)
       INTEGER INDEX_CAND
-      INTEGER gp_index, secondary_el_id
-      INTEGER MAX_GLOBAL_GP_LOCAL
+      INTEGER gp_index
+      INTEGER mst_key(4), sec_key(4)
 
       INTEGER, PARAMETER :: DEBUG_NODE = 0
 !     Deep-penetration guard PREC_CLEAR, mirrors NTS i7for3:
@@ -107,8 +107,11 @@
       CHARACTER*7 FRICTION_QUAD_TYPE
       CHARACTER*7 STICK_STATE
 
-      real*8  dxi1, dxi2  ! Convective coordinate increments (velocity-based)
+      real*8  dxi1, dxi2  ! Diagnostic convective increments (history only)
+      real*8  slip1, slip2
       real*8  T_trial(2), T_real(2), T_trialabs
+      real*8  xi1_guess, xi2_guess
+      logical have_guess
       
       ! Gauss quadrature for friction calculation
       real*8  eta1_gauss(10), eta2_gauss(10), wi1_gauss(10), wi2_gauss(10)
@@ -137,9 +140,6 @@
       ip = 2 ! Quadrature order
       pair_fric_idx = MIN(MAX(EL_NR, 1), MVSIZ)
       calc_fric_this_pair = CALC_FRICTION .AND. FRICC(pair_fric_idx) .GT. 0.0d0
-      
-      ! Calculate maximum global GP index for bounds checking
-      MAX_GLOBAL_GP_LOCAL = MAX_STS_SIZE * ip * ip
       
       ! Get quadrature points and weights
       IF (OPTION == 0) THEN
@@ -179,9 +179,17 @@
 !     Loop over integration points
       DO z=1,ip
         DO q=1,ip
+          ! Get the unique pair key for the current Gauss/Lobatto point
+          call sts_gp_canonical_pair_key(node_ids, mst_key, sec_key)
+          call sts_gp_acquire_slot(mst_key, sec_key, z, q, gp_index)
+          
+          ! Get the warm start (border crossing) guess for the current Gauss/Lobatto point
+          call sts_gp_warm_start_xi(gp_index, xi1_guess, xi2_guess, &
+     &        have_guess)
           
           ! Project Secondary surface to Primary surface at current Gauss/Lobatto point
-          call sts_project(XUPD, xi1, xi2, eta1(z), eta2(q))
+          call sts_project(XUPD, xi1, xi2, eta1(z), eta2(q), &
+     &        xi1_guess, xi2_guess, have_guess)
           
           ! Check if projection is valid
           IF ((xi1 .NE. xi1) .OR. (xi2 .NE. xi2) .OR. &
@@ -203,26 +211,12 @@
           IF (.NOT. calc_fric_this_pair) THEN
             gauss_valid = .FALSE.
           ELSE IF (OPTION == 0) THEN
-            ! Gauss algorithm: current projection IS Gauss projection
-            ! Reuse coordinates and geometry
+            ! Gauss quadrature: reuse current projection and geometry
             xi1_gauss = xi1
             xi2_gauss = xi2
             gauss_valid = .TRUE.
-            
-            ! Reuse geometry arrays (already calculated above)
-            DO i = 1, 3
-              DO j = 1, 24
-                a_gauss(i,j) = a(i,j)
-                daxi1_gauss(i,j) = daxi1(i,j)
-                daxi2_gauss(i,j) = daxi2(i,j)
-                daeta1_gauss(i,j) = daeta1(i,j)
-                daeta2_gauss(i,j) = daeta2(i,j)
-              ENDDO
-            ENDDO
-            DO i = 1, 3
-              rhoxi1_gauss(i) = rhoxi1(i)
-              rhoxi2_gauss(i) = rhoxi2(i)
-            ENDDO
+            rhoxi1_gauss = rhoxi1
+            rhoxi2_gauss = rhoxi2
             m_ij_gauss(1,1) = m_ij(1,1)
             m_ij_gauss(1,2) = m_ij(1,2)
             m_ij_gauss(2,1) = m_ij(2,1)
@@ -231,7 +225,8 @@
           ELSE
             ! Lobatto algorithm: calculate separate Gauss projection
             call sts_project(XUPD, xi1_gauss, xi2_gauss, &
-     &                     eta1_gauss(z), eta2_gauss(q))
+     &                     eta1_gauss(z), eta2_gauss(q), &
+     &                     xi1_guess, xi2_guess, have_guess)
             
             ! Check if Gauss projection is valid for friction calculation
             gauss_valid = (xi1_gauss .EQ. xi1_gauss .AND. &
@@ -299,6 +294,9 @@
           PENE = penetr - GAPV
           ! No penetration - skip to next Gauss point
           IF (PENE .GT. 0.d0) THEN
+            ! Reset the slot for the current Gauss/Lobatto point
+            IF (gp_index .GT. 0) CALL sts_gp_reset_slot(gp_index)
+            ! Skip to next Gauss point
             CYCLE
           ENDIF
           
@@ -307,14 +305,14 @@
           ! Calculate penalty parameter.
           ! Clamp the clearance to PREC_CLEAR*GAP so FAC stays bounded (currenctly deactive)
           ! (<= 2000) for deep penetration, as in NTS i7for3.
-          d1 = STIF
           IF (DABS(GAPV) .GT. EM10) THEN
             gap_distance = GAPV + PENE
             FAC = DABS(GAPV) / MAX(PREC_CLEAR*DABS(GAPV), gap_distance)
           ELSE
             FAC = 1.0d0
           ENDIF
-          d1 = 0.5d0 * d1 * FAC
+          d1_fric = 0.5d0 * STIF ! Tangential stiffness for friction calculation
+          d1 = 0.5d0 * STIF * FAC ! Normal stiffness for normal contact calculation
           IF ((d1 .NE. d1) .OR. DABS(d1) .GT. HUGE(1.0d0) .OR. &
      &        d1 .LE. 0.0d0) CYCLE
 
@@ -332,11 +330,8 @@
      &        + d1 * DABS(N_eta(1,j)) * area_weight
           ENDDO
 
-          ! Extract nodal stiffness and set penetration flag if penetration detected
-          IF (IMPACT == 1) THEN
-            INDEX_CAND = EL_NR ! INDEX_CAND
-            IFPEN(INDEX_CAND) = 1  ! Penetration flag (1 = penetrated, 0 = not penetrated)
-          ENDIF      
+          INDEX_CAND = EL_NR
+          IFPEN(INDEX_CAND) = 1
           
           ! Accumulate energy
           energy = energy + 0.5d0 * d1 * penetr**2 * area_weight
@@ -348,15 +343,10 @@
      &                a(j,i) * norm_contact(j) * area_weight
             ENDDO
           ENDDO
-          !XMU(1) = 0.6
-          ! ------------------------------------------------------------------          
           ! ===== FRICTION CALCULATION =====
           IF (calc_fric_this_pair) THEN
             
-            ! Map to global Gauss point index for history-based friction
-            gp_index = GET_GLOBAL_GP_INDEX(EL_NR, z, q, ip)
-            if (gp_index .LE. 0 .OR. gp_index .GT. MAX_GLOBAL_GP_LOCAL) then
-              ! Invalid index - skip friction calculation for this GP
+            if (gp_index .LE. 0) then
               CYCLE
             endif
 
@@ -407,16 +397,31 @@
               CYCLE
             ENDIF
 
-            ! ==== COMMON FRICTION CALCULATION (using selected projection) ====
-            ! Calculate convective coordinate increments
-            call sts_tangentvel_global(xi1_fric, xi2_fric, dxi1, dxi2, &
-     &          EL_NR, z, q, ip, MAX_STS_SIZE)
+            ! Shape functions at friction projection point
+            IF (use_gauss_for_friction .AND. OPTION == 0) THEN
+              ! Reuse shape functions already evaluated for normal forces
+            ELSE
+              call sts_shape(xi1_fric, xi2_fric, N_xi)
+              call sts_shape(eta1_fric, eta2_fric, N_eta)
+            ENDIF
 
-            ! Calculate tangential traction using selected metric tensor
-            T_trial(1) = GP_TTRIAL1_HIST(gp_index) - &
-     &                   d1*(m_ij_fric(1,1)*dxi1 + m_ij_fric(1,2)*dxi2)
-            T_trial(2) = GP_TTRIAL2_HIST(gp_index) - &
-     &                   d1*(m_ij_fric(2,1)*dxi1 + m_ij_fric(2,2)*dxi2)
+            ! Normal for tangential velocity (Lobatto+Gauss uses Gauss normal)
+            IF (use_gauss_for_friction .AND. OPTION == 1) THEN
+              norm_fric = norm_gauss
+            ELSE
+              norm_fric = norm_contact
+            ENDIF
+
+            ! Calculate the tangential velocity at the current Gauss/Lobatto point
+            call sts_gp_tangential_velocity(N_xi, N_eta, node_ids, V, &
+     &          norm_fric, v_tang)
+
+            ! Calculate the covariant slip at the current Gauss/Lobatto point
+            call sts_gp_covariant_slip(v_tang, rhoxi1_fric, rhoxi2_fric, DT1, slip1, slip2)
+
+            ! Tangential trial stiffness: STIF0 = 0.5*STIF (no FAC), as in NTS IFQ>=10
+            T_trial(1) = GP_TTRIAL1_HIST(gp_index) - d1_fric * slip1
+            T_trial(2) = GP_TTRIAL2_HIST(gp_index) - d1_fric * slip2
 
             ! Magnitude of trial tangential traction using selected metric
             T_trialabs = 0.0d0
@@ -449,6 +454,10 @@
             GP_TTRIAL1_HIST(gp_index) = T_real(1)
             GP_TTRIAL2_HIST(gp_index) = T_real(2)
 
+            ! Update xi history for warm-start (border crossing) projection next timestep
+            call sts_gp_update_xi_history(xi1_fric, xi2_fric, gp_index, &
+     &          dxi1, dxi2)
+
             ! ===== CONVERT FROM 2D TANGENT PLANE TO 3D =====
             ! Convert using selected tangent vectors
             FXT = T_real(1)*rhoxi1_fric(1) + T_real(2)*rhoxi2_fric(1)
@@ -469,6 +478,7 @@
                   WRITE(6,1000) EL_NR, node_ids(j), z, q, &
      &                 FRICTION_QUAD_TYPE, &
      &                 xi1_fric, xi2_fric, dxi1, dxi2, &
+     &                 slip1, slip2, &
      &                 GP_XI1_PERIOD(gp_index), &
      &                 GP_XI2_PERIOD(gp_index), &
      &                 FXT, FYT, FZT, &
@@ -479,12 +489,6 @@
 
             ! ===== ACCUMULATE FRICTION FORCES TO NODES =====
             fric_weight = wi1_fric * wi2_fric * dsqrt(detm_fric)
-            IF (use_gauss_for_friction .AND. OPTION == 0) THEN
-              ! Reuse shape functions already evaluated for normal forces
-            ELSE
-              call sts_shape(xi1_fric, xi2_fric, N_xi)
-              call sts_shape(eta1_fric, eta2_fric, N_eta)
-            ENDIF
             ! Primary nodes (1-4): subtract friction
             DO j=1,4
               pm_friction((j-1)*3+1) = pm_friction((j-1)*3+1) - &
@@ -506,9 +510,8 @@
             ENDDO
 
             ! mirrors NTS EFRIC_L, integrated at GP
-            call sts_gp_tangential_velocity(N_xi, N_eta, node_ids, V, norm_contact, v_tang)
             ECONVT_PAIR = ECONVT_PAIR - DT1 * (v_tang(1)*FXT + v_tang(2)*FYT + v_tang(3)*FZT) * fric_weight
-      ENDIF
+          ENDIF
           ! ===== END FRICTION CALCULATION =====
         ENDDO
       ENDDO
@@ -529,6 +532,7 @@
      &       ' quad=',A7, &
      &       ' xi=',2F12.6, &
      &       ' dxi=',2F12.6, &
+     &       ' slip=',2E12.4, &
      &       ' per=',2I6, &
      &       ' FT=',3E12.4, &
      &       ' state=',A7)
