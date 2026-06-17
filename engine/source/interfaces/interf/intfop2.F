@@ -301,8 +301,8 @@ C
             IF(IPARI(105,N) > 0) THEN
 C
               CALL ISTS_MAINF(TIMERS,
-     1                      IPARI         ,PTR_X          ,A              ,
-     2                      STIFN         ,FCONT          ,N              ,
+     1                      IPARI         ,PTR_X          ,PTR_V          ,A              ,
+     2                      STIFN         ,FCONT          ,N              ,FSAV(1,NTH)    ,
      3                      JTASK         ,NB_JLT_NEW(JTASK),
      4                      TEMP          ,NPC            ,TF             ,
      5                      INTERFACES%INTBUF_TAB(N)      ,IXS            ,

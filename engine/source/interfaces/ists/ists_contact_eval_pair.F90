@@ -10,17 +10,21 @@
 !||    sts_surfgeom            ../engine/source/interfaces/ists/ists_sts_surfgeom.F90
 !||    sts_penetr              ../engine/source/interfaces/ists/ists_sts_penetr.F90
 !||    sts_tangentvel_global   ../engine/source/interfaces/ists/ists_tangentvel.F90
+!||    sts_gp_tangential_velocity ../engine/source/interfaces/ists/ists_tangentvel.F90
 !||    sts_shape               ../engine/source/interfaces/ists/ists_shape_fct.F90
+!||    com08_mod               ../engine/share/modules/com08_mod.F
 !||====================================================================
       subroutine STS_CONTACT_EVAL_PAIR(XUPD, STIF, p, IMPACT, EL_NR, node_stiff, OPTION, &
       &                   FRICC, XMU, IFPEN, &
-      &                   p_friction, EFRICT, QFRICT, node_ids, &
-      &                   CALC_FRICTION, MAX_STS_SIZE, GAP, PAIR_MAX_PENETRATION)
+      &                   p_friction, EFRICT, QFRICT, node_ids, V, &
+      &                   CALC_FRICTION, MAX_STS_SIZE, GAP, PAIR_MAX_PENETRATION, &
+      &                   ECONTT_PAIR, ECONVT_PAIR)
 !-----------------------------------------------
 !   M o d u l e s   /   I m p l i c i t   T y p e s
 !-----------------------------------------------
       use constant_mod
       use sts_gp_state_mod
+      USE COM08_MOD
       implicit none
 !-----------------------------------------------
 !   G l o b a l   P a r a m e t e r s
@@ -52,6 +56,7 @@
 !-----------------------------------------------
       INTEGER IMPACT, OPTION, EL_NR
       INTEGER node_ids(8)
+      my_real V(3,*)
       LOGICAL CALC_FRICTION
       my_real STIF
       real*8  p(24), p_friction(24)
@@ -63,6 +68,7 @@
       INTEGER MAX_STS_SIZE  ! Maximum size for history arrays
       my_real GAP  ! Gap value from user input
       REAL*8, INTENT(OUT) :: PAIR_MAX_PENETRATION
+      REAL*8, INTENT(OUT) :: ECONTT_PAIR, ECONVT_PAIR
 !     interface to global gp index function
       INTEGER GET_GLOBAL_GP_INDEX
 !-----------------------------------------------
@@ -86,8 +92,8 @@
       real*8  N_xi(3,4), N_eta(3,4)
       real*8  norm_secondary(3), sec_t1(3), sec_t2(3)
       real*8  sec_norm_len, normal_dot
-      real*8  VX, VY, VZ, FTN
       real*8  FXT, FYT, FZT, PHI, FN
+      real*8  v_tang(3)
       INTEGER INDEX_CAND
       INTEGER gp_index, secondary_el_id
       INTEGER MAX_GLOBAL_GP_LOCAL
@@ -126,6 +132,8 @@
 !-----------------------------------------------
       IMPACT = 0
       PAIR_MAX_PENETRATION = 0.0D0
+      ECONTT_PAIR = 0.0D0
+      ECONVT_PAIR = 0.0D0
       ip = 2 ! Quadrature order
       pair_fric_idx = MIN(MAX(EL_NR, 1), MVSIZ)
       calc_fric_this_pair = CALC_FRICTION .AND. FRICC(pair_fric_idx) .GT. 0.0d0
@@ -496,19 +504,10 @@
               pm_friction(12+(j-1)*3+3) = pm_friction(12+(j-1)*3+3) + &
      &                                  N_eta(1,j) * FZT * fric_weight
             ENDDO
-               
-            ! Energy calculation
-            ! Calculate tangential velocity from relative velocity
-            ! Project V_rel onto tangent plane
-            ! TODO: Review this energy calculation
-            !FTN = V_rel(1)*norm_contact(1) +
-            !&    V_rel(2)*norm_contact(2) +
-            !&    V_rel(3)*norm_contact(3)
-            !VX = V_rel(1) - FTN*norm_contact(1)
-            !VY = V_rel(2) - FTN*norm_contact(2)
-            !VZ = V_rel(3) - FTN*norm_contact(3)
-            !EFRICT = EFRICT + DT1 * (VX*FXT + VY*FYT + VZ*FZT) * 
-            !&              wi1(z) * wi2(q) * dsqrt(detm)
+
+            ! mirrors NTS EFRIC_L, integrated at GP
+            call sts_gp_tangential_velocity(N_xi, N_eta, node_ids, V, norm_contact, v_tang)
+            ECONVT_PAIR = ECONVT_PAIR - DT1 * (v_tang(1)*FXT + v_tang(2)*FYT + v_tang(3)*FZT) * fric_weight
       ENDIF
           ! ===== END FRICTION CALCULATION =====
         ENDDO
@@ -523,11 +522,8 @@
         p(i) = -pm(i) + pm_friction(i)
         p_friction(i) = pm_friction(i)
       ENDDO
-      
-      ! Update total friction energy
-      IF (CALC_FRICTION) THEN
-        QFRICT = QFRICT + EFRICT
-      ENDIF
+
+      ECONTT_PAIR = energy
 
  1000 FORMAT('STS-DBG EL=',I6,' NODE=',I10,' z=',I2,' q=',I2, &
      &       ' quad=',A7, &

@@ -97,3 +97,52 @@
 
       return
       end
+
+!||====================================================================
+!||    sts_gp_tangential_velocity  ../engine/source/interfaces/ists/ists_tangentvel.F90
+!||--- called by ------------------------------------------------------
+!||    STS_CONTACT_EVAL_PAIR   ../engine/source/interfaces/ists/ists_contact_eval_pair.F90
+!||====================================================================
+!-----------------------------------------------
+!   Relative tangential velocity at a contact GP
+!   (secondary minus primary, projected onto tangent plane).
+!-----------------------------------------------
+      subroutine sts_gp_tangential_velocity(N_xi, N_eta, node_ids, V, &
+     &     norm_contact, v_tang)
+
+#include      "my_real.inc"
+      implicit none
+
+      real*8  N_xi(3,4), N_eta(3,4)
+      integer node_ids(8)
+      my_real V(3,*)
+      real*8  norm_contact(3)
+      real*8  v_tang(3)
+
+      integer j
+      real*8  v_prim(3), v_sec(3), v_rel(3), v_n
+
+      v_prim = 0.d0
+      v_sec  = 0.d0
+      DO j = 1, 4
+        v_prim(1) = v_prim(1) + N_xi(1,j)  * DBLE(V(1, node_ids(j)))
+        v_prim(2) = v_prim(2) + N_xi(1,j)  * DBLE(V(2, node_ids(j)))
+        v_prim(3) = v_prim(3) + N_xi(1,j)  * DBLE(V(3, node_ids(j)))
+        v_sec(1)  = v_sec(1)  + N_eta(1,j) * DBLE(V(1, node_ids(j+4)))
+        v_sec(2)  = v_sec(2)  + N_eta(1,j) * DBLE(V(2, node_ids(j+4)))
+        v_sec(3)  = v_sec(3)  + N_eta(1,j) * DBLE(V(3, node_ids(j+4)))
+      ENDDO
+
+      v_rel(1) = v_sec(1) - v_prim(1)
+      v_rel(2) = v_sec(2) - v_prim(2)
+      v_rel(3) = v_sec(3) - v_prim(3)
+
+      v_n = v_rel(1)*norm_contact(1) + v_rel(2)*norm_contact(2) &
+     &    + v_rel(3)*norm_contact(3)
+
+      v_tang(1) = v_rel(1) - v_n*norm_contact(1)
+      v_tang(2) = v_rel(2) - v_n*norm_contact(2)
+      v_tang(3) = v_rel(3) - v_n*norm_contact(3)
+
+      return
+      end

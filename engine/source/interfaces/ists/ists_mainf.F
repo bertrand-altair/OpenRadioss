@@ -66,8 +66,8 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    timer_mod                   ../engine/source/system/timer_mod.F90
 !||====================================================================
       SUBROUTINE ISTS_MAINF(TIMERS,
-     1                   IPARI          ,X              ,A              ,
-     2                   STIFN          ,FCONT          ,NIN            ,
+     1                   IPARI          ,X              ,V              ,A              ,
+     2                   STIFN          ,FCONT          ,NIN            ,FSAV           ,
      3                   JTASK          ,NB_JLT_NEW     ,
      4                   TEMP           ,NPC            ,TF             ,
      5                   INTBUF_TAB     ,IXS            ,
@@ -103,7 +103,9 @@ C   C o m m o n   B l o c k s
 C-----------------------------------------------
 #include      "com01_c.inc"
 #include      "com04_c.inc"
+#include      "com06_c.inc"
 #include      "com08_c.inc"
+#include      "scr11_c.inc"
 #include      "param_c.inc"
 #include      "warn_c.inc"
 #include      "task_c.inc"
@@ -124,7 +126,8 @@ C-----------------------------------------------
       INTEGER IPARI(NPARI,NINTER)
       INTEGER NB_JLT_NEW,JTASK
       INTEGER IXS(*), NPC(*)
-      my_real X(3,*), A(3,*), STIFN(*), FCONT(3,*)
+      my_real X(3,*), V(3,*), A(3,*), STIFN(*), FCONT(3,*)
+      my_real FSAV(*)
       my_real TEMP(*), TF(*)
       TYPE(INTBUF_STRUCT_) INTBUF_TAB
       TYPE(H3D_DATABASE) :: H3D_DATA
@@ -189,6 +192,7 @@ C-----------------------------------------------
       my_real :: STS_SEARCH_PADDING_SKIP, STS_PAD_SQ_SKIP
       LOGICAL, SAVE :: INT7_CONTACT_MODE_MSG_DONE = .FALSE. ! one-time flag for the contact-mode banner
       LOGICAL, SAVE :: STS_VOXEL_OVERFLOW_WARN_DONE = .FALSE.
+      REAL*8 STS_ECONTT_PASS, STS_ECONVT_PASS
 C-----------------------------------------------
 C   S o u r c e   L i n e s
 C-----------------------------------------------
@@ -357,7 +361,20 @@ C             STS Gauss contact search.
      &          NOINT, NCYCLE, TT,
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
      &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
-     &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
+     &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
+     &          GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS)
+              IF (IMPACT_glob /= 0) THEN
+#include "lockon.inc"
+                FSAV(26) = FSAV(26) + STS_ECONTT_PASS
+                FSAV(27) = FSAV(27) + STS_ECONVT_PASS
+#include "lockoff.inc"
+              ENDIF
+              IF (IMPACT_glob /= 0 .AND. INCONV == 1) THEN
+#include "lockon.inc"
+                ECONT  = ECONT  + STS_ECONTT_PASS
+                ECONTV = ECONTV + STS_ECONVT_PASS
+#include "lockoff.inc"
+              ENDIF
             
 C             Fall back to Lobatto contact search if Gauss contact search reported no contact.
               IF (IMPACT_glob == 0) THEN
@@ -367,7 +384,20 @@ C             Fall back to Lobatto contact search if Gauss contact search report
      &            NOINT, NCYCLE, TT,
      &            CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
      &            load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
-     &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT, GAP_FOR_STS)
+     &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
+     &            GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS)
+                IF (IMPACT_glob /= 0) THEN
+#include "lockon.inc"
+                  FSAV(26) = FSAV(26) + STS_ECONTT_PASS
+                  FSAV(27) = FSAV(27) + STS_ECONVT_PASS
+#include "lockoff.inc"
+                ENDIF
+                IF (IMPACT_glob /= 0 .AND. INCONV == 1) THEN
+#include "lockon.inc"
+                  ECONT  = ECONT  + STS_ECONTT_PASS
+                  ECONTV = ECONTV + STS_ECONVT_PASS
+#include "lockoff.inc"
+                ENDIF
               ENDIF
             
 C             Scatter the per-pair load_arr / node_id_load directly into A / STIFN. 

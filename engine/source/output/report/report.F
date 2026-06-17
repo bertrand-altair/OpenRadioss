@@ -54,6 +54,7 @@ C-----------------------------------------------
 #include      "commandline.inc"
 #include      "scr02_c.inc"
 #include      "scr11_c.inc"
+#include      "com06_c.inc"
 #include      "spmd_c.inc"
 #include      "chara_c.inc"
 #include      "drape_c.inc"
@@ -109,7 +110,8 @@ C=======================================================================
       OUT_TMP = 777777
       IF(ISPMD == 0) THEN 
 c
-       ENTOT = ENCIN + ENINT + ENROT
+C      Include contact energies in the global balance.
+       ENTOT = ENCIN + ENINT + ENROT + ECONT + ECONT_CUMU + ECONTV + ECONTD
        ENTOTB = ENTOT + ENCIN2 + ENROT2
        DE_INOUT = OUTPUT%DATA%INOUT%DE_IN + OUTPUT%DATA%INOUT%DE_OUT
        ENTOT1=ENTOT0 + WFEXT + DE_INOUT

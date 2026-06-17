@@ -8,7 +8,8 @@
       SUBROUTINE STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION, STS_INTERFACE_ID, NCYCLE_IN, TIME_CUR, &
      & CAND_MST_SEG_ID, CAND_SEC_SEG_ID, &
      & load_arr, node_id_load, L_out, IMPACT_glob, STIF, &
-     & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, QFRICT, GAP)
+     & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, QFRICT, GAP, V, &
+     & ECONTT_TOT, ECONVT_TOT)
 !-----------------------------------------------
 !   M o d u l e s
 !-----------------------------------------------
@@ -42,6 +43,8 @@
       INTEGER IFPEN(MAX_STS_SIZE_ACTUAL)     
       my_real QFRICT
       my_real GAP  ! Gap value from user input
+      my_real V(3,*)
+      REAL*8 ECONTT_TOT, ECONVT_TOT
 !-----------------------------------------------
 !   L o c a l   V a r i a b l e s
 !-----------------------------------------------
@@ -52,6 +55,7 @@
       REAL*8 node_stiff(8)
       REAL*8 p_friction(24)  ! Friction forces (separate output)
       REAL*8 pair_max_penetration
+      REAL*8 econt_pair, econtv_pair
       my_real EFRICT_LOC
       INTEGER node_ids(8)  ! Node IDs for velocity interpolation
       REAL*8 fx_prim, fy_prim, fz_prim, fx_sec, fy_sec, fz_sec
@@ -64,6 +68,8 @@
 !   I n i t i a l i z a t i o n
 !-----------------------------------------------
       IMPACT_glob = 0
+      ECONTT_TOT = 0.0D0
+      ECONVT_TOT = 0.0D0
       
       ! Safety check
       IF (COUNT <= 0) THEN
@@ -113,12 +119,14 @@
         CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF(I), p_load_new, IMPACT, I, &
      &                    node_stiff, OPTION, &
      &                    FRICC, XMU, IFPEN, &
-     &                    p_friction, EFRICT_LOC, QFRICT, node_ids, &
+     &                    p_friction, EFRICT_LOC, QFRICT, node_ids, V, &
      &                    .TRUE., MAX_STS_SIZE_ACTUAL, GAP, &
-     &                    pair_max_penetration)
+     &                    pair_max_penetration, econt_pair, econtv_pair)
       
         IF (IMPACT == 1) THEN
           IMPACT_glob = 1
+          ECONTT_TOT = ECONTT_TOT + econt_pair
+          ECONVT_TOT = ECONVT_TOT + econtv_pair
 
           IF (CSV_OUTPUT_ENABLED) THEN
 !           Export two rows per contact pair:
