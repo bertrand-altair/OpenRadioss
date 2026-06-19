@@ -26,9 +26,9 @@
 !||    sts_broad_phase_voxel_mod   ../engine/source/interfaces/ists/ists_broad_phase_voxel.F90
 !||====================================================================
 !
-!   Per-interface voxel broad-phase parameters (CELL_SIZE,
-!   SEARCH_PADDING, N_CELL_RADIUS). Computed once on the first
-!   broad-phase call per interface index NIN.
+!   Per-interface voxel broad-phase parameters. Static mesh/gap tolerance
+!   and CELL_SIZE are frozen on first broad-phase call; SEARCH_PADDING is
+!   refreshed each cycle with the kinematic VMAXDT term.
 !
       MODULE ISTS_STS_VOXEL_GRID_MOD
         USE PRECISION_MOD, ONLY : WP
@@ -37,6 +37,7 @@
 
         TYPE :: STS_VOXEL_GRID_STATE
           LOGICAL :: initialized = .FALSE.
+          REAL(KIND=WP) :: tol_static = 0.0_WP
           REAL(KIND=WP) :: cell_size = 0.0_WP
           REAL(KIND=WP) :: search_padding = 0.0_WP
           REAL(KIND=WP) :: pad_sq = 0.0_WP
@@ -47,12 +48,13 @@
 
         PUBLIC :: ISTS_STS_VOXEL_GRID_IS_READY
         PUBLIC :: ISTS_STS_VOXEL_GRID_GET
-        PUBLIC :: ISTS_STS_VOXEL_GRID_SET
+        PUBLIC :: ISTS_STS_VOXEL_GRID_INIT
+        PUBLIC :: ISTS_STS_VOXEL_GRID_UPDATE_DYNAMIC
+        PUBLIC :: ISTS_STS_VOXEL_GRID_GET_TOL_STATIC
 
       CONTAINS
 !=======================================================================
 !   ISTS_STS_VOXEL_GRID_ENSURE_SIZE
-!   Ensure the STS_VOXEL_GRID array is large enough to store the data for the given interface index NIN.
 !=======================================================================
         SUBROUTINE ISTS_STS_VOXEL_GRID_ENSURE_SIZE(NIN)
           INTEGER, INTENT(IN) :: NIN
@@ -64,6 +66,7 @@
             ALLOCATE(STS_VOXEL_GRID(NIN))
             DO I = 1, NIN
               STS_VOXEL_GRID(I)%initialized = .FALSE.
+              STS_VOXEL_GRID(I)%tol_static = 0.0_WP
               STS_VOXEL_GRID(I)%cell_size = 0.0_WP
               STS_VOXEL_GRID(I)%search_padding = 0.0_WP
               STS_VOXEL_GRID(I)%pad_sq = 0.0_WP
@@ -77,6 +80,7 @@
           IF (OLD_SIZE > 0) TMP(1:OLD_SIZE) = STS_VOXEL_GRID(1:OLD_SIZE)
           DO I = OLD_SIZE + 1, NIN
             TMP(I)%initialized = .FALSE.
+            TMP(I)%tol_static = 0.0_WP
             TMP(I)%cell_size = 0.0_WP
             TMP(I)%search_padding = 0.0_WP
             TMP(I)%pad_sq = 0.0_WP
@@ -88,7 +92,6 @@
 
 !=======================================================================
 !   ISTS_STS_VOXEL_GRID_IS_READY
-!   Check if the STS_VOXEL_GRID array is initialized for the given interface index NIN.
 !=======================================================================
         LOGICAL FUNCTION ISTS_STS_VOXEL_GRID_IS_READY(NIN)
           INTEGER, INTENT(IN) :: NIN
@@ -102,7 +105,6 @@
 
 !=======================================================================
 !   ISTS_STS_VOXEL_GRID_GET
-!   Get the parameters for the given interface index NIN.
 !=======================================================================
         SUBROUTINE ISTS_STS_VOXEL_GRID_GET(NIN, CELL_SIZE, SEARCH_PADDING, &
      &    PAD_SQ, N_CELL_RADIUS)
@@ -117,20 +119,51 @@
         END SUBROUTINE ISTS_STS_VOXEL_GRID_GET
 
 !=======================================================================
-!   ISTS_STS_VOXEL_GRID_SET
-!   Set the parameters for the given interface index NIN.
+!   ISTS_STS_VOXEL_GRID_GET_TOL_STATIC
 !=======================================================================
-        SUBROUTINE ISTS_STS_VOXEL_GRID_SET(NIN, CELL_SIZE, SEARCH_PADDING, &
-     &    PAD_SQ, N_CELL_RADIUS)
-          INTEGER, INTENT(IN) :: NIN, N_CELL_RADIUS
-          REAL(KIND=WP), INTENT(IN) :: CELL_SIZE, SEARCH_PADDING, PAD_SQ
+        SUBROUTINE ISTS_STS_VOXEL_GRID_GET_TOL_STATIC(NIN, TOL_STATIC)
+          INTEGER, INTENT(IN) :: NIN
+          REAL(KIND=WP), INTENT(OUT) :: TOL_STATIC
+
+          TOL_STATIC = STS_VOXEL_GRID(NIN)%tol_static
+        END SUBROUTINE ISTS_STS_VOXEL_GRID_GET_TOL_STATIC
+
+!=======================================================================
+!   ISTS_STS_VOXEL_GRID_INIT
+!   Static tolerance and voxel cell size on first broad-phase call.
+!=======================================================================
+        SUBROUTINE ISTS_STS_VOXEL_GRID_INIT(NIN, TOL_STATIC, CELL_SIZE)
+          INTEGER, INTENT(IN) :: NIN
+          REAL(KIND=WP), INTENT(IN) :: TOL_STATIC, CELL_SIZE
 
           CALL ISTS_STS_VOXEL_GRID_ENSURE_SIZE(NIN)
+          STS_VOXEL_GRID(NIN)%tol_static = TOL_STATIC
           STS_VOXEL_GRID(NIN)%cell_size = CELL_SIZE
-          STS_VOXEL_GRID(NIN)%search_padding = SEARCH_PADDING
-          STS_VOXEL_GRID(NIN)%pad_sq = PAD_SQ
-          STS_VOXEL_GRID(NIN)%n_cell_radius = N_CELL_RADIUS
           STS_VOXEL_GRID(NIN)%initialized = .TRUE.
-        END SUBROUTINE ISTS_STS_VOXEL_GRID_SET
+          CALL ISTS_STS_VOXEL_GRID_UPDATE_DYNAMIC(NIN, TOL_STATIC)
+        END SUBROUTINE ISTS_STS_VOXEL_GRID_INIT
+
+!=======================================================================
+!   ISTS_STS_VOXEL_GRID_UPDATE_DYNAMIC
+!   Refresh search padding, pair cutoff, and voxel neighborhood radius.
+!=======================================================================
+        SUBROUTINE ISTS_STS_VOXEL_GRID_UPDATE_DYNAMIC(NIN, SEARCH_PADDING)
+          INTEGER, INTENT(IN) :: NIN
+          REAL(KIND=WP), INTENT(IN) :: SEARCH_PADDING
+
+          IF (NIN <= 0) RETURN
+          IF (.NOT. ALLOCATED(STS_VOXEL_GRID)) RETURN
+          IF (NIN > SIZE(STS_VOXEL_GRID)) RETURN
+          IF (.NOT. STS_VOXEL_GRID(NIN)%initialized) RETURN
+
+          STS_VOXEL_GRID(NIN)%search_padding = SEARCH_PADDING
+          STS_VOXEL_GRID(NIN)%pad_sq = SEARCH_PADDING * SEARCH_PADDING
+          IF (STS_VOXEL_GRID(NIN)%cell_size > 0.0_WP) THEN
+            STS_VOXEL_GRID(NIN)%n_cell_radius = MAX(1, &
+     &        CEILING(SEARCH_PADDING / STS_VOXEL_GRID(NIN)%cell_size))
+          ELSE
+            STS_VOXEL_GRID(NIN)%n_cell_radius = 1
+          END IF
+        END SUBROUTINE ISTS_STS_VOXEL_GRID_UPDATE_DYNAMIC
 
       END MODULE ISTS_STS_VOXEL_GRID_MOD

@@ -81,7 +81,7 @@
 !=======================================================================
         SUBROUTINE STS_VOXEL_BROAD_PHASE( &
      &      NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
-     &      X, NUMNOD, GAP, MAX_STS_SIZE_ACTUAL, &
+     &      X, V, NUMNOD, GAP, DT1, MAX_STS_SIZE_ACTUAL, &
      &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
      &      COUNT, OVERFLOW, D_MIN)
 !-----------------------------------------------
@@ -92,8 +92,8 @@
           TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
           INTEGER, INTENT(IN)  :: SEC_SURF_IDX, MST_SURF_IDX
           INTEGER, INTENT(IN)  :: NUMNOD
-          REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
-          REAL(KIND=WP), INTENT(IN) :: GAP
+          REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD), V(3, NUMNOD)
+          REAL(KIND=WP), INTENT(IN) :: GAP, DT1
           INTEGER, INTENT(IN)  :: MAX_STS_SIZE_ACTUAL
           INTEGER, INTENT(OUT) :: CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
           INTEGER, INTENT(OUT) :: CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL, 5)
@@ -106,6 +106,7 @@
 !-----------------------------------------------
           INTEGER :: NSEG_SEC, NSEG_MST
           INTEGER :: NPTS_S, NPTS_M
+          REAL(KIND=WP) :: VMAXDT, TOL_STATIC, SEARCH_PADDING
           REAL(KIND=WP), ALLOCATABLE :: PTS_S(:,:), PTS_M(:,:)
           INTEGER, ALLOCATABLE :: SEG_OF_PT_S(:), SEG_OF_PT_M(:)
 !-----------------------------------------------
@@ -148,11 +149,26 @@
           END IF
 
 !-----------------------------------------------
+!         static mesh/gap + VMAXDT
+!-----------------------------------------------
+          IF (.NOT. ISTS_STS_VOXEL_GRID_IS_READY(NIN)) THEN
+            CALL STS_VOXEL_INIT_GRID_PARAMS( &
+     &          NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
+     &          X, NUMNOD, GAP)
+          END IF
+
+          VMAXDT = INTER_BP_TOL_VMAXDT_SURF( &
+     &        V, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, NUMNOD, DT1)
+          CALL ISTS_STS_VOXEL_GRID_GET_TOL_STATIC(NIN, TOL_STATIC)
+          SEARCH_PADDING = TOL_STATIC + VMAXDT
+          CALL ISTS_STS_VOXEL_GRID_UPDATE_DYNAMIC(NIN, SEARCH_PADDING)
+
+!-----------------------------------------------
 !         Voxel pair search and pair emission
 !-----------------------------------------------
           CALL STS_VOXEL_PAIR_SEARCH( &
      &        NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
-     &        GAP, PTS_S, SEG_OF_PT_S, NPTS_S, &
+     &        PTS_S, SEG_OF_PT_S, NPTS_S, &
      &        PTS_M, SEG_OF_PT_M, NPTS_M, NSEG_SEC, &
      &        MAX_STS_SIZE_ACTUAL, &
      &        CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
@@ -279,24 +295,20 @@
 !=======================================================================
 !   STS_VOXEL_INIT_GRID_PARAMS
 !
-!   Compute CELL_SIZE, SEARCH_PADDING, and N_CELL_RADIUS once from
-!   initial geometry and store them in ISTS_STS_VOXEL_GRID_MOD.
+!   Compute static (GAP + mesh margin) and CELL_SIZE once per
+!   interface; kinematic VMAXDT is added each cycle in broad phase.
 !=======================================================================
         SUBROUTINE STS_VOXEL_INIT_GRID_PARAMS( &
      &      NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
-     &      X, NUMNOD, GAP, PTS_S, NPTS_S, PTS_M, NPTS_M)
+     &      X, NUMNOD, GAP)
           INTEGER, INTENT(IN) :: NIN, NSURF, SEC_SURF_IDX, MST_SURF_IDX
-          INTEGER, INTENT(IN) :: NUMNOD, NPTS_S, NPTS_M
+          INTEGER, INTENT(IN) :: NUMNOD
           TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
           REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
           REAL(KIND=WP), INTENT(IN) :: GAP
-          REAL(KIND=WP), INTENT(IN) :: PTS_S(3, NPTS_S), PTS_M(3, NPTS_M)
 !
-          REAL(KIND=WP) :: XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M
-          REAL(KIND=WP) :: CELL_SIZE, SEARCH_PADDING, TOL_SEARCH
-          REAL(KIND=WP) :: H_MESH_S, H_MESH_M, SPAN_X, SPAN_Y, SPAN_Z
-          REAL(KIND=WP) :: PAD_SQ, COARSE_SCALE
-          INTEGER :: NBX, NBY, NBZ, NVOXELS, N_CELL_RADIUS
+          REAL(KIND=WP) :: CELL_SIZE, TOL_STATIC
+          REAL(KIND=WP) :: H_MESH_S, H_MESH_M, H_MESH
 !
           IF (ISTS_STS_VOXEL_GRID_IS_READY(NIN)) RETURN
 !
@@ -304,33 +316,11 @@
      &        IGRSURF, NSURF, SEC_SURF_IDX, X, NUMNOD)
           H_MESH_M = INTER_BP_TOL_MESH_SCALE_SURF( &
      &        IGRSURF, NSURF, MST_SURF_IDX, X, NUMNOD)
-          CALL INTER_BP_TOL_SEARCH(GAP, H_MESH_S, H_MESH_M, TOL_SEARCH)
-          CALL INTER_BP_TOL_PAD_CELL(TOL_SEARCH, SEARCH_PADDING, CELL_SIZE)
+          H_MESH = MAX(H_MESH_S, H_MESH_M, INTER_BP_TOL_GAP_FALLBACK)
+          TOL_STATIC = INTER_BP_TOL_TZINF(GAP, H_MESH, ZERO)
+          CELL_SIZE = TOL_STATIC
 !
-          CALL STS_VOXEL_AABB(PTS_M, NPTS_M, &
-     &        XMIN_M, XMAX_M, YMIN_M, YMAX_M, ZMIN_M, ZMAX_M)
-!
-          PAD_SQ = SEARCH_PADDING * SEARCH_PADDING
-!
-          XMIN_M = XMIN_M - SEARCH_PADDING
-          XMAX_M = XMAX_M + SEARCH_PADDING
-          YMIN_M = YMIN_M - SEARCH_PADDING
-          YMAX_M = YMAX_M + SEARCH_PADDING
-          ZMIN_M = ZMIN_M - SEARCH_PADDING
-          ZMAX_M = ZMAX_M + SEARCH_PADDING
-!
-          SPAN_X = XMAX_M - XMIN_M
-          SPAN_Y = YMAX_M - YMIN_M
-          SPAN_Z = ZMAX_M - ZMIN_M
-!
-          NBX = MAX(1, CEILING(SPAN_X / CELL_SIZE))
-          NBY = MAX(1, CEILING(SPAN_Y / CELL_SIZE))
-          NBZ = MAX(1, CEILING(SPAN_Z / CELL_SIZE))
-          NVOXELS = NBX * NBY * NBZ
-!
-          N_CELL_RADIUS = MAX(1, CEILING(SEARCH_PADDING / CELL_SIZE))
-!
-          CALL ISTS_STS_VOXEL_GRID_SET(NIN, CELL_SIZE, SEARCH_PADDING, PAD_SQ, N_CELL_RADIUS)
+          CALL ISTS_STS_VOXEL_GRID_INIT(NIN, TOL_STATIC, CELL_SIZE)
 !
         END SUBROUTINE STS_VOXEL_INIT_GRID_PARAMS
 !=======================================================================
@@ -347,7 +337,7 @@
 !=======================================================================
         SUBROUTINE STS_VOXEL_PAIR_SEARCH( &
      &      NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, X, NUMNOD, &
-     &      GAP, PTS_S, SEG_OF_PT_S, NPTS_S, &
+     &      PTS_S, SEG_OF_PT_S, NPTS_S, &
      &      PTS_M, SEG_OF_PT_M, NPTS_M, NSEG_SEC, &
      &      MAX_STS_SIZE_ACTUAL, &
      &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
@@ -356,7 +346,6 @@
           TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
           INTEGER, INTENT(IN)  :: NUMNOD
           REAL(KIND=WP), INTENT(IN) :: X(3, NUMNOD)
-          REAL(KIND=WP), INTENT(IN) :: GAP
           INTEGER, INTENT(IN)  :: NPTS_S, NPTS_M
           REAL(KIND=WP), INTENT(IN) :: PTS_S(3, NPTS_S), PTS_M(3, NPTS_M)
           INTEGER, INTENT(IN)  :: SEG_OF_PT_S(NPTS_S), SEG_OF_PT_M(NPTS_M)
@@ -380,13 +369,6 @@
           INTEGER(KIND=8), ALLOCATABLE :: HASH_KEYS(:)
           INTEGER :: SEG_S, SEG_M
 !
-          ! First time initialization of the voxel grid parameters
-          IF (.NOT. ISTS_STS_VOXEL_GRID_IS_READY(NIN)) THEN
-            CALL STS_VOXEL_INIT_GRID_PARAMS( &
-     &          NIN, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
-     &          X, NUMNOD, GAP, PTS_S, NPTS_S, PTS_M, NPTS_M)
-          END IF
-          ! Get the voxel grid parameters from the module
           CALL ISTS_STS_VOXEL_GRID_GET(NIN, CELL_SIZE, SEARCH_PADDING, &
      &        PAD_SQ, N_CELL_RADIUS)
 !

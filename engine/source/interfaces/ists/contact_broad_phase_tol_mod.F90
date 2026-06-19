@@ -31,19 +31,22 @@
 !
       MODULE CONTACT_BROAD_PHASE_TOL_MOD
         USE PRECISION_MOD, ONLY : WP
-        USE CONSTANT_MOD,  ONLY : ZERO
+        USE CONSTANT_MOD,  ONLY : ZERO, ONEP01
         IMPLICIT NONE
         PRIVATE
 
         REAL(KIND=WP), PARAMETER, PUBLIC :: INTER_BP_TOL_GAP_FALLBACK = 1.0E-6_WP
-        REAL(KIND=WP), PARAMETER, PUBLIC :: INTER_BP_TOL_ALPHA_MESH   = 1.0_WP
-        REAL(KIND=WP), PARAMETER, PUBLIC :: INTER_BP_TOL_PAD_FACTOR  = 4.00_WP
-        REAL(KIND=WP), PARAMETER, PUBLIC :: INTER_BP_TOL_CELL_FACTOR = 4.00_WP
+        REAL(KIND=WP), PARAMETER, PUBLIC :: INTER_BP_TOL_ALPHA_MESH   = 0.5_WP
+        REAL(KIND=WP), PARAMETER, PUBLIC :: INTER_BP_TOL_PAD_FACTOR  = 1.0_WP
+        REAL(KIND=WP), PARAMETER, PUBLIC :: INTER_BP_TOL_CELL_FACTOR = 1.0_WP
         REAL(KIND=WP), PARAMETER :: INTER_BP_TOL_HUGE = HUGE(1.0_WP)
 
         PUBLIC :: INTER_BP_TOL_GAP_PHYS
         PUBLIC :: INTER_BP_TOL_MESH_SCALE
         PUBLIC :: INTER_BP_TOL_MESH_SCALE_SURF
+        PUBLIC :: INTER_BP_TOL_MESH_MARGIN
+        PUBLIC :: INTER_BP_TOL_TZINF
+        PUBLIC :: INTER_BP_TOL_VMAXDT_SURF
         PUBLIC :: INTER_BP_TOL_SEARCH
         PUBLIC :: INTER_BP_TOL_PAD_CELL
 
@@ -136,14 +139,100 @@
           END IF
         END FUNCTION INTER_BP_TOL_MESH_SCALE_SURF
 
+        REAL(KIND=WP) FUNCTION INTER_BP_TOL_MESH_MARGIN(H_MESH)
+          REAL(KIND=WP), INTENT(IN) :: H_MESH
+
+          INTER_BP_TOL_MESH_MARGIN = INTER_BP_TOL_ALPHA_MESH * MAX(H_MESH, INTER_BP_TOL_GAP_FALLBACK)
+        END FUNCTION INTER_BP_TOL_MESH_MARGIN
+
+!----------------------------------------------------------------------
+! INT25-style influence zone: GAP + mesh margin + VMAXDT.
+!----------------------------------------------------------------------
+        REAL(KIND=WP) FUNCTION INTER_BP_TOL_TZINF(GAP_USER, H_MESH, VMAXDT)
+          REAL(KIND=WP), INTENT(IN) :: GAP_USER, H_MESH, VMAXDT
+
+          INTER_BP_TOL_TZINF = INTER_BP_TOL_GAP_PHYS(GAP_USER) + &
+     &      INTER_BP_TOL_MESH_MARGIN(H_MESH) + MAX(ZERO, VMAXDT)
+        END FUNCTION INTER_BP_TOL_TZINF
+
+!----------------------------------------------------------------------
+! Axis-aligned relative-velocity estimate.
+!----------------------------------------------------------------------
+        SUBROUTINE INTER_BP_TOL_SURF_VEL_EXTREMA( &
+     &      IGRSURF, NSURF, SURF_IDX, V, NUMNOD, VMIN, VMAX)
+          USE GROUPDEF_MOD, ONLY : SURF_
+          INTEGER, INTENT(IN) :: NSURF, SURF_IDX, NUMNOD
+          TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
+          REAL(KIND=WP), INTENT(IN) :: V(3, *)
+          REAL(KIND=WP), INTENT(OUT) :: VMIN(3), VMAX(3)
+
+          INTEGER :: ISEG, NSEG, K, NID
+          LOGICAL :: HAS_NODE
+
+          VMIN = ZERO
+          VMAX = ZERO
+          HAS_NODE = .FALSE.
+          IF (SURF_IDX <= 0 .OR. SURF_IDX > NSURF) RETURN
+          NSEG = IGRSURF(SURF_IDX)%NSEG
+          IF (NSEG <= 0) RETURN
+          IF (.NOT. ALLOCATED(IGRSURF(SURF_IDX)%NODES)) RETURN
+
+          DO ISEG = 1, NSEG
+            DO K = 1, 4
+              NID = IGRSURF(SURF_IDX)%NODES(ISEG, K)
+              IF (NID <= 0 .OR. NID > NUMNOD) CYCLE
+              IF (.NOT. HAS_NODE) THEN
+                VMIN(1) = V(1, NID)
+                VMAX(1) = V(1, NID)
+                VMIN(2) = V(2, NID)
+                VMAX(2) = V(2, NID)
+                VMIN(3) = V(3, NID)
+                VMAX(3) = V(3, NID)
+                HAS_NODE = .TRUE.
+              ELSE
+                VMIN(1) = MIN(VMIN(1), V(1, NID))
+                VMAX(1) = MAX(VMAX(1), V(1, NID))
+                VMIN(2) = MIN(VMIN(2), V(2, NID))
+                VMAX(2) = MAX(VMAX(2), V(2, NID))
+                VMIN(3) = MIN(VMIN(3), V(3, NID))
+                VMAX(3) = MAX(VMAX(3), V(3, NID))
+              END IF
+            END DO
+          END DO
+        END SUBROUTINE INTER_BP_TOL_SURF_VEL_EXTREMA
+
+        REAL(KIND=WP) FUNCTION INTER_BP_TOL_VMAXDT_SURF( &
+     &      V, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, NUMNOD, DT1)
+          USE GROUPDEF_MOD, ONLY : SURF_
+          INTEGER, INTENT(IN) :: NSURF, SEC_SURF_IDX, MST_SURF_IDX, NUMNOD
+          TYPE(SURF_), DIMENSION(NSURF), INTENT(IN) :: IGRSURF
+          REAL(KIND=WP), INTENT(IN) :: V(3, *), DT1
+
+          REAL(KIND=WP) :: VMIN_S(3), VMAX_S(3), VMIN_M(3), VMAX_M(3)
+          REAL(KIND=WP) :: VX, VY, VZ, VV
+
+          INTER_BP_TOL_VMAXDT_SURF = ZERO
+          IF (DT1 <= ZERO) RETURN
+
+          CALL INTER_BP_TOL_SURF_VEL_EXTREMA( &
+     &      IGRSURF, NSURF, SEC_SURF_IDX, V, NUMNOD, VMIN_S, VMAX_S)
+          CALL INTER_BP_TOL_SURF_VEL_EXTREMA( &
+     &      IGRSURF, NSURF, MST_SURF_IDX, V, NUMNOD, VMIN_M, VMAX_M)
+
+          VX = MAX(VMAX_S(1) - VMIN_M(1), VMAX_M(1) - VMIN_S(1), ZERO)
+          VY = MAX(VMAX_S(2) - VMIN_M(2), VMAX_M(2) - VMIN_S(2), ZERO)
+          VZ = MAX(VMAX_S(3) - VMIN_M(3), VMAX_M(3) - VMIN_S(3), ZERO)
+          VV = SQRT(VX*VX + VY*VY + VZ*VZ)
+          INTER_BP_TOL_VMAXDT_SURF = REAL(ONEP01, KIND=WP) * VV * DT1
+        END FUNCTION INTER_BP_TOL_VMAXDT_SURF
+
         SUBROUTINE INTER_BP_TOL_SEARCH(GAP_USER, H_MESH_A, H_MESH_B, TOL_SEARCH)
           REAL(KIND=WP), INTENT(IN) :: GAP_USER, H_MESH_A, H_MESH_B
           REAL(KIND=WP), INTENT(OUT) :: TOL_SEARCH
-          REAL(KIND=WP) :: GAP_PHYS, H_MESH
+          REAL(KIND=WP) :: H_MESH
 
-          GAP_PHYS = INTER_BP_TOL_GAP_PHYS(GAP_USER)
           H_MESH = MAX(H_MESH_A, H_MESH_B, INTER_BP_TOL_GAP_FALLBACK)
-          TOL_SEARCH = GAP_PHYS + H_MESH*0.2 !this factor needs to be tested/tuned; it should be large enough to find all potential contacts, but not too large to cause excessive pairs
+          TOL_SEARCH = INTER_BP_TOL_TZINF(GAP_USER, H_MESH, ZERO)
         END SUBROUTINE INTER_BP_TOL_SEARCH
 
         SUBROUTINE INTER_BP_TOL_PAD_CELL(TOL_SEARCH, SEARCH_PADDING, CELL_SIZE)

@@ -35,14 +35,13 @@
         IMPLICIT NONE
         PRIVATE
 
-!       Adaptive skip settings (STS: more aggressive than Q1NP default
-!       so broad/narrow phase is checked less often when surfaces are far).
-        LOGICAL, PARAMETER, PUBLIC :: STS_SKIP_ENABLED  = .TRUE.
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_SKIP_SCALE    = 16.0_WP
-        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_SKIP_EXPONENT = 1.75_WP
-        INTEGER, PARAMETER, PUBLIC :: STS_SKIP_MAX      = 400
+!       Adaptive skip settings (so broad/narrow phase is checked less often when surfaces are far).
+        LOGICAL, PARAMETER, PUBLIC :: STS_SKIP_ENABLED  = .TRUE. ! ACTIVATED 
+        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_SKIP_SCALE    = 8.0_WP
+        REAL(KIND=WP), PARAMETER, PUBLIC :: STS_SKIP_EXPONENT = 1.5_WP
+        INTEGER, PARAMETER, PUBLIC :: STS_SKIP_MAX      = 200
 
-        REAL(KIND=WP), PARAMETER :: STS_SKIP_RATIO_OFFSET = 0.5_WP
+        REAL(KIND=WP), PARAMETER :: STS_SKIP_RATIO_OFFSET = 1.0_WP
 
         INTEGER, ALLOCATABLE, SAVE :: STS_SKIP_REMAINING(:)
 

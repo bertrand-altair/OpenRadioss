@@ -89,7 +89,9 @@ C-----------------------------------------------
       USE STS_BROAD_PHASE_VOXEL_MOD, ONLY: STS_VOXEL_BROAD_PHASE
       USE STS_CONTACT_STIFFNESS_MOD, ONLY: STS_CONTACT_STIFFNESS
       USE ISTS_STS_SKIP_MOD, ONLY: ISTS_STS_SKIP_TICK, ISTS_STS_SKIP_UPDATE
-      USE ISTS_STS_VOXEL_GRID_MOD, ONLY: ISTS_STS_VOXEL_GRID_IS_READY, ISTS_STS_VOXEL_GRID_GET
+      USE ISTS_STS_VOXEL_GRID_MOD, ONLY: ISTS_STS_VOXEL_GRID_IS_READY, 
+     &  ISTS_STS_VOXEL_GRID_GET, ISTS_STS_VOXEL_GRID_GET_TOL_STATIC, 
+     &  ISTS_STS_VOXEL_GRID_UPDATE_DYNAMIC
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -308,7 +310,7 @@ C           compact starting capacity overflows, grow and retry.
             
               CALL STS_VOXEL_BROAD_PHASE(
      &              NIN, IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
-     &              X, NUMNOD, GAP_FOR_STS, MAX_STS_SIZE_ACTUAL,
+     &              X, V, NUMNOD, GAP_FOR_STS, DT1, MAX_STS_SIZE_ACTUAL,
      &              CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
      &              COUNT, STS_BP_OVERFLOW, STS_D_MIN)
             
