@@ -8,7 +8,8 @@
       SUBROUTINE STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION, STS_INTERFACE_ID, NCYCLE_IN, TIME_CUR, &
      & CAND_MST_SEG_ID, CAND_SEC_SEG_ID, &
      & load_arr, node_id_load, L_out, IMPACT_glob, STIF, &
-     & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, QFRICT, GAP, V, &
+     & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, QFRICT, GAP, V, MS, &
+     & VISC, IVIS2, VISCFFRIC, DT2T, NELTST, ITYPTST, &
      & ECONTT_TOT, ECONVT_TOT, FN_TOT, FT_TOT)
 !-----------------------------------------------
 !   M o d u l e s
@@ -43,7 +44,8 @@
       INTEGER IFPEN(MAX_STS_SIZE_ACTUAL)     
       my_real QFRICT
       my_real GAP  ! Gap value from user input
-      my_real V(3,*)
+      my_real V(3,*), MS(*), VISC, VISCFFRIC(MVSIZ), DT2T
+      INTEGER IVIS2, NELTST, ITYPTST
       REAL*8 ECONTT_TOT, ECONVT_TOT
       REAL*8 FN_TOT(3), FT_TOT(3)
 !-----------------------------------------------
@@ -123,7 +125,9 @@
      &                    FRICC, XMU, IFPEN, &
      &                    p_friction, EFRICT_LOC, QFRICT, node_ids, V, &
      &                    .TRUE., MAX_STS_SIZE_ACTUAL, GAP, &
-     &                    pair_max_penetration, econt_pair, econtv_pair)
+     &                    pair_max_penetration, econt_pair, econtv_pair, &
+     &                    MS, STS_INTERFACE_ID, VISC, IVIS2, &
+     &                    VISCFFRIC(MIN(I,MVSIZ)), DT2T, NELTST, ITYPTST)
       
         IF (IMPACT == 1) THEN
           IMPACT_glob = 1

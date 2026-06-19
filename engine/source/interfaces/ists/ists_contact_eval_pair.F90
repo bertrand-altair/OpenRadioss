@@ -13,6 +13,8 @@
 !||    sts_gp_warm_start_xi    ../engine/source/interfaces/ists/ists_tangentvel.F90
 !||    sts_gp_tangential_velocity ../engine/source/interfaces/ists/ists_tangentvel.F90
 !||    sts_gp_covariant_slip      ../engine/source/interfaces/ists/ists_tangentvel.F90
+!||    sts_gp_update_dt2t       ../engine/source/interfaces/ists/ists_contact_dt_mod.F90
+!||    sts_gp_ivis2_normal      ../engine/source/interfaces/ists/ists_contact_visc_mod.F90
 !||    sts_shape               ../engine/source/interfaces/ists/ists_shape_fct.F90
 !||    com08_mod               ../engine/share/modules/com08_mod.F
 !||====================================================================
@@ -20,12 +22,15 @@
       &                   FRICC, XMU, IFPEN, &
       &                   p_friction, EFRICT, QFRICT, node_ids, V, &
       &                   CALC_FRICTION, MAX_STS_SIZE, GAP, PAIR_MAX_PENETRATION, &
-      &                   ECONTT_PAIR, ECONVT_PAIR)
+      &                   ECONTT_PAIR, ECONVT_PAIR, MS, NOINT, VISC, IVIS2, &
+      &                   VISCFFRIC, DT2T, NELTST, ITYPTST)
 !-----------------------------------------------
 !   M o d u l e s   /   I m p l i c i t   T y p e s
 !-----------------------------------------------
       use constant_mod
       use sts_gp_state_mod
+      use ists_contact_dt_mod
+      use ists_contact_visc_mod
       USE COM08_MOD
       implicit none
 !-----------------------------------------------
@@ -71,6 +76,11 @@
       my_real GAP  ! Gap value from user input
       REAL*8, INTENT(OUT) :: PAIR_MAX_PENETRATION
       REAL*8, INTENT(OUT) :: ECONTT_PAIR, ECONVT_PAIR
+      my_real, INTENT(IN)    :: MS(*)
+      INTEGER, INTENT(IN)    :: NOINT, IVIS2
+      my_real, INTENT(IN)    :: VISC, VISCFFRIC
+      my_real, INTENT(INOUT) :: DT2T
+      INTEGER, INTENT(INOUT) :: NELTST, ITYPTST
 !-----------------------------------------------
 !   L o c a l   V a r i a b l e s
 !-----------------------------------------------
@@ -78,8 +88,9 @@
       INTEGER pair_fric_idx
       real*8  xi1, xi2
       real*8  penetr, PENE, GAPV, FAC
-      my_real d1, d1_fric
+      my_real d1, d1_fric, d1_stif
       real*8  a(3,24), daxi1(3,24), daxi2(3,24)
+      real*8  f_normal, f_visc, v_n
       real*8  daeta1(3,24), daeta2(3,24)
       real*8  rhoxi1(3), rhoxi2(3)
       real*8  m_ij(2,2), detm, mij(2,2), detmPrimary
@@ -320,15 +331,32 @@
           IMPACT = 1
           PAIR_MAX_PENETRATION = MAX(PAIR_MAX_PENETRATION, DABS(PENE))
 
-!         Accumulate nodal stiffness with the same shape-function
-!         area integration used by NTS/Q1NP.
+!         Shape functions for stiffness integration and IVIS2 mass.
           call sts_shape(xi1, xi2, N_xi)
+
+          CALL sts_gp_normal_velocity(N_xi, N_eta, node_ids, V, &
+     &        norm_contact, v_n)
+
+          d1_stif = d1
+          f_visc = 0.d0
+          CALL sts_gp_ivis2_normal(d1, GAPV, PENE, v_n, N_eta, &
+     &        node_ids, MS, VISC, IVIS2, VISCFFRIC, DT1, &
+     &        d1_stif, f_visc)
+
+          f_normal = d1 * penetr
+
+!         Accumulate nodal stiffness with the same shape-function
+!         area integration used by NTS/Q1NP (post-IVIS2 stiffness).
           DO j = 1, 4
             node_stiff(j) = node_stiff(j) &
-     &        + d1 * DABS(N_xi(1,j)) * area_weight
+     &        + d1_stif * DABS(N_xi(1,j)) * area_weight
             node_stiff(j+4) = node_stiff(j+4) &
-     &        + d1 * DABS(N_eta(1,j)) * area_weight
+     &        + d1_stif * DABS(N_eta(1,j)) * area_weight
           ENDDO
+
+          CALL sts_gp_update_dt2t(node_ids, MS, d1_stif, N_xi, N_eta, &
+     &        area_weight, GAPV, PENE, V, norm_contact, NOINT, &
+     &        DT2T, NELTST, ITYPTST)
 
           INDEX_CAND = EL_NR
           IFPEN(INDEX_CAND) = 1
@@ -336,10 +364,10 @@
           ! Accumulate energy
           energy = energy + 0.5d0 * d1 * penetr**2 * area_weight
 
-          ! Compute residual forces (normal component)
+          ! Compute residual forces (normal + viscous component)
           DO i=1,24
             DO j=1,3
-              pm(i) = pm(i) + d1 * penetr * &
+              pm(i) = pm(i) + (f_normal + f_visc) * &
      &                a(j,i) * norm_contact(j) * area_weight
             ENDDO
           ENDDO

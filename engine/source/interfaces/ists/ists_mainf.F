@@ -71,7 +71,8 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      3                   JTASK          ,NB_JLT_NEW     ,
      4                   TEMP           ,NPC            ,TF             ,
      5                   INTBUF_TAB     ,IXS            ,
-     6                   H3D_DATA       ,INTBUF_FRIC_TAB,IGRSURF)
+     6                   H3D_DATA       ,INTBUF_FRIC_TAB,IGRSURF,
+     7                   MS             ,DT2T           ,NELTST         ,ITYPTST)
 C======================================================================
 C-----------------------------------------------
 C   M o d u l e s
@@ -126,8 +127,9 @@ C-----------------------------------------------
       INTEGER IPARI(NPARI,NINTER)
       INTEGER NB_JLT_NEW,JTASK
       INTEGER IXS(*), NPC(*)
-      my_real X(3,*), V(3,*), A(3,*), STIFN(*), FCONT(3,*)
-      my_real FSAV(*)
+      my_real X(3,*), V(3,*), A(3,*), STIFN(*), FCONT(3,*), MS(*)
+      my_real FSAV(*), DT2T
+      INTEGER NELTST, ITYPTST
       my_real TEMP(*), TF(*)
       TYPE(INTBUF_STRUCT_) INTBUF_TAB
       TYPE(H3D_DATABASE) :: H3D_DATA
@@ -151,12 +153,12 @@ C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
       INTEGER ISTS_STS_IP_MAX
       PARAMETER (ISTS_STS_IP_MAX = 2)
-      INTEGER I, L, IFQ, MFROT, IGSTI,
+      INTEGER I, L, IFQ, MFROT, IGSTI, IVIS2,
      .        JLT_TIED, INTTH, IFORM,
      .        INTFRIC, NSETPRTS, NPARTFRIC, IORTHFRIC
       INTEGER IX1(MVSIZ), IX2(MVSIZ), IX3(MVSIZ), IX4(MVSIZ),
      .        IPARTFRICSI(MVSIZ), IPARTFRICMI(MVSIZ)
-      my_real STARTT, FRIC, GAP, STOPT, VISCF, STIGLO, GAPMIN,
+      my_real STARTT, FRIC, GAP, STOPT, VISC, VISCF, STIGLO, GAPMIN,
      .        KMIN, KMAX, GAPMAX, GAP_FOR_STS, TINT
 C-----------------------------------------------
       my_real H1(MVSIZ), H2(MVSIZ), H3(MVSIZ), H4(MVSIZ),
@@ -205,6 +207,7 @@ C-----------------------------------------------
       MFROT = IPARI(30,NIN)
       IFQ = IPARI(31,NIN)
       IGSTI = IPARI(34,NIN)
+      IVIS2 = IPARI(14,NIN)
 C heat interface
       INTTH = IPARI(47,NIN)
       IFORM = IPARI(48,NIN)
@@ -232,6 +235,7 @@ C-----------------------------------------------
       ENDIF
 C-----------------------------------------------
       FRIC = INTBUF_TAB%VARIABLES(1)
+      VISC = INTBUF_TAB%VARIABLES(14)
       GAP = INTBUF_TAB%VARIABLES(2)
       GAPMIN = INTBUF_TAB%VARIABLES(13)
       VISCF= INTBUF_TAB%VARIABLES(15)
@@ -365,7 +369,9 @@ C             STS Gauss contact search.
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
      &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
-     &          GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS,
+     &          GAP_FOR_STS, V, MS, VISC, IVIS2, VISCFFRIC,
+     &          DT2T, NELTST, ITYPTST,
+     &          STS_ECONTT_PASS, STS_ECONVT_PASS,
      &          STS_FN_TOT, STS_FT_TOT)
               IF (IMPACT_glob /= 0) THEN
 #include "lockon.inc"
@@ -395,7 +401,9 @@ C             Fall back to Lobatto contact search if Gauss contact search report
      &            CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
      &            load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
-     &            GAP_FOR_STS, V, STS_ECONTT_PASS, STS_ECONVT_PASS,
+     &            GAP_FOR_STS, V, MS, VISC, IVIS2, VISCFFRIC,
+     &            DT2T, NELTST, ITYPTST,
+     &            STS_ECONTT_PASS, STS_ECONVT_PASS,
      &            STS_FN_TOT, STS_FT_TOT)
                 IF (IMPACT_glob /= 0) THEN
 #include "lockon.inc"

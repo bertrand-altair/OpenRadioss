@@ -306,7 +306,8 @@ C
      3                      JTASK         ,NB_JLT_NEW(JTASK),
      4                      TEMP          ,NPC            ,TF             ,
      5                      INTERFACES%INTBUF_TAB(N)      ,IXS            ,
-     6                      H3D_DATA      ,INTERFACES%INTBUF_FRIC_TAB,IGRSURF)
+     6                      H3D_DATA      ,INTERFACES%INTBUF_FRIC_TAB,IGRSURF,
+     7                      PTR_MS        ,DT2T           ,NELTST         ,ITYPTST)
 C
             ELSE  
 C                      
