@@ -101,7 +101,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      F   ITASK,     H3D_DATA,  JSMS,      NFT,
      G   IAD,       IGRE,      PRELD1,    STF_F,
      H   STF,       SANIN,     IRESP,     IMPL_S,
-     I   IDYNA,     SNPC)
+     I   IDYNA,     SNPC,      FLG_SPR_DT)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -146,6 +146,7 @@ C-----------------------------------------------
       INTEGER IXR(NIXR,*), NPF(SNPC),IADR(3,*),IPARTR(*),
      .        IGEO(NPROPGI,*),JFT,JLT,NELTST ,ITYPTST,OFFSET,
      .        NEL,MTN,GRTH(*),IGRTH(*),FLG_KJ2,ITASK
+      INTEGER, INTENT(INOUT) ::  FLG_SPR_DT
       INTEGER, INTENT(IN) :: JSMS
       my_real DT2T ,
      .   GEO(NPROPG,*),X(*),F(*),TF(STF),SKEW(LSKEW,*),FSKY(*),
@@ -509,7 +510,7 @@ C
      4   GBUF%G_DT,GBUF%DT,  NGL,      XCR,
      5   XIN,      XM,       XKM,      XCM,
      6   XKR,      NC1,      NC2,      JSMS,
-     7   GBUF%RBODY_MASS)
+     7   NEL,      GBUF%RBODY_NODE,    FLG_SPR_DT)
         CALL RBILAN(
      1   GBUF%EINT,PARTSAV,  IXR,      GEO,
      2   V,        IPARTR,   BID,      GRESAV,
@@ -695,7 +696,7 @@ C
      4   GBUF%G_DT,GBUF%DT,  NGL,      XCR,
      5   XIN,      XM,       XKM,      XCM,
      6   XKR,      NC1,      NC2,      JSMS,
-     7   GBUF%RBODY_MASS)
+     7   NEL,      GBUF%RBODY_NODE,    FLG_SPR_DT)
         CALL RBILAN(
      1   GBUF%EINT,         PARTSAV,           IXR,               GEO,
      2   V,                 IPARTR,            GBUF%LENGTH(II(1)),GRESAV,
@@ -817,7 +818,7 @@ C
      4   GBUF%G_DT,GBUF%DT,  NGL,      XCR,
      5   XIN,      XM,       XKM,      XCM,
      6   XKR,      NC1,      NC2,      JSMS,
-     7   GBUF%RBODY_MASS)
+     7   NEL,      GBUF%RBODY_NODE,    FLG_SPR_DT)
         CALL RBILAN(
      1   GBUF%EINT,         PARTSAV,           IXR,               GEO,
      2   V,                 IPARTR,            GBUF%LENGTH(II(1)),GRESAV,

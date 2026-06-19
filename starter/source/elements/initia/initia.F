@@ -199,7 +199,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      O                  DAMPR      ,IBEAM_VECTOR  ,RBEAM_VECTOR     ,IKINE          ,LSIGI     ,
      P                  LSIGSP     ,SRNOISE       ,NPRW             ,LPRW           , RWSTIF_PEN,
      M                  SLN_PEN    ,ROOTLEN       ,ROOTNAM          ,NGUIDED_CABLE  ,TOTMAS1   ,
-     N                  S_NOD2EL1D)
+     N                  S_NOD2EL1D ,SPRING_CON_RBODY)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------                     
@@ -356,6 +356,7 @@ C
       INTEGER,INTENT(IN) :: LSIGSP
       INTEGER,INTENT(IN) :: SRNOISE
       INTEGER,INTENT(IN) :: S_NOD2EL1D
+      INTEGER,INTENT(INOUT) :: SPRING_CON_RBODY
 !
       INTEGER,INTENT(IN) :: SLN_PEN
       INTEGER, DIMENSION(NNPRW*NRWALL),INTENT(IN) :: NPRW
@@ -2134,10 +2135,12 @@ C------------------------------------------------------
 C--------------------------------------------
 C     RBODY - SPRING MASS COMPUTATION :
 C--------------------------------------------
+      SPRING_CON_RBODY = 0
       IF (NUMELR > 0) THEN
         call rbody_spring_check(nrbykin, nnpby, npby, slpby, lpby, numnod,
-     .                          knod2el1d, s_nod2el1d, nod2el1d, numelt, numelp, numelr,
-     .                          ixr, nixr, nparg, iparg, nrby, rby, ngroup, elbuf_tab)
+     .                          knod2el1d, s_nod2el1d, nod2el1d, numel, numelt, numelp, 
+     .                          numelr, numels, numelc, ixr, nixr,nparg, 
+     .                          iparg, ngroup, elbuf_tab,dtelem,spring_con_rbody)
       ENDIF  
 C------------------------------------------------------
 C Initialization of damping frequency range

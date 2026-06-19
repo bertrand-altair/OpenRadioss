@@ -317,7 +317,7 @@ c---
       ENDIF ! IGTYP > 0
 C
       IF ((IGTYP==23).OR.(IGTYP==8).OR.(IGTYP==13).OR.(IGTYP==25)) THEN
-        GBUF%G_RBODY_MASS = 4
+        GBUF%G_RBODY_NODE = 2
       ENDIF      
 C
       IF (IGTYP == 23 .AND. GMAT > 0) THEN   ! spring with Material

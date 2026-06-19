@@ -1268,6 +1268,8 @@ C RWALL PENALTY
       my_real, DIMENSION(:), ALLOCATABLE :: RWSTIF_PEN 
       ! drape flag
       INTEGER :: ITHIN_DRAPE
+C SPRING ELEMENT TIME STEP      
+      INTEGER :: SPRING_CON_RBODY
 
       integer, parameter :: nb_key = 8 
       integer :: iwarnhb,n_entity
@@ -8961,7 +8963,7 @@ C
      &            NDAMP_FREQ_RANGE,DAMPR      , IBEAM_VECTOR     , RBEAM_VECTOR       ,D         ,
      &            LSIGI      ,LSIGSP          , SRNOISE2         ,NPRW               ,LPRW       ,
      &            RWSTIF_PEN ,SLN_PEN         ,ROOTLEN           ,ROOTNAM          ,NGUIDED_CABLE,
-     &            TOTMAS1    ,S_NOD2EL1D)
+     &            TOTMAS1    ,S_NOD2EL1D      ,SPRING_CON_RBODY)
 
 
       IF(NINTER>0.AND.NUMELIG3D>0) THEN
@@ -10537,7 +10539,8 @@ C--------------------------------------------
 C     sorting and printing of element dt
 C--------------------------------------------
       CALL OUTRI(DTELEM,IXS,IXQ,IXC,IXT,IXP,IXR,IXTG,
-     .           KXX,KXSP,KXIG3D,IGEO,NUMEL)
+     .           KXX,KXSP,KXIG3D,IGEO,NUMEL,D,
+     .           SPRING_CON_RBODY)
 C--------------------------------------------
 C     sorting and printing of nodal dt
 C--------------------------------------------

@@ -265,7 +265,7 @@ C 1-D elements (TRUSS, BEAM, SPRING, NSTRAND)
       IAD = IAD + 1
       GBUF%G_XXOLD_IN_COMP = 0
       IAD = IAD + 1
-      GBUF%G_RBODY_MASS = 0
+      GBUF%G_RBODY_NODE = 0
 C
 C seatbelts elements
       IAD = IAD + 1

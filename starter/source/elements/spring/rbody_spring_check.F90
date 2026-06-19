@@ -43,12 +43,13 @@
 !||--- uses       -----------------------------------------------------
 !||====================================================================
         subroutine rbody_spring_check(nrbykin, nnpby, npby, slpby, lpby, numnod,                &
-                                      knod2el1d, snod2el1d, nod2el1d, numelt, numelp, numelr,   &
-                                      ixr, nixr, nparg, iparg, nrby, rby, ngroup,elbuf_tab)
+                                      knod2el1d, snod2el1d, nod2el1d, numel, numelt, numelp,    &
+                                      numelr, numels, numelc, ixr, nixr, nparg,                 &
+                                      iparg, ngroup, elbuf_tab, dtelem, spring_con_rbody)
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Modules
 ! ----------------------------------------------------------------------------------------------------------------------
-          use constant_mod,                         only : three
+          use constant_mod,                         only : ep30
           use precision_mod,                        only : WP                        
           use elbufdef_mod,                         only : elbuf_struct_
 ! ----------------------------------------------------------------------------------------------------------------------
@@ -60,6 +61,9 @@
 ! ----------------------------------------------------------------------------------------------------------------------
           integer,                       intent(in)   :: nrbykin                !< Number of rigid bodies kinematic
           integer,                       intent(in)   :: numnod                 !< Number of nodes
+          integer,                       intent(in)   :: numel                  !< Total number of elements
+          integer,                       intent(in)   :: numels                 !< Number of shell elements
+          integer,                       intent(in)   :: numelc                 !< Number of solid elements
           integer,                       intent(in)   :: numelt                 !< Number of truss elements
           integer,                       intent(in)   :: numelp                 !< Number of beam elements
           integer,                       intent(in)   :: numelr                 !< Number of spring elements
@@ -67,7 +71,6 @@
           integer,                       intent(in)   :: nnpby                  !< Number of parameters per rigid body
           integer,                       intent(in)   :: slpby                  !< Size of lpby array
           integer,                       intent(in)   :: ngroup                 !< Number of groups
-          integer,                       intent(in)   :: nrby                   !< Size of nrby array
           integer,                       intent(in)   :: nparg                  !< Number of parameters per group
           integer,                       intent(in)   :: snod2el1d              !< Size of nod2el1d array
           integer,                       intent(in)   :: npby(nnpby,nrbykin)    !< main structure for rigid bodies
@@ -76,19 +79,20 @@
           integer,                       intent(in)   :: nod2el1d(snod2el1d)    !< Node to 1D element connectivity
           integer,                       intent(in)   :: ixr(nixr,numelr)       !< Spring element connectivity
           integer,                       intent(in)   :: iparg(nparg,ngroup)    !< Group parameters
-          real(kind=WP),                 intent(in)   :: rby(nrby,nrbykin)      !< Rigid body properties
+          integer,                       intent(inout):: spring_con_rbody       !< Spring connected to rigid body flag
+          real(kind=WP),                 intent(inout):: dtelem(2*numel)        !< Element time step array
           type (elbuf_struct_),          intent(inout):: elbuf_tab(ngroup)      !< Element buffer arrayr
 
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Local variables
 ! ----------------------------------------------------------------------------------------------------------------------
           integer :: iel, rb, rbf, j, nn, ff
-          integer :: elem_id
+          integer :: elem_id,mastern
           integer :: zk
           integer :: nsl
+          integer :: spring_offset
           integer :: ng, nel, ity, nft
           integer, dimension(:,:), allocatable :: spring_rbody
-          real(kind=WP) :: mass, iner
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Body
 ! ----------------------------------------------------------------------------------------------------------------------
@@ -96,6 +100,7 @@
 !         Initialize spring-rbody connection array
           allocate(spring_rbody(2,numelr))
           spring_rbody(1:2,1:numelr) = 0
+          spring_offset = numels + numelc + numelt + numelp
 !                 
 !         Loop over all rigid bodies to fill spring-rbody connection
           zk = 0  
@@ -132,29 +137,29 @@
             nft = iparg(3,ng)
             ity = iparg(5,ng)
             if (ity == 6) then
-              if (elbuf_tab(ng)%gbuf%g_rbody_mass > 0) then              
+              if (elbuf_tab(ng)%gbuf%g_rbody_node > 0) then              
                 do iel = 1,nel
                   if (spring_rbody(1,nft+iel) > 0) then
                     rb = spring_rbody(1,nft+iel)    
-                    mass = rby(14,rb)
-                    iner = (rby(10,rb)+rby(11,rb)+rby(12,rb))/three
-                    elbuf_tab(ng)%gbuf%rbody_mass(4*(iel-1)+1) = mass
-                    elbuf_tab(ng)%gbuf%rbody_mass(4*(iel-1)+2) = iner
+                    mastern = npby(1,rb)
+                    elbuf_tab(ng)%gbuf%rbody_node(2*(iel-1)+1) = mastern
+!                   deactivation of time step for starter estimation
+                    dtelem(spring_offset+nft+iel) = ep30
+                    spring_con_rbody = 1
                   end if
                   if (spring_rbody(2,nft+iel) > 0) then
                     rb = spring_rbody(2,nft+iel)    
-                    mass = rby(14,rb)
-                    iner = (rby(10,rb)+rby(11,rb)+rby(12,rb))/three
-                    elbuf_tab(ng)%gbuf%rbody_mass(4*(iel-1)+3) = mass
-                    elbuf_tab(ng)%gbuf%rbody_mass(4*(iel-1)+4) = iner
+                    mastern = npby(1,rb)
+                    elbuf_tab(ng)%gbuf%rbody_node(2*(iel-1)+2) = mastern
+!                   deactivation of time step for starter estimation    
+                    dtelem(spring_offset+nft+iel) = ep30
+                    spring_con_rbody = 1
                   end if
                 end do  
               end if
             end if
           end do
 
-          deallocate(spring_rbody)
-
-! ----------------------------------------------------------------------------------------------------------------------
+          deallocate(spring_rbody)! ----------------------------------------------------------------------------------------------------------------------
         end subroutine rbody_spring_check
       end module rbody_spring_check_mod
