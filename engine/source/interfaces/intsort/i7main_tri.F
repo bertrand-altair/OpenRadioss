@@ -74,6 +74,7 @@ C-----------------------------------------------
       USE H3D_MOD
       USE MULTI_FVM_MOD
       USE INTER_SORTING_MOD
+      USE ISTS_STS_BP_ALGO_MOD, ONLY : STS_BP_ALGO,STS_BP_ALGO_INT7_BUCKET
       use check_sorting_criteria_mod , only : check_sorting_criteria
       use glob_therm_mod
       use element_mod , only : nixs
@@ -142,6 +143,10 @@ C-----------------------------------------------
       ! check if the current interface needs to be sorted
       call check_sorting_criteria( need_computation,nin,npari,nspmd,  
      .                             itask,ipari(1,nin),tt,intbuf_tab )
+C     INT7_BUCKET broad-phase consumes fresh INT7 CAND_N/CAND_E every
+C     cycle; do not reuse stale lists when distance>0 skips sorting.
+      if(IPARI(105,NIN)==1.AND.STS_BP_ALGO==STS_BP_ALGO_INT7_BUCKET)
+     .   need_computation = .TRUE.
       if( .not.need_computation ) return
       ! --------------
       I_MEM  = 0
@@ -244,7 +249,7 @@ C MWA = MWAG ON TASK 0
      2      INTBUF_TAB%CAND_P,INTBUF_TAB%FTSAVX,INTBUF_TAB%FTSAVY,INTBUF_TAB%FTSAVZ,
      3      INTBUF_TAB%CAND_A        ,INTBUF_TAB%IFPEN ,INACTI           ,IFQ              ,
      4      NUM_IMP          ,IND_IMP          ,INTBUF_TAB%STFNS ,NIN              ,
-     5      NSN ,ITIED,INTBUF_TAB%CAND_F )
+     5      NSN ,ITIED,INTBUF_TAB%CAND_F ,IPARI(105,NIN) )
 C store INACTI as negative
           IF(I_SK_OLD==0)INACTI=-ABS(INACTI)
           INTBUF_TAB%I_STOK(1)=I_SK_OLD
@@ -452,6 +457,10 @@ C      ENDIF
         REMOTE_S_NODE = 0
       ENDIF
       CALL MY_BARRIER
+!     INT7_BUCKET broad-phase: force bucket sorting (I7BUCE/I7TRI)
+!     so its CAND_N/CAND_E candidates feed STS_REMAP in ists_mainf.
+      IF(IPARI(105,NIN)==1.AND.STS_BP_ALGO==STS_BP_ALGO_INT7_BUCKET)
+     .   INTBUF_TAB%METRIC%ALGO = ALGO_BUCKET
 !     IF REMNODE Then VOXEL                               
       IF(IPARI(63,NIN) ==2 ) INTBUF_TAB%METRIC%ALGO = ALGO_VOXEL 
  

@@ -36,7 +36,7 @@
         PRIVATE
 
 !       Adaptive skip settings (so broad/narrow phase is checked less often when surfaces are far).
-        LOGICAL, PARAMETER, PUBLIC :: STS_SKIP_ENABLED  = .TRUE. ! ACTIVATED 
+        LOGICAL, PARAMETER, PUBLIC :: STS_SKIP_ENABLED  = .TRUE. ! Activated
         REAL(KIND=WP), PARAMETER, PUBLIC :: STS_SKIP_SCALE    = 8.0_WP
         REAL(KIND=WP), PARAMETER, PUBLIC :: STS_SKIP_EXPONENT = 1.5_WP
         INTEGER, PARAMETER, PUBLIC :: STS_SKIP_MAX      = 200

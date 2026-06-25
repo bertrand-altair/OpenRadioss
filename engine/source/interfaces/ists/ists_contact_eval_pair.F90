@@ -21,9 +21,11 @@
       subroutine STS_CONTACT_EVAL_PAIR(XUPD, STIF, p, IMPACT, EL_NR, node_stiff, OPTION, &
       &                   FRICC, XMU, IFPEN, &
       &                   p_friction, EFRICT, QFRICT, node_ids, V, &
-      &                   CALC_FRICTION, MAX_STS_SIZE, GAP, PAIR_MAX_PENETRATION, &
+      &                   CALC_FRICTION, MAX_STS_SIZE, GAP, GP_WEIGHT, &
+      &                   PAIR_MAX_PENETRATION, &
       &                   ECONTT_PAIR, ECONVT_PAIR, MS, NOINT, VISC, IVIS2, &
-      &                   VISCFFRIC, DT2T, NELTST, ITYPTST)
+      &                   VISCFFRIC, DT2T, NELTST, ITYPTST, &
+      &                   COMMIT_CONTACT, PROBE_SCORE, VALID_GP, MIN_PENE)
 !-----------------------------------------------
 !   M o d u l e s   /   I m p l i c i t   T y p e s
 !-----------------------------------------------
@@ -47,7 +49,7 @@
 !     STIF     : Pair contact stiffness parameter (normal)
 !     p        : Output contact forces (24 components) - normal + friction combined
 !     IMPACT   : Output flag indicating if penetration was detected
-!     EL_NR    : Temporary Element number (for debugging)
+!     EL_NR    : Pair index in the STS candidate arrays
 !     node_stiff: Output nodal stiffness values (8 components)
 !     OPTION   : 0 = Gauss quadrature, 1 = Lobatto quadrature
 !     FRICC, XMU: Friction parameters
@@ -74,6 +76,7 @@
       my_real EFRICT, QFRICT
       INTEGER MAX_STS_SIZE  ! Maximum size for history arrays
       my_real GAP  ! Gap value from user input
+      REAL*8, INTENT(IN)  :: GP_WEIGHT(4)
       REAL*8, INTENT(OUT) :: PAIR_MAX_PENETRATION
       REAL*8, INTENT(OUT) :: ECONTT_PAIR, ECONVT_PAIR
       my_real, INTENT(IN)    :: MS(*)
@@ -81,6 +84,10 @@
       my_real, INTENT(IN)    :: VISC, VISCFFRIC
       my_real, INTENT(INOUT) :: DT2T
       INTEGER, INTENT(INOUT) :: NELTST, ITYPTST
+      LOGICAL, INTENT(IN)    :: COMMIT_CONTACT
+      REAL*8, INTENT(OUT)    :: PROBE_SCORE
+      INTEGER, INTENT(OUT)   :: VALID_GP
+      REAL*8, INTENT(OUT)    :: MIN_PENE
 !-----------------------------------------------
 !   L o c a l   V a r i a b l e s
 !-----------------------------------------------
@@ -94,31 +101,28 @@
       real*8  daeta1(3,24), daeta2(3,24)
       real*8  rhoxi1(3), rhoxi2(3)
       real*8  m_ij(2,2), detm, mij(2,2), detmPrimary
-      real*8  norm_contact(3), norm_gauss(3), norm_fric(3)
+      real*8  norm_contact(3), norm_fric(3)
       real*8  pm(24), pm_friction(24)
       real*8  eta1(10), eta2(10), wi1(10), wi2(10)
       real*8  energy
       real*8  area_weight
       real*8  gap_distance
+      real*8  raw_gap_distance
+      real*8  clear_ratio
       real*8  N_xi(3,4), N_eta(3,4)
-      real*8  norm_secondary(3), sec_t1(3), sec_t2(3)
-      real*8  sec_norm_len, normal_dot
       real*8  FXT, FYT, FZT, PHI, FN
       real*8  v_tang(3)
       INTEGER INDEX_CAND
       INTEGER gp_index
       INTEGER mst_key(4), sec_key(4)
+      INTEGER sec_corner_idx
+      REAL*8 gp_area_scale
 
-      INTEGER, PARAMETER :: DEBUG_NODE = 0
-!     Deep-penetration guard PREC_CLEAR, mirrors NTS i7for3:
-!     limits the penalty amplification to FAC <= 1/PREC_CLEAR = 2000,
-!     preventing force blow-up (currently deactivated).
-      real*8, PARAMETER :: PREC_CLEAR = 0
+!     Deep-penetration guards (1/value)
+      real*8, PARAMETER :: PREC_CLEAR_GAUSS = 5.0d-5
+      real*8, PARAMETER :: PREC_CLEAR_LOBATTO = 5.0d-5
 
-      CHARACTER*7 FRICTION_QUAD_TYPE
-      CHARACTER*7 STICK_STATE
-
-      real*8  dxi1, dxi2  ! Diagnostic convective increments (history only)
+      real*8  dxi1, dxi2  ! Projection-history increments
       real*8  slip1, slip2
       real*8  T_trial(2), T_real(2), T_trialabs
       real*8  xi1_guess, xi2_guess
@@ -129,8 +133,6 @@
       real*8  xi1_gauss, xi2_gauss
       real*8  m_ij_gauss(2,2), detm_gauss
       real*8  rhoxi1_gauss(3), rhoxi2_gauss(3)
-      real*8  a_gauss(3,24), daxi1_gauss(3,24), daxi2_gauss(3,24)
-      real*8  daeta1_gauss(3,24), daeta2_gauss(3,24)
       logical gauss_valid
       
       ! Friction calculation variables (selected projection)
@@ -141,6 +143,8 @@
       logical use_gauss_for_friction
       logical calc_fric_this_pair
       real*8  fric_weight
+      integer valid_gp_count
+      real*8 clear_frac
 !-----------------------------------------------
 !   I n i t i a l i z a t i o n
 !-----------------------------------------------
@@ -148,9 +152,13 @@
       PAIR_MAX_PENETRATION = 0.0D0
       ECONTT_PAIR = 0.0D0
       ECONVT_PAIR = 0.0D0
-      ip = 2 ! Quadrature order
+      PROBE_SCORE = 0.0D0
+      VALID_GP = 0
+      MIN_PENE = HUGE(1.0D0)
+      ip = 2 ! 2x2 Gauss or Lobatto quadrature order
       pair_fric_idx = MIN(MAX(EL_NR, 1), MVSIZ)
-      calc_fric_this_pair = CALC_FRICTION .AND. FRICC(pair_fric_idx) .GT. 0.0d0
+      calc_fric_this_pair = COMMIT_CONTACT .AND. CALC_FRICTION .AND. &
+     &  FRICC(pair_fric_idx) .GT. 0.0d0
       
       ! Get quadrature points and weights
       IF (OPTION == 0) THEN
@@ -162,13 +170,9 @@
         wi1_gauss = wi1
         wi2_gauss = wi2
       ELSE
-        ! Lobatto for normal contact; Gauss only when friction is active
+        ! Lobatto for normal contact and friction.
         call sts_lobattopt(ip, eta1, wi1)
         call sts_lobattopt(ip, eta2, wi2)
-        IF (calc_fric_this_pair) THEN
-          call sts_gausspt(ip, eta1_gauss, wi1_gauss)
-          call sts_gausspt(ip, eta2_gauss, wi2_gauss)
-        ENDIF
       ENDIF
 
       ! Initialize force arrays
@@ -181,22 +185,31 @@
       GAPV = GAP ! Effective scalar gap (MIN(GAPMAX,MAX(GAPMIN,GAP))).
       energy = 0.0d0
       EFRICT = 0.d0
-      XMU(1) = FRICC(pair_fric_idx) ! Friction coefficient mu
+      IF (COMMIT_CONTACT) XMU(1) = FRICC(pair_fric_idx) ! Friction coefficient mu
       node_stiff = 0.0d0
       FAC = 1.0d0
+      valid_gp_count = 0
 !-----------------------------------------------
 !   M a i n   C o m p u t a t i o n
 !-----------------------------------------------
 !     Loop over integration points
       DO z=1,ip
         DO q=1,ip
-          ! Get the unique pair key for the current Gauss/Lobatto point
-          call sts_gp_canonical_pair_key(node_ids, mst_key, sec_key)
-          call sts_gp_acquire_slot(mst_key, sec_key, z, q, gp_index)
-          
-          ! Get the warm start (border crossing) guess for the current Gauss/Lobatto point
-          call sts_gp_warm_start_xi(gp_index, xi1_guess, xi2_guess, &
-     &        have_guess)
+          IF (COMMIT_CONTACT) THEN
+            ! Get the unique pair key for the current Gauss/Lobatto point
+            call sts_gp_canonical_pair_key(node_ids, mst_key, sec_key)
+            call sts_gp_acquire_slot(mst_key, sec_key, z, q, OPTION, &
+     &          gp_index)
+
+            ! Get the warm start (border crossing) guess for the current Gauss/Lobatto point
+            call sts_gp_warm_start_xi(gp_index, xi1_guess, xi2_guess, &
+     &          have_guess)
+          ELSE
+            gp_index = 0
+            xi1_guess = 0.0d0
+            xi2_guess = 0.0d0
+            have_guess = .FALSE.
+          ENDIF
           
           ! Project Secondary surface to Primary surface at current Gauss/Lobatto point
           call sts_project(XUPD, xi1, xi2, eta1(z), eta2(q), &
@@ -207,7 +220,7 @@
      &        (dabs(xi1) .GT. 1.05d0) .OR. &
      &        (dabs(xi2) .GT. 1.05d0)) THEN
             CYCLE
-          ENDIF
+          END IF
           
           ! Build position and derivative matrices
           call sts_pos(a, daxi1, daxi2, daeta1, daeta2, xi1, xi2, &
@@ -218,7 +231,7 @@
      &                    rhoxi1, rhoxi2, m_ij, detm, mij, detmPrimary)
           area_weight = wi1(z) * wi2(q) * dsqrt(detm)
 
-          ! ==== GAUSS PROJECTION FOR FRICTION ====
+          ! ==== FRICTION PROJECTION ====
           IF (.NOT. calc_fric_this_pair) THEN
             gauss_valid = .FALSE.
           ELSE IF (OPTION == 0) THEN
@@ -234,92 +247,65 @@
             m_ij_gauss(2,2) = m_ij(2,2)
             detm_gauss = detm
           ELSE
-            ! Lobatto algorithm: calculate separate Gauss projection
-            call sts_project(XUPD, xi1_gauss, xi2_gauss, &
-     &                     eta1_gauss(z), eta2_gauss(q), &
-     &                     xi1_guess, xi2_guess, have_guess)
-            
-            ! Check if Gauss projection is valid for friction calculation
-            gauss_valid = (xi1_gauss .EQ. xi1_gauss .AND. &
-     &                     xi2_gauss .EQ. xi2_gauss .AND. &
-     &                     dabs(xi1_gauss) .LE. 1.05d0 .AND. &
-     &                     dabs(xi2_gauss) .LE. 1.05d0)
-            
-            IF (gauss_valid) THEN
-              ! Calculate surface geometry for Gauss projection
-              call sts_pos(a_gauss, daxi1_gauss, daxi2_gauss, &
-     &                   daeta1_gauss, daeta2_gauss, &
-     &                   xi1_gauss, xi2_gauss, &
-     &                   eta1_gauss(z), eta2_gauss(q))
-              
-              call sts_surfgeom(XUPD, daxi1_gauss, daxi2_gauss, &
-     &                        daeta1_gauss, daeta2_gauss, &
-     &                        norm_gauss, rhoxi1_gauss, rhoxi2_gauss, &
-     &                        m_ij_gauss, detm_gauss, mij, detmPrimary)
-              IF ((detm_gauss .NE. detm_gauss) .OR. &
-     &            (detmPrimary .NE. detmPrimary)) THEN
-                gauss_valid = .FALSE.
-              ENDIF
-            ENDIF
+            ! Lobatto quadrature: use the already projected Lobatto point
+            ! for friction as well, so friction history remains attached to
+            ! the same physical integration point.
+            gauss_valid = .FALSE.
           ENDIF
 
           ! ==== Normal impact =====
-          ! Orient the primary normal against the secondary surface
           call sts_shape(eta1(z), eta2(q), N_eta)
-          DO i=1,3
-            sec_t1(i) = 0.0d0
-            sec_t2(i) = 0.0d0
-            DO j=1,4
-              sec_t1(i) = sec_t1(i) + N_eta(2,j) * XUPD(i,j+4)
-              sec_t2(i) = sec_t2(i) + N_eta(3,j) * XUPD(i,j+4)
+          gp_area_scale = 1.0D0
+          IF (OPTION == 1 .AND. ip == 2) THEN
+            sec_corner_idx = 1
+            DO i = 2, 4
+              IF (N_eta(1,i) > N_eta(1,sec_corner_idx)) THEN
+                sec_corner_idx = i
+              ENDIF
             ENDDO
-          ENDDO
-          norm_secondary(1) = sec_t1(2)*sec_t2(3) &
-     &                      - sec_t1(3)*sec_t2(2)
-          norm_secondary(2) = sec_t1(3)*sec_t2(1) &
-     &                      - sec_t1(1)*sec_t2(3)
-          norm_secondary(3) = sec_t1(1)*sec_t2(2) &
-     &                      - sec_t1(2)*sec_t2(1)
-          sec_norm_len = DSQRT(norm_secondary(1)*norm_secondary(1) &
-     &                      + norm_secondary(2)*norm_secondary(2) &
-     &                      + norm_secondary(3)*norm_secondary(3))
-          IF (sec_norm_len .GT. 1.0d-30) THEN
-            DO i=1,3
-              norm_secondary(i) = norm_secondary(i) / sec_norm_len
-            ENDDO
-            normal_dot = norm_contact(1)*norm_secondary(1) &
-     &                 + norm_contact(2)*norm_secondary(2) &
-     &                 + norm_contact(3)*norm_secondary(3)
-            IF (normal_dot .GT. 0.0d0) THEN
-              DO i=1,3
-                norm_contact(i) = -norm_contact(i)
-              ENDDO
-            ENDIF
+            gp_area_scale = GP_WEIGHT(sec_corner_idx)
           ENDIF
+          area_weight = area_weight * gp_area_scale
+          IF (area_weight <= 0.0D0) CYCLE
 
-          ! Compute signed clearance to the primary projection.
+          ! Compute signed clearance to the primary projection and orient
+          ! the primary normal toward the secondary integration point.
           call sts_penetr(XUPD, penetr, norm_contact, a)
+          IF (penetr .LT. 0.0d0) THEN
+            penetr = -penetr
+            DO i=1,3
+              norm_contact(i) = -norm_contact(i)
+            ENDDO
+          ENDIF
           
 
           ! Check for penetration
           PENE = penetr - GAPV
+          valid_gp_count = valid_gp_count + 1
+          MIN_PENE = MIN(MIN_PENE, PENE)
           ! No penetration - skip to next Gauss point
           IF (PENE .GT. 0.d0) THEN
             ! Reset the slot for the current Gauss/Lobatto point
-            IF (gp_index .GT. 0) CALL sts_gp_reset_slot(gp_index)
+            IF (COMMIT_CONTACT .AND. gp_index .GT. 0) &
+     &        CALL sts_gp_reset_slot(gp_index)
             ! Skip to next Gauss point
             CYCLE
           ENDIF
           
           penetr = PENE
-
           ! Calculate penalty parameter.
-          ! Clamp the clearance to PREC_CLEAR*GAP so FAC stays bounded (currenctly deactive)
-          ! (<= 2000) for deep penetration, as in NTS i7for3.
+          ! Clamp the physical clearance so FAC stays bounded for deep
+          ! penetration. Without this, FAC=GAP/clearance becomes singular
+          ! as a Lobatto point approaches zero clearance.
+          clear_frac = PREC_CLEAR_GAUSS
+          IF (OPTION == 1) clear_frac = PREC_CLEAR_LOBATTO
           IF (DABS(GAPV) .GT. EM10) THEN
-            gap_distance = GAPV + PENE
-            FAC = DABS(GAPV) / MAX(PREC_CLEAR*DABS(GAPV), gap_distance)
+            raw_gap_distance = GAPV + PENE
+            gap_distance = MAX(raw_gap_distance, &
+     &        DABS(GAPV) * clear_frac, EM10)
+            FAC = DABS(GAPV) / gap_distance
           ELSE
+            raw_gap_distance = 0.0d0
             FAC = 1.0d0
           ENDIF
           d1_fric = 0.5d0 * STIF ! Tangential stiffness for friction calculation
@@ -330,6 +316,8 @@
           ! Penetration detected with a valid integrated force contribution.
           IMPACT = 1
           PAIR_MAX_PENETRATION = MAX(PAIR_MAX_PENETRATION, DABS(PENE))
+          PROBE_SCORE = PROBE_SCORE + DABS(d1 * penetr) * area_weight
+          IF (.NOT. COMMIT_CONTACT) CYCLE
 
 !         Shape functions for stiffness integration and IVIS2 mass.
           call sts_shape(xi1, xi2, N_xi)
@@ -361,8 +349,19 @@
           INDEX_CAND = EL_NR
           IFPEN(INDEX_CAND) = 1
           
-          ! Accumulate energy
-          energy = energy + 0.5d0 * d1 * penetr**2 * area_weight
+          ! Accumulate the same penalty potential used by legacy TYPE7
+          ! for FAC = gap / current_clearance.
+          IF (DABS(GAPV) .GT. EM10) THEN
+            clear_ratio = MAX(TINY(clear_ratio), gap_distance / DABS(GAPV))
+            energy = energy + 0.5d0 * STIF * DABS(GAPV)**2 * (clear_ratio - 1.0d0 - DLOG(clear_ratio)) * area_weight
+            IF (raw_gap_distance .LT. gap_distance) THEN
+              energy = energy + 0.25d0 * STIF * DABS(GAPV) / &
+     &          gap_distance * (PENE**2 - &
+     &          (gap_distance - DABS(GAPV))**2) * area_weight
+            ENDIF
+          ELSE
+            energy = energy + 0.5d0 * d1 * penetr**2 * area_weight
+          ENDIF
 
           ! Compute residual forces (normal + viscous component)
           DO i=1,24
@@ -378,8 +377,7 @@
               CYCLE
             endif
 
-            ! Determine which projection to use for friction
-            ! Set values to appropriate projection (Gauss preferred, fallback to current)
+            ! Determine which projection to use for friction.
             IF (gauss_valid) THEN
               ! ==== USE GAUSS PROJECTION (preferred) ====
               use_gauss_for_friction = .TRUE.
@@ -401,7 +399,7 @@
               eta1_fric = eta1_gauss(z)
               eta2_fric = eta2_gauss(q)
             ELSE IF (dabs(xi1) .LE. 1.05d0 .AND. dabs(xi2) .LE. 1.05d0) THEN
-              ! ==== FALLBACK: USE CURRENT PROJECTION ====
+              ! ==== USE CURRENT PROJECTION ====
               use_gauss_for_friction = .FALSE.
               xi1_fric = xi1
               xi2_fric = xi2
@@ -433,12 +431,8 @@
               call sts_shape(eta1_fric, eta2_fric, N_eta)
             ENDIF
 
-            ! Normal for tangential velocity (Lobatto+Gauss uses Gauss normal)
-            IF (use_gauss_for_friction .AND. OPTION == 1) THEN
-              norm_fric = norm_gauss
-            ELSE
-              norm_fric = norm_contact
-            ENDIF
+            ! Friction uses the normal from the selected integration point.
+            norm_fric = norm_contact
 
             ! Calculate the tangential velocity at the current Gauss/Lobatto point
             call sts_gp_tangential_velocity(N_xi, N_eta, node_ids, V, &
@@ -492,31 +486,9 @@
             FYT = T_real(1)*rhoxi1_fric(2) + T_real(2)*rhoxi2_fric(2)
             FZT = T_real(1)*rhoxi1_fric(3) + T_real(2)*rhoxi2_fric(3)
 
-            ! ===== DEBUG OUTPUT FOR SELECTED NODE =====
-            IF (DEBUG_NODE .GT. 0) THEN
-              STICK_STATE = 'SLIDE  '
-              IF (GP_IS_STICKING(gp_index)) STICK_STATE = 'STICK  '
-              IF (use_gauss_for_friction) THEN
-                FRICTION_QUAD_TYPE = 'GAUSS  '
-              ELSE
-                FRICTION_QUAD_TYPE = 'LOBATTO'
-              ENDIF
-              DO j = 1, 8
-                IF (node_ids(j) .EQ. DEBUG_NODE) THEN
-                  WRITE(6,1000) EL_NR, node_ids(j), z, q, &
-     &                 FRICTION_QUAD_TYPE, &
-     &                 xi1_fric, xi2_fric, dxi1, dxi2, &
-     &                 slip1, slip2, &
-     &                 GP_XI1_PERIOD(gp_index), &
-     &                 GP_XI2_PERIOD(gp_index), &
-     &                 FXT, FYT, FZT, &
-     &                 STICK_STATE
-                ENDIF
-              ENDDO
-            ENDIF
-
             ! ===== ACCUMULATE FRICTION FORCES TO NODES =====
-            fric_weight = wi1_fric * wi2_fric * dsqrt(detm_fric)
+            fric_weight = wi1_fric * wi2_fric * dsqrt(detm_fric) * &
+     &        gp_area_scale
             ! Primary nodes (1-4): subtract friction
             DO j=1,4
               pm_friction((j-1)*3+1) = pm_friction((j-1)*3+1) - &
@@ -556,14 +528,8 @@
 
       ECONTT_PAIR = energy
 
- 1000 FORMAT('STS-DBG EL=',I6,' NODE=',I10,' z=',I2,' q=',I2, &
-     &       ' quad=',A7, &
-     &       ' xi=',2F12.6, &
-     &       ' dxi=',2F12.6, &
-     &       ' slip=',2E12.4, &
-     &       ' per=',2I6, &
-     &       ' FT=',3E12.4, &
-     &       ' state=',A7)
+      VALID_GP = valid_gp_count
+      IF (valid_gp_count <= 0) MIN_PENE = 0.0D0
 
       RETURN
       END

@@ -72,6 +72,7 @@ C-----------------------------------------------
         USE INTER_STRUCT_MOD
         USE INTER_SORTING_MOD
         USE INTBUFDEF_MOD 
+        USE ISTS_STS_BP_ALGO_MOD, ONLY : STS_BP_ALGO, STS_BP_ALGO_INT7_BUCKET
         USE INTER7_COLLISION_DETECTION_MOD
         use check_sorting_criteria_mod , only : check_sorting_criteria
 C-----------------------------------------------
@@ -142,6 +143,9 @@ C-----------------------------------------------
         ! check if the current interface needs to be sorted
         call check_sorting_criteria( need_computation,nin,npari,nspmd,  
      .                               itask,ipari(1,nin),tt,intbuf_tab )
+C       INT7_BUCKET broad-phase needs up-to-date candidates each cycle.
+        if(IPARI(105,NIN)==1.AND.STS_BP_ALGO==STS_BP_ALGO_INT7_BUCKET)
+     .     need_computation = .TRUE.
         if( .not.need_computation ) return
         ! --------------
 
@@ -237,6 +241,10 @@ C
         ENDIF
         CALL MY_BARRIER                          
 
+C       INT7_BUCKET: force bucket sorting (I7BUCE/I7TRI)
+C       so its CAND_N/CAND_E candidates feed STS_REMAP in ists_mainf.
+        IF(IPARI(105,NIN)==1.AND.STS_BP_ALGO==STS_BP_ALGO_INT7_BUCKET)
+     .     INTBUF_TAB%METRIC%ALGO = ALGO_BUCKET
         IF(IPARI(63,NIN) ==2 ) INTBUF_TAB%METRIC%ALGO = ALGO_VOXEL 
  
 #ifdef MPI

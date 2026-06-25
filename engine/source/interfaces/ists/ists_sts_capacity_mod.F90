@@ -46,7 +46,8 @@
 !=======================================================================
         SUBROUTINE ISTS_STS_ENSURE_BUFFERS(CAPACITY, WB_CAPACITY, &
      &    CONT_ELEMENT, load_arr, STS_STIF, &
-     &    CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+     &    CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK, &
+     &    node_id_load)
           INTEGER, INTENT(IN) :: CAPACITY
           INTEGER, INTENT(INOUT) :: WB_CAPACITY
           my_real, ALLOCATABLE, INTENT(INOUT) :: CONT_ELEMENT(:,:,:)
@@ -54,19 +55,22 @@
           my_real, ALLOCATABLE, INTENT(INOUT) :: STS_STIF(:)
           INTEGER, ALLOCATABLE, INTENT(INOUT) :: CAND_SEC_SEG_ID(:,:)
           INTEGER, ALLOCATABLE, INTENT(INOUT) :: CAND_MST_SEG_ID(:,:)
+          INTEGER, ALLOCATABLE, INTENT(INOUT) :: CAND_SEC_GP_MASK(:,:)
           INTEGER, ALLOCATABLE, INTENT(INOUT) :: node_id_load(:)
 
           IF (.NOT. ALLOCATED(CONT_ELEMENT) .OR. &
      &        WB_CAPACITY < CAPACITY) THEN
             IF (ALLOCATED(CONT_ELEMENT)) THEN
               DEALLOCATE(CONT_ELEMENT, load_arr, STS_STIF, &
-     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK, &
+     &          node_id_load)
             ENDIF
             ALLOCATE(CONT_ELEMENT(CAPACITY,3,8))
             ALLOCATE(load_arr(CAPACITY,8,4))
             ALLOCATE(STS_STIF(CAPACITY))
             ALLOCATE(CAND_SEC_SEG_ID(CAPACITY,5))
             ALLOCATE(CAND_MST_SEG_ID(CAPACITY,5))
+            ALLOCATE(CAND_SEC_GP_MASK(CAPACITY,4))
             ALLOCATE(node_id_load(CAPACITY*8))
             WB_CAPACITY = CAPACITY
           ENDIF

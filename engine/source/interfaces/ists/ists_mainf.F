@@ -87,6 +87,11 @@ C-----------------------------------------------
       USE Q1NP_CONTACT_DRIVER_MOD, ONLY: Q1NP_CONTACT_DRIVER_INT7,
      &  Q1NP_CONTACT_INIT_GRID_NODES
       USE STS_BROAD_PHASE_VOXEL_MOD, ONLY: STS_VOXEL_BROAD_PHASE
+      USE STS_BROAD_PHASE_INT7_BUCKET_MOD, ONLY:
+     &  STS_INT7_BUCKET_BROAD_PHASE
+      USE ISTS_STS_BP_ALGO_MOD, ONLY: STS_BP_ALGO,
+     &  STS_BP_ALGO_VOXEL, STS_BP_ALGO_INT7_BUCKET
+      USE ISTS_STS_BP_PERSIST_MOD, ONLY: ISTS_STS_BP_PERSIST_SET_NCYCLE
       USE STS_CONTACT_STIFFNESS_MOD, ONLY: STS_CONTACT_STIFFNESS
       USE ISTS_STS_SKIP_MOD, ONLY: ISTS_STS_SKIP_TICK, ISTS_STS_SKIP_UPDATE
       USE ISTS_STS_VOXEL_GRID_MOD, ONLY: ISTS_STS_VOXEL_GRID_IS_READY, 
@@ -144,6 +149,7 @@ C-----------------------------------------------
       my_real, DIMENSION(:),     ALLOCATABLE :: STS_STIF            !STS pair stiffness
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_SEC_SEG_ID   !secondary segment nodes
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_MST_SEG_ID   !primary segment nodes
+      INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_SEC_GP_MASK   !active secondary Lobatto corners
       INTEGER, DIMENSION(:),       ALLOCATABLE :: node_id_load      !node id array (8 nodes per element)
       INTEGER, SAVE :: STS_WB_CAPACITY = 0
       INTEGER COUNT !count for the number of contact elements found
@@ -229,6 +235,13 @@ C-----------------------------------------------
             WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = Q1NP (NURBS surface-to-surface)'
           ELSE IF (STS_FLAG == 1) THEN
             WRITE(6,*) 'INT7 (NIN=', NIN,'): contact mode = STS (surface-to-surface)'
+            IF (STS_BP_ALGO == STS_BP_ALGO_INT7_BUCKET) THEN
+              WRITE(6,*) 'INT7 (NIN=', NIN,
+     &          '): STS broad-phase = INT7 bucket (legacy, STS_REMAP)'
+            ELSE
+              WRITE(6,*) 'INT7 (NIN=', NIN,
+     &          '): STS broad-phase = voxel'
+            ENDIF
           ELSE
             WRITE(6,*) 'INT7 (NIN=', NIN, '): contact mode = NTS (node-to-surface)'
           ENDIF
@@ -293,7 +306,14 @@ C          grow on broad-phase overflow, and keep grown buffers alive.
      &        IGRSURF(MST_SURF_ID_STS)%NSEG,
      &        STS_WB_CAPACITY, MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT)
 
-          CALL ISTS_STS_SKIP_TICK(NIN, STS_DO_SKIP)
+C          Adaptive skip applies to the voxel broad phase only. The
+C          legacy INT7-bucket path always rebuilds candidates from the
+C          INT7 sorting when it ran for this cycle.
+          IF (STS_BP_ALGO == STS_BP_ALGO_VOXEL) THEN
+            CALL ISTS_STS_SKIP_TICK(NIN, STS_DO_SKIP)
+          ELSE
+            STS_DO_SKIP = .FALSE.
+          ENDIF
 
           IF (.NOT. STS_DO_SKIP) THEN
 C           Broad phase populates CAND_*_SEG_ID and CONT_ELEMENT. If the
@@ -304,26 +324,48 @@ C           compact starting capacity overflows, grow and retry.
               STS_BP_RETRY = .FALSE.
               CALL ISTS_STS_ENSURE_BUFFERS(MAX_STS_SIZE_ACTUAL,
      &            STS_WB_CAPACITY, CONT_ELEMENT, load_arr, STS_STIF,
-     &            CAND_SEC_SEG_ID, CAND_MST_SEG_ID, node_id_load)
+     &            CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK,
+     &            node_id_load)
+              CAND_SEC_GP_MASK = 1
             
               CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, ISTS_STS_IP_MAX)
             
-              CALL STS_VOXEL_BROAD_PHASE(
+              IF (STS_BP_ALGO == STS_BP_ALGO_INT7_BUCKET) THEN
+C               Legacy: reuse INT7 bucket sorting candidates (CAND_N/
+C               CAND_E) and remap them to STS segment pairs.
+                CALL ISTS_STS_BP_PERSIST_SET_NCYCLE(NCYCLE)
+                CALL STS_INT7_BUCKET_BROAD_PHASE(
+     &              NIN, INTBUF_TAB, IGRSURF, NSURF,
+     &              SEC_SURF_ID_STS, MST_SURF_ID_STS,
+     &              X, NUMNOD, NSN, NRTM, MAX_STS_SIZE_ACTUAL,
+     &              CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK,
+     &              CONT_ELEMENT,
+     &              COUNT, STS_BP_OVERFLOW, STS_D_MIN)
+              ELSE
+                CALL STS_VOXEL_BROAD_PHASE(
      &              NIN, IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
      &              X, V, NUMNOD, GAP_FOR_STS, DT1, MAX_STS_SIZE_ACTUAL,
      &              CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT,
      &              COUNT, STS_BP_OVERFLOW, STS_D_MIN)
+              ENDIF
             
               CALL ISTS_STS_TRY_GROW_CAPACITY(STS_BP_OVERFLOW,
      &            MAX_STS_SIZE_ACTUAL, STS_CAP_LIMIT, STS_BP_RETRY)
             ENDDO
             IF ((IMON>0).AND.(NCYCLE > 37290)) CALL STOPTIME(TIMERS,35)
-            
+
             IF (STS_BP_OVERFLOW .AND. .NOT. STS_VOXEL_OVERFLOW_WARN_DONE) THEN
-              WRITE(*,'(A,I8,A,I10,A,I10)')
-     &          ' WARNING INTERFACE ', NOINT,
-     &          ': STS voxel pair overflow, kept ', COUNT,
-     &          ' / capacity ', MAX_STS_SIZE_ACTUAL
+              IF (STS_BP_ALGO == STS_BP_ALGO_INT7_BUCKET) THEN
+                WRITE(*,'(A,I8,A,I10,A,I10)')
+     &            ' WARNING INTERFACE ', NOINT,
+     &            ': STS INT7-bucket pair overflow, kept ', COUNT,
+     &            ' / capacity ', MAX_STS_SIZE_ACTUAL
+              ELSE
+                WRITE(*,'(A,I8,A,I10,A,I10)')
+     &            ' WARNING INTERFACE ', NOINT,
+     &            ': STS voxel pair overflow, kept ', COUNT,
+     &            ' / capacity ', MAX_STS_SIZE_ACTUAL
+              ENDIF
               STS_VOXEL_OVERFLOW_WARN_DONE = .TRUE.
             ENDIF
 
@@ -357,18 +399,19 @@ C     	      Calculate Contact Stiffness for STS pairs.
               CALL STS_CONTACT_STIFFNESS(
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID, COUNT,
      &          MAX_STS_SIZE_ACTUAL,
+     &          CAND_SEC_GP_MASK,
      &          INTBUF_TAB%IRECTM, INTBUF_TAB%STFM, NRTM,
      &          INTBUF_TAB%NSV, INTBUF_TAB%STFNS, NSN, NUMNOD,
      &          IGSTI, KMIN, KMAX, STIGLO, STS_STIF)
-            
-C             STS Gauss contact search.
-              OPTION = 0
+
+C             STS contact search, also used for friction history.
+              OPTION = 1
               QFRICT = 0.d0
               ! Begin the cycle for the current Gauss/Lobatto point
               CALL sts_gp_cycle_begin()
               CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
      &          NOINT, NCYCLE, TT,
-     &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
+     &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID, CAND_SEC_GP_MASK,
      &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
      &          GAP_FOR_STS, V, MS, VISC, IVIS2, VISCFFRIC,
@@ -394,13 +437,14 @@ C             STS Gauss contact search.
 #include "lockoff.inc"
               ENDIF
             
-C             Fall back to Lobatto contact search if Gauss contact search reported no contact.
+C             Run Gauss fallback when the Lobatto pass
+C             found no active contact.
               IF (IMPACT_glob == 0) THEN
-                OPTION = 1
+                OPTION = 0
                 QFRICT = 0.d0
                 CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
      &            NOINT, NCYCLE, TT,
-     &            CAND_MST_SEG_ID, CAND_SEC_SEG_ID,
+     &            CAND_MST_SEG_ID, CAND_SEC_SEG_ID, CAND_SEC_GP_MASK,
      &            load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
      &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
      &            GAP_FOR_STS, V, MS, VISC, IVIS2, VISCFFRIC,
@@ -409,20 +453,20 @@ C             Fall back to Lobatto contact search if Gauss contact search report
      &            STS_FN_TOT, STS_FT_TOT)
                 IF (IMPACT_glob /= 0) THEN
 #include "lockon.inc"
-                  FSAV(1) = FSAV(1) - STS_FN_TOT(1) * DT12
-                  FSAV(2) = FSAV(2) - STS_FN_TOT(2) * DT12
-                  FSAV(3) = FSAV(3) - STS_FN_TOT(3) * DT12
-                  FSAV(4) = FSAV(4) - STS_FT_TOT(1) * DT12
-                  FSAV(5) = FSAV(5) - STS_FT_TOT(2) * DT12
-                  FSAV(6) = FSAV(6) - STS_FT_TOT(3) * DT12
-                  FSAV(26) = FSAV(26) + STS_ECONTT_PASS
-                  FSAV(27) = FSAV(27) + STS_ECONVT_PASS
+                FSAV(1) = FSAV(1) - STS_FN_TOT(1) * DT12
+                FSAV(2) = FSAV(2) - STS_FN_TOT(2) * DT12
+                FSAV(3) = FSAV(3) - STS_FN_TOT(3) * DT12
+                FSAV(4) = FSAV(4) - STS_FT_TOT(1) * DT12
+                FSAV(5) = FSAV(5) - STS_FT_TOT(2) * DT12
+                FSAV(6) = FSAV(6) - STS_FT_TOT(3) * DT12
+                FSAV(26) = FSAV(26) + STS_ECONTT_PASS
+                FSAV(27) = FSAV(27) + STS_ECONVT_PASS
 #include "lockoff.inc"
-                ENDIF
-                IF (IMPACT_glob /= 0 .AND. INCONV == 1) THEN
+              ENDIF
+              IF (IMPACT_glob /= 0 .AND. INCONV == 1) THEN
 #include "lockon.inc"
-                  ECONT  = ECONT  + STS_ECONTT_PASS
-                  ECONTV = ECONTV + STS_ECONVT_PASS
+                ECONT  = ECONT  + STS_ECONTT_PASS
+                ECONTV = ECONTV + STS_ECONVT_PASS
 #include "lockoff.inc"
                 ENDIF
               ENDIF
@@ -472,4 +516,3 @@ C
 C
       RETURN
       END
-

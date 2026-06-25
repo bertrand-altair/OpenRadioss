@@ -22,12 +22,14 @@
 !=======================================================================
         SUBROUTINE STS_CONTACT_STIFFNESS( &
      &      CAND_MST_SEG_ID, CAND_SEC_SEG_ID, COUNT, MAX_STS_SIZE, &
+     &      CAND_SEC_GP_MASK, &
      &      IRECTM, STFM, NRTM, NSV, STFNS, NSN, NUMNOD, &
      &      IGSTI, KMIN, KMAX, STIGLO, STIF)
           INTEGER, INTENT(IN) :: COUNT, MAX_STS_SIZE
           INTEGER, INTENT(IN) :: NRTM, NSN, NUMNOD, IGSTI
           INTEGER, INTENT(IN) :: CAND_MST_SEG_ID(MAX_STS_SIZE,5)
           INTEGER, INTENT(IN) :: CAND_SEC_SEG_ID(MAX_STS_SIZE,5)
+          INTEGER, INTENT(IN) :: CAND_SEC_GP_MASK(MAX_STS_SIZE,4)
           INTEGER, INTENT(IN) :: IRECTM(:)
           INTEGER, INTENT(IN) :: NSV(:)
           REAL(KIND=WP), INTENT(IN) :: STFM(:)
@@ -87,7 +89,8 @@
             IF (K_PRIMARY <= STS_EPS_STIFF) CYCLE
             ! get the secondary stiffness
             K_SECONDARY = STS_CONTACT_SECONDARY_STIFFNESS( &
-     &        CAND_SEC_SEG_ID(I, 2:5), NODE_TO_STFNS, STFNS, &
+     &        CAND_SEC_SEG_ID(I, 2:5), CAND_SEC_GP_MASK(I, 1:4), &
+     &        NODE_TO_STFNS, STFNS, &
      &        NSN_EFF, NUMNOD, SECONDARY_FALLBACK)
             IF (K_SECONDARY <= STS_EPS_STIFF) CYCLE
             
@@ -116,24 +119,28 @@
 
 !=======================================================================
 !   STS_CONTACT_SECONDARY_STIFFNESS
-!   Average of positive mapped STFNS values on the 4 secondary nodes.
+!   Average of positive mapped STFNS values on the active secondary nodes.
+!   A zero mask falls back to the legacy all-corner average.
 !=======================================================================
         REAL(KIND=WP) FUNCTION STS_CONTACT_SECONDARY_STIFFNESS( &
-     &      SEC_NODE_IDS, NODE_TO_STFNS, STFNS, NSN_EFF, NUMNOD, &
-     &      FALLBACK)
+     &      SEC_NODE_IDS, ACTIVE_MASK, NODE_TO_STFNS, STFNS, &
+     &      NSN_EFF, NUMNOD, FALLBACK)
           INTEGER, INTENT(IN) :: SEC_NODE_IDS(4)
+          INTEGER, INTENT(IN) :: ACTIVE_MASK(4)
           INTEGER, INTENT(IN) :: NODE_TO_STFNS(:)
           REAL(KIND=WP), INTENT(IN) :: STFNS(:)
           INTEGER, INTENT(IN) :: NSN_EFF, NUMNOD
           REAL(KIND=WP), INTENT(IN) :: FALLBACK
 
-          INTEGER :: J, IDX, NODE_ID, NVALID
+          INTEGER :: J, IDX, NODE_ID, NVALID, N_ACTIVE
           REAL(KIND=WP) :: K_SUM, K_NODE
 
           K_SUM = 0.0_WP
           NVALID = 0
+          N_ACTIVE = COUNT(ACTIVE_MASK(:) /= 0)
           ! NVALID is the number of valid mapped secondary stiffness values.
           DO J = 1, 4
+            IF (N_ACTIVE > 0 .AND. ACTIVE_MASK(J) == 0) CYCLE
             NODE_ID = SEC_NODE_IDS(J)
             IF (NODE_ID <= 0 .OR. NODE_ID > NUMNOD) CYCLE
 

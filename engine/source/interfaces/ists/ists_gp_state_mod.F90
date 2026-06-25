@@ -27,6 +27,7 @@
       INTEGER, DIMENSION(:,:), ALLOCATABLE, SAVE :: GP_KEY_SEC
       INTEGER, DIMENSION(:),   ALLOCATABLE, SAVE :: GP_KEY_Z
       INTEGER, DIMENSION(:),   ALLOCATABLE, SAVE :: GP_KEY_Q
+      INTEGER, DIMENSION(:),   ALLOCATABLE, SAVE :: GP_KEY_QUAD
       LOGICAL, DIMENSION(:),   ALLOCATABLE, SAVE :: GP_SLOT_OCCUPIED
       LOGICAL, DIMENSION(:),   ALLOCATABLE, SAVE :: GP_ACTIVE_CYCLE
 
@@ -54,6 +55,7 @@
         DEALLOCATE(GP_KEY_SEC)
         DEALLOCATE(GP_KEY_Z)
         DEALLOCATE(GP_KEY_Q)
+        DEALLOCATE(GP_KEY_QUAD)
         DEALLOCATE(GP_SLOT_OCCUPIED)
         DEALLOCATE(GP_ACTIVE_CYCLE)
       END IF
@@ -92,12 +94,13 @@
       CALL sts_gp_canonical_nodes(NODE_IDS(5:8), SEC_KEY)
       END SUBROUTINE sts_gp_canonical_pair_key
 
-      LOGICAL FUNCTION sts_gp_keys_match(SLOT, MST_KEY, SEC_KEY, Z, Q)
-      INTEGER, INTENT(IN) :: SLOT, MST_KEY(4), SEC_KEY(4), Z, Q
+      LOGICAL FUNCTION sts_gp_keys_match(SLOT, MST_KEY, SEC_KEY, Z, Q, QUAD)
+      INTEGER, INTENT(IN) :: SLOT, MST_KEY(4), SEC_KEY(4), Z, Q, QUAD
       INTEGER :: I
       sts_gp_keys_match = .FALSE.
       IF (GP_KEY_Z(SLOT) /= Z) RETURN
       IF (GP_KEY_Q(SLOT) /= Q) RETURN
+      IF (GP_KEY_QUAD(SLOT) /= QUAD) RETURN
       DO I = 1, 4
         IF (GP_KEY_MST(I, SLOT) /= MST_KEY(I)) RETURN
         IF (GP_KEY_SEC(I, SLOT) /= SEC_KEY(I)) RETURN
@@ -110,8 +113,8 @@
       !=======================================================================
       ! Store the key for the current Gauss/Lobatto point
       ! This ensures that the key is stored in the same order for all Gauss/Lobatto points
-      SUBROUTINE sts_gp_store_key(SLOT, MST_KEY, SEC_KEY, Z, Q)
-      INTEGER, INTENT(IN) :: SLOT, MST_KEY(4), SEC_KEY(4), Z, Q
+      SUBROUTINE sts_gp_store_key(SLOT, MST_KEY, SEC_KEY, Z, Q, QUAD)
+      INTEGER, INTENT(IN) :: SLOT, MST_KEY(4), SEC_KEY(4), Z, Q, QUAD
       INTEGER :: I
       DO I = 1, 4
         GP_KEY_MST(I, SLOT) = MST_KEY(I)
@@ -119,6 +122,7 @@
       END DO
       GP_KEY_Z(SLOT) = Z
       GP_KEY_Q(SLOT) = Q
+      GP_KEY_QUAD(SLOT) = QUAD
       END SUBROUTINE sts_gp_store_key
 
       !=======================================================================
@@ -146,8 +150,8 @@
       !=======================================================================
       ! Calculate the hash for the current Gauss/Lobatto point
       ! This ensures that the hash is calculated in the same way for all Gauss/Lobatto points
-      INTEGER FUNCTION sts_gp_slot_hash(MST_KEY, SEC_KEY, Z, Q, HASH_SIZE)
-      INTEGER, INTENT(IN) :: MST_KEY(4), SEC_KEY(4), Z, Q, HASH_SIZE
+      INTEGER FUNCTION sts_gp_slot_hash(MST_KEY, SEC_KEY, Z, Q, QUAD, HASH_SIZE)
+      INTEGER, INTENT(IN) :: MST_KEY(4), SEC_KEY(4), Z, Q, QUAD, HASH_SIZE
       INTEGER :: I
       INTEGER(KIND=8) :: H
       H = 0_8
@@ -162,6 +166,8 @@
       H = MOD(H * INT(1315423911, KIND=8) + INT(Z, KIND=8), &
      &    INT(HASH_SIZE, KIND=8))
       H = MOD(H * INT(1315423911, KIND=8) + INT(Q, KIND=8), &
+     &    INT(HASH_SIZE, KIND=8))
+      H = MOD(H * INT(1315423911, KIND=8) + INT(QUAD, KIND=8), &
      &    INT(HASH_SIZE, KIND=8))
       sts_gp_slot_hash = INT(H) + 1
       END FUNCTION sts_gp_slot_hash
@@ -181,26 +187,26 @@
       !=======================================================================
       ! Acquire the slot for the current Gauss/Lobatto point
       ! This ensures that the slot is acquired for all Gauss/Lobatto points
-      SUBROUTINE sts_gp_acquire_slot(MST_KEY, SEC_KEY, Z, Q, GP_SLOT)
-      INTEGER, INTENT(IN)  :: MST_KEY(4), SEC_KEY(4), Z, Q
+      SUBROUTINE sts_gp_acquire_slot(MST_KEY, SEC_KEY, Z, Q, QUAD, GP_SLOT)
+      INTEGER, INTENT(IN)  :: MST_KEY(4), SEC_KEY(4), Z, Q, QUAD
       INTEGER, INTENT(OUT) :: GP_SLOT
       INTEGER :: IH, PROBE, START_IH
       LOGICAL :: KEY_MATCH
       GP_SLOT = 0
       IF (MAX_GLOBAL_GP <= 0) RETURN
-      START_IH = sts_gp_slot_hash(MST_KEY, SEC_KEY, Z, Q, MAX_GLOBAL_GP)
+      START_IH = sts_gp_slot_hash(MST_KEY, SEC_KEY, Z, Q, QUAD, MAX_GLOBAL_GP)
       IH = START_IH
       PROBE = 0
       DO WHILE (PROBE < MAX_GLOBAL_GP)
         IF (.NOT. GP_SLOT_OCCUPIED(IH)) THEN
           CALL sts_gp_clear_state(IH)
-          CALL sts_gp_store_key(IH, MST_KEY, SEC_KEY, Z, Q)
+          CALL sts_gp_store_key(IH, MST_KEY, SEC_KEY, Z, Q, QUAD)
           GP_SLOT_OCCUPIED(IH) = .TRUE.
           GP_ACTIVE_CYCLE(IH) = .TRUE.
           GP_SLOT = IH
           RETURN
         END IF
-        KEY_MATCH = sts_gp_keys_match(IH, MST_KEY, SEC_KEY, Z, Q)
+        KEY_MATCH = sts_gp_keys_match(IH, MST_KEY, SEC_KEY, Z, Q, QUAD)
         IF (KEY_MATCH) THEN
           GP_ACTIVE_CYCLE(IH) = .TRUE.
           GP_SLOT = IH
@@ -251,7 +257,7 @@
       SUBROUTINE sts_gp_state_init(MAX_STS_SIZE_ACTUAL, IP_MAX)
       INTEGER, INTENT(IN) :: MAX_STS_SIZE_ACTUAL, IP_MAX
       INTEGER :: NEW_MAX_GLOBAL_GP
-      NEW_MAX_GLOBAL_GP = MAX_STS_SIZE_ACTUAL * IP_MAX * IP_MAX
+      NEW_MAX_GLOBAL_GP = MAX_STS_SIZE_ACTUAL * IP_MAX * IP_MAX * 2
       IF (NEW_MAX_GLOBAL_GP <= 0) THEN
         CALL sts_gp_deallocate_all()
         MAX_GLOBAL_GP = 0
@@ -275,6 +281,7 @@
         ALLOCATE(GP_KEY_SEC         (4, MAX_GLOBAL_GP))
         ALLOCATE(GP_KEY_Z           (MAX_GLOBAL_GP))
         ALLOCATE(GP_KEY_Q           (MAX_GLOBAL_GP))
+        ALLOCATE(GP_KEY_QUAD        (MAX_GLOBAL_GP))
         ALLOCATE(GP_SLOT_OCCUPIED   (MAX_GLOBAL_GP))
         ALLOCATE(GP_ACTIVE_CYCLE    (MAX_GLOBAL_GP))
         GP_XI1_GLOBAL       = 0.0D0
@@ -291,6 +298,7 @@
         GP_KEY_SEC          = 0
         GP_KEY_Z            = 0
         GP_KEY_Q            = 0
+        GP_KEY_QUAD         = 0
         GP_SLOT_OCCUPIED    = .FALSE.
         GP_ACTIVE_CYCLE     = .FALSE.
         STS_GP_TABLE_FULL_WARN_DONE = .FALSE.
