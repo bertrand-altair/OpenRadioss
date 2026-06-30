@@ -72,7 +72,8 @@ C-----------------------------------------------
         USE INTER_STRUCT_MOD
         USE INTER_SORTING_MOD
         USE INTBUFDEF_MOD 
-        USE ISTS_STS_BP_ALGO_MOD, ONLY : STS_BP_ALGO, STS_BP_ALGO_INT7_BUCKET
+        USE ISTS_STS_BP_ALGO_MOD, ONLY : STS_BP_ALGO,
+     .    STS_BP_ALGO_INT7_BUCKET, STS_INT7_BUCKET_SORT_DECIDE
         USE INTER7_COLLISION_DETECTION_MOD
         use check_sorting_criteria_mod , only : check_sorting_criteria
 C-----------------------------------------------
@@ -136,20 +137,25 @@ C-----------------------------------------------
         LOGICAL TYPE18
         INTEGER :: FIRST, LAST
         INTEGER :: NSN,NMN,NTY,NRTM
-        logical :: need_computation
+        logical :: need_computation, sts_time_active
         real:: T1
 C-----------------------------------------------
+        NUM_IMP = 0
         ! --------------
         ! check if the current interface needs to be sorted
-        call check_sorting_criteria( need_computation,nin,npari,nspmd,  
+        call check_sorting_criteria( need_computation,nin,npari,nspmd,
      .                               itask,ipari(1,nin),tt,intbuf_tab )
-C       INT7_BUCKET broad-phase needs up-to-date candidates each cycle.
-        if(IPARI(105,NIN)==1.AND.STS_BP_ALGO==STS_BP_ALGO_INT7_BUCKET)
-     .     need_computation = .TRUE.
+        sts_time_active = INTBUF_TAB%VARIABLES(t_start_index) <= TT
+     .    .AND. TT <= INTBUF_TAB%VARIABLES(t_stop_index)
+
+!       Apply the STS INT7-bucket sort-reuse policy at this Type 7
+!       sort entry point.
+        CALL STS_INT7_BUCKET_SORT_DECIDE(NCYCLE, sts_time_active,
+     .    IPARI(105,NIN), STS_BP_ALGO, INTBUF_TAB%I_STOK(1),
+     .    IPARI(22,NIN), IPARI(31,NIN), NUM_IMP, IPARI(85,NIN),
+     .    need_computation)
         if( .not.need_computation ) return
         ! --------------
-
-        NUM_IMP = 0
 
         I_MEM  = 0
         I_MEMG = 0

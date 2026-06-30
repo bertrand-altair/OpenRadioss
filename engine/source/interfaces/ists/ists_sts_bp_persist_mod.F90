@@ -42,23 +42,22 @@
           INTEGER :: LAST_SAVE_NCYCLE = 0
           INTEGER, ALLOCATABLE :: SEC_ID(:,:)
           INTEGER, ALLOCATABLE :: MST_ID(:,:)
+          INTEGER, ALLOCATABLE :: SEC_GP_MASK(:,:)
         END TYPE STS_BP_PERSIST_SLOT
 
         INTEGER, SAVE :: PERSIST_NCYCLE = 0
-!       Switch for the INT7-bucket pair cache. Keep this disabled to
-!       verify that the bucket broad phase and remap can run without cached
-!       fallback partners.
+!       Switch for the INT7-bucket pair cache. The cache is only used when
+!       no fresh INT7 bucket remap is available for the current cycle.
         LOGICAL, PARAMETER :: STS_BP_PERSIST_ENABLED = .TRUE.
 !       Keep the last healthy STS segment patch long enough to bridge
 !       transient INT7 bucket candidate invalidation during deep contact.
 !       The STS narrow phase remains the geometric filter for restored
 !       pairs, so stale pairs can stay listed without necessarily loading.
-        INTEGER, PARAMETER :: PERSIST_GRACE_CYCLES = 5000 ! Is the grace window for the cached STS segment pairs.
+        INTEGER, PARAMETER :: PERSIST_GRACE_CYCLES = 5000
 
         TYPE(STS_BP_PERSIST_SLOT), ALLOCATABLE, SAVE :: PERSIST_SLOT(:)
 
         PUBLIC :: ISTS_STS_BP_PERSIST_SAVE
-        PUBLIC :: ISTS_STS_BP_PERSIST_TOUCH
         PUBLIC :: ISTS_STS_BP_PERSIST_TRY_RESTORE
         PUBLIC :: ISTS_STS_BP_PERSIST_CLEAR
         PUBLIC :: ISTS_STS_BP_PERSIST_SET_NCYCLE
@@ -163,11 +162,14 @@
 
 !=======================================================================
 !   ISTS_STS_BP_PERSIST_SAVE
+!
+!   Store the current STS segment patch and active secondary GP mask.
 !=======================================================================
         SUBROUTINE ISTS_STS_BP_PERSIST_SAVE(NIN, COUNT_IN, SEC_ID, MST_ID, &
-     &    CAPACITY)
+     &    SEC_GP_MASK, CAPACITY)
           INTEGER, INTENT(IN) :: NIN, COUNT_IN, CAPACITY
           INTEGER, INTENT(IN) :: SEC_ID(CAPACITY, 5), MST_ID(CAPACITY, 5)
+          INTEGER, INTENT(IN) :: SEC_GP_MASK(CAPACITY, 4)
           INTEGER :: I
 
           IF (.NOT. STS_BP_PERSIST_ENABLED) RETURN
@@ -181,16 +183,20 @@
             IF (SIZE(PERSIST_SLOT(NIN)%SEC_ID, 1) < COUNT_IN) THEN
               DEALLOCATE(PERSIST_SLOT(NIN)%SEC_ID)
               DEALLOCATE(PERSIST_SLOT(NIN)%MST_ID)
+              IF (ALLOCATED(PERSIST_SLOT(NIN)%SEC_GP_MASK)) &
+     &          DEALLOCATE(PERSIST_SLOT(NIN)%SEC_GP_MASK)
             END IF
           END IF
           IF (.NOT. ALLOCATED(PERSIST_SLOT(NIN)%SEC_ID)) THEN
             ALLOCATE(PERSIST_SLOT(NIN)%SEC_ID(COUNT_IN, 5))
             ALLOCATE(PERSIST_SLOT(NIN)%MST_ID(COUNT_IN, 5))
+            ALLOCATE(PERSIST_SLOT(NIN)%SEC_GP_MASK(COUNT_IN, 4))
           END IF
 
           DO I = 1, COUNT_IN
             PERSIST_SLOT(NIN)%SEC_ID(I, 1:5) = SEC_ID(I, 1:5)
             PERSIST_SLOT(NIN)%MST_ID(I, 1:5) = MST_ID(I, 1:5)
+            PERSIST_SLOT(NIN)%SEC_GP_MASK(I, 1:4) = SEC_GP_MASK(I, 1:4)
           END DO
           PERSIST_SLOT(NIN)%COUNT_STORED = COUNT_IN
           PERSIST_SLOT(NIN)%LAST_SAVE_NCYCLE = PERSIST_NCYCLE
@@ -198,37 +204,27 @@
         END SUBROUTINE ISTS_STS_BP_PERSIST_SAVE
 
 !=======================================================================
-!   ISTS_STS_BP_PERSIST_TOUCH
-!=======================================================================
-        SUBROUTINE ISTS_STS_BP_PERSIST_TOUCH(NIN)
-          INTEGER, INTENT(IN) :: NIN
-
-          IF (.NOT. STS_BP_PERSIST_ENABLED) RETURN
-          IF (NIN <= 0) RETURN
-          IF (.NOT. ALLOCATED(PERSIST_SLOT)) RETURN
-          IF (NIN > SIZE(PERSIST_SLOT)) RETURN
-          IF (.NOT. PERSIST_SLOT(NIN)%ACTIVE) RETURN
-          IF (PERSIST_SLOT(NIN)%COUNT_STORED <= 0) RETURN
-
-          PERSIST_SLOT(NIN)%LAST_SAVE_NCYCLE = PERSIST_NCYCLE
-        END SUBROUTINE ISTS_STS_BP_PERSIST_TOUCH
-
-!=======================================================================
 !   ISTS_STS_BP_PERSIST_TRY_RESTORE
+!
+!   Restore a cached STS segment patch within the grace window and refresh
+!   its coordinates from the current nodal positions.
 !=======================================================================
         SUBROUTINE ISTS_STS_BP_PERSIST_TRY_RESTORE(NIN, X, NUMNOD, &
-     &    CAPACITY, COUNT_OUT, SEC_ID, MST_ID, CONT_ELEMENT, RESTORED)
+     &    CAPACITY, COUNT_OUT, SEC_ID, MST_ID, SEC_GP_MASK, &
+     &    CONT_ELEMENT, RESTORED)
           INTEGER, INTENT(IN) :: NIN, NUMNOD, CAPACITY
           my_real, INTENT(IN) :: X(3, NUMNOD)
           INTEGER, INTENT(OUT) :: COUNT_OUT
           INTEGER, INTENT(OUT) :: SEC_ID(CAPACITY, 5)
           INTEGER, INTENT(OUT) :: MST_ID(CAPACITY, 5)
+          INTEGER, INTENT(OUT) :: SEC_GP_MASK(CAPACITY, 4)
           my_real, INTENT(OUT) :: CONT_ELEMENT(CAPACITY, 3, 8)
           LOGICAL, INTENT(OUT) :: RESTORED
           INTEGER :: I, N_STORED, AGE
 
           COUNT_OUT = 0
           RESTORED = .FALSE.
+          SEC_GP_MASK = 0
 
           IF (.NOT. STS_BP_PERSIST_ENABLED) RETURN
           IF (NIN <= 0) RETURN
@@ -262,6 +258,11 @@
           DO I = 1, N_STORED
             SEC_ID(I, 1:5) = PERSIST_SLOT(NIN)%SEC_ID(I, 1:5)
             MST_ID(I, 1:5) = PERSIST_SLOT(NIN)%MST_ID(I, 1:5)
+            IF (ALLOCATED(PERSIST_SLOT(NIN)%SEC_GP_MASK)) THEN
+              SEC_GP_MASK(I, 1:4) = PERSIST_SLOT(NIN)%SEC_GP_MASK(I, 1:4)
+            ELSE
+              SEC_GP_MASK(I, 1:4) = 1
+            ENDIF
           END DO
           COUNT_OUT = N_STORED
 

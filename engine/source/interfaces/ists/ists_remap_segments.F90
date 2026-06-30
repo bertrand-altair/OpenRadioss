@@ -49,7 +49,29 @@
       INTEGER SEC_SURF_IDX, NSEG, NSEC_BOUNDS
       INTEGER pair_index
       LOGICAL :: found_corner, pair_added, capacity_full
-      INTEGER, ALLOCATABLE :: IGRSURF_S_TEMP(:,:)
+      LOGICAL :: rebuild_topology
+      INTEGER, ALLOCATABLE, SAVE :: IGRSURF_S_TEMP(:,:)
+      INTEGER, ALLOCATABLE, SAVE :: SEC_NODE_SEG_COUNT(:)
+      INTEGER, ALLOCATABLE, SAVE :: SEC_NODE_SEG_OFF(:)
+      INTEGER, ALLOCATABLE, SAVE :: SEC_NODE_SEG_LIST(:)
+      INTEGER, ALLOCATABLE, SAVE :: MST_NODE_SEG_COUNT(:)
+      INTEGER, ALLOCATABLE, SAVE :: MST_NODE_SEG_OFF(:)
+      INTEGER, ALLOCATABLE, SAVE :: MST_NODE_SEG_LIST(:)
+      INTEGER, ALLOCATABLE, SAVE :: MST_SEG_NEI_COUNT(:)
+      INTEGER, ALLOCATABLE, SAVE :: MST_SEG_NEI_OFF(:)
+      INTEGER, ALLOCATABLE, SAVE :: MST_SEG_NEI_LIST(:)
+      INTEGER, ALLOCATABLE :: PAIR_HASH_SEC(:)
+      INTEGER, ALLOCATABLE :: PAIR_HASH_MST(:)
+      INTEGER, ALLOCATABLE :: PAIR_HASH_INDEX(:)
+      INTEGER, ALLOCATABLE :: NEAREST_SEC_CACHE(:)
+      INTEGER :: PAIR_HASH_SIZE
+      INTEGER, SAVE :: TOPO_CACHE_NUMNOD = 0
+      INTEGER, SAVE :: TOPO_CACHE_NSEG = 0
+      INTEGER, SAVE :: TOPO_CACHE_NRTM = 0
+      INTEGER, SAVE :: TOPO_CACHE_SEC_SURF = 0
+      INTEGER, SAVE :: TOPO_CACHE_MST_SURF = 0
+      LOGICAL, SAVE :: TOPO_CACHE_READY = .FALSE.
+      LOGICAL, PARAMETER :: EXPAND_MASTER_PATCH = .TRUE.
 !-----------------------------------------------
 !   S o u r c e   L i n e s
 !-----------------------------------------------
@@ -70,7 +92,8 @@
         COUNT = 0
         RETURN
       END IF
-      ! Safety checks
+!     A valid secondary surface node table is required for node-to-segment
+!     remapping.
       IF (IGRSURF(SEC_SURF_IDX)%NSEG <= 0) THEN
         COUNT = 0
         RETURN
@@ -82,13 +105,47 @@
 
       NSEG = IGRSURF(SEC_SURF_IDX)%NSEG
 
-      ALLOCATE(IGRSURF_S_TEMP(IGRSURF(SEC_SURF_IDX)%NSEG, 4))
-      IGRSURF_S_TEMP = IGRSURF(SEC_SURF_IDX)%NODES
+      rebuild_topology = .TRUE.
+      IF (TOPO_CACHE_READY) THEN
+        rebuild_topology = TOPO_CACHE_NUMNOD /= NUMNOD .OR. &
+     &    TOPO_CACHE_NSEG /= NSEG .OR. TOPO_CACHE_NRTM /= NRTM .OR. &
+     &    TOPO_CACHE_SEC_SURF /= SEC_SURF_IDX .OR. &
+     &    TOPO_CACHE_MST_SURF /= MST_SURF_ID
+      ENDIF
 
-      CAND_SEC_SEG = -1
-      CAND_MST_SEG = -1
-      CAND_SEC_GP_MASK = 0
-      ! Compare candidate array with IGRSURF_TEMP table to derive the respective index
+      IF (rebuild_topology) THEN
+        CALL STS_REMAP_CLEAR_TOPO_CACHE()
+        ALLOCATE(IGRSURF_S_TEMP(IGRSURF(SEC_SURF_IDX)%NSEG, 4))
+        IGRSURF_S_TEMP = IGRSURF(SEC_SURF_IDX)%NODES
+
+        CALL STS_REMAP_BUILD_NODE_SEG_ADJ(IGRSURF_S_TEMP, NSEG, NUMNOD, &
+     &    SEC_NODE_SEG_COUNT, SEC_NODE_SEG_OFF, SEC_NODE_SEG_LIST)
+        CALL STS_REMAP_BUILD_MASTER_NODE_ADJ(IRECT, NRTM, NUMNOD, &
+     &    MST_NODE_SEG_COUNT, MST_NODE_SEG_OFF, MST_NODE_SEG_LIST)
+        CALL STS_REMAP_BUILD_MASTER_NEIGHBORS(IRECT, NRTM, &
+     &    MST_NODE_SEG_COUNT, MST_NODE_SEG_OFF, MST_NODE_SEG_LIST, &
+     &    MST_SEG_NEI_COUNT, MST_SEG_NEI_OFF, MST_SEG_NEI_LIST)
+
+        TOPO_CACHE_NUMNOD = NUMNOD
+        TOPO_CACHE_NSEG = NSEG
+        TOPO_CACHE_NRTM = NRTM
+        TOPO_CACHE_SEC_SURF = SEC_SURF_IDX
+        TOPO_CACHE_MST_SURF = MST_SURF_ID
+        TOPO_CACHE_READY = .TRUE.
+      ENDIF
+
+      PAIR_HASH_SIZE = MAX(17, 4 * MAX_STS_SIZE_ACTUAL + 1)
+      ALLOCATE(PAIR_HASH_SEC(PAIR_HASH_SIZE))
+      ALLOCATE(PAIR_HASH_MST(PAIR_HASH_SIZE))
+      ALLOCATE(PAIR_HASH_INDEX(PAIR_HASH_SIZE))
+      ALLOCATE(NEAREST_SEC_CACHE(MAX(1, NRTM)))
+      PAIR_HASH_SEC = 0
+      PAIR_HASH_MST = 0
+      PAIR_HASH_INDEX = 0
+      NEAREST_SEC_CACHE = 0
+
+!     Convert the compacted active INT7 node/segment candidates into STS
+!     secondary-segment/master-segment candidate pairs.
       COUNT = 0
 
       ! Map candidate nodes to segment pairs
@@ -101,30 +158,29 @@
         IF (CAND_N_CUR(I) > 0 .AND. CAND_N_CUR(I) <= NSEC_BOUNDS) THEN
           candidate = INTBUF_TAB%NSV(CAND_N_CUR(I))
           IF (candidate > 0 .AND. candidate <= NUMNOD) THEN
-            sec_seg = STS_REMAP_BEST_SEC_SEG_FOR_NODE(IGRSURF_S_TEMP, &
-     &        NSEG, IRECT, NRTM, candidateM, candidate, NUMNOD, X)
-            IF (sec_seg > 0) THEN
-              found_corner = .TRUE.
-              CALL STS_REMAP_TRY_ADD_PAIR(sec_seg, candidateM, COUNT, &
-     &          CAND_SEC_SEG, CAND_MST_SEG, MAX_STS_SIZE_ACTUAL, &
-     &          pair_added, pair_index)
-              IF (pair_added .AND. pair_index > 0) THEN
-                CAND_SEC_GP_MASK(pair_index, 1:4) = 1
-              ELSE
-                capacity_full = .TRUE.
-              END IF
-            ENDIF
+            CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE_PATCH( &
+     &        IGRSURF_S_TEMP, NSEG, candidate, candidateM, &
+     &        SEC_NODE_SEG_COUNT, SEC_NODE_SEG_OFF, SEC_NODE_SEG_LIST, &
+     &        MST_SEG_NEI_COUNT, MST_SEG_NEI_OFF, MST_SEG_NEI_LIST, &
+     &        COUNT, CAND_SEC_SEG, CAND_MST_SEG, CAND_SEC_GP_MASK, &
+     &        MAX_STS_SIZE_ACTUAL, found_corner, capacity_full)
           ENDIF
         ENDIF
         IF (capacity_full) EXIT
 
-!       INT7 node candidates may miss /SURF corner nodes after separation.
-!       I7TRC can also invalidate CAND_N to NSN+1 while CAND_E remains a
-!       useful master-segment seed. Fall back to the secondary segment whose
-!       centroid is closest to the INT7 main-segment centroid.
+!       Active INT7 node candidates may miss /SURF corner nodes after
+!       separation. Fall back to the secondary segment whose centroid is
+!       closest to the INT7 main-segment centroid.
         IF (.NOT. found_corner) THEN
-          sec_seg = STS_REMAP_NEAREST_SEC_SEG(IGRSURF_S_TEMP, NSEG, &
-     &        IRECT, NRTM, candidateM, NUMNOD, X)
+          IF (NEAREST_SEC_CACHE(candidateM) == 0) THEN
+            NEAREST_SEC_CACHE(candidateM) = &
+     &        STS_REMAP_NEAREST_SEC_SEG(IGRSURF_S_TEMP, NSEG, &
+     &          IRECT, NRTM, candidateM, NUMNOD, X)
+            IF (NEAREST_SEC_CACHE(candidateM) <= 0) THEN
+              NEAREST_SEC_CACHE(candidateM) = -1
+            ENDIF
+          ENDIF
+          sec_seg = NEAREST_SEC_CACHE(candidateM)
           IF (sec_seg > 0) THEN
             CALL STS_REMAP_TRY_ADD_PAIR(sec_seg, candidateM, COUNT, &
      &        CAND_SEC_SEG, CAND_MST_SEG, MAX_STS_SIZE_ACTUAL, &
@@ -138,7 +194,7 @@
       END DO
 
       IF (COUNT <= 0) THEN
-        DEALLOCATE(IGRSURF_S_TEMP)
+        CALL STS_REMAP_DEALLOCATE_WORK()
         RETURN
       END IF
 
@@ -149,8 +205,7 @@
         CAND_MST_SEG_ID(I, 2:5) = IRECT(1:4, CAND_MST_SEG(I))
       END DO
 
-      ! Store coordinates: Primary (1-4), Secondary (5-8)
-      ! PRIMARY -> FIRST (1-4)
+!     Store current coordinates for primary nodes 1:4 and secondary nodes 5:8.
       DO I = 1, COUNT
         J = 1
         DO K = 2, 5
@@ -162,7 +217,6 @@
         END DO
       END DO
 
-      ! SECONDARY -> SECOND (5-8)
       DO I = 1, COUNT
         J = 5
         DO K = 2, 5
@@ -174,7 +228,7 @@
         END DO
       END DO
 
-      DEALLOCATE(IGRSURF_S_TEMP)
+      CALL STS_REMAP_DEALLOCATE_WORK()
 
       RETURN
       CONTAINS
@@ -193,101 +247,370 @@
           INTEGER, INTENT(INOUT) :: CAND_MST(CAPACITY)
           LOGICAL, INTENT(OUT) :: PAIR_ADDED
           INTEGER, INTENT(OUT) :: PAIR_INDEX
-          INTEGER :: K
-          LOGICAL :: duplicate
+          INTEGER :: IDX, PROBE
+          INTEGER(KIND=8) :: HKEY
 
           PAIR_ADDED = .FALSE.
           PAIR_INDEX = 0
           IF (SEC_SEG_IN <= 0 .OR. MST_SEG_IN <= 0) RETURN
 
-          duplicate = .FALSE.
-          DO K = 1, COUNT_INOUT
-            IF (CAND_SEC(K) == SEC_SEG_IN .AND. &
-     &          CAND_MST(K) == MST_SEG_IN) THEN
-              duplicate = .TRUE.
-              PAIR_INDEX = K
-              EXIT
-            END IF
-          END DO
-          IF (duplicate) THEN
-            PAIR_ADDED = .TRUE.
-            RETURN
-          END IF
+          HKEY = INT(SEC_SEG_IN, KIND=8) * INT(1000003, KIND=8) + &
+     &      INT(MST_SEG_IN, KIND=8)
+          IDX = INT(MOD(HKEY, INT(PAIR_HASH_SIZE, KIND=8))) + 1
+          DO PROBE = 1, PAIR_HASH_SIZE
+            IF (PAIR_HASH_INDEX(IDX) == 0) EXIT
+            IF (PAIR_HASH_SEC(IDX) == SEC_SEG_IN .AND. &
+     &          PAIR_HASH_MST(IDX) == MST_SEG_IN) THEN
+              PAIR_ADDED = .TRUE.
+              PAIR_INDEX = PAIR_HASH_INDEX(IDX)
+              RETURN
+            ENDIF
+            IDX = IDX + 1
+            IF (IDX > PAIR_HASH_SIZE) IDX = 1
+          ENDDO
+
+          IF (COUNT_INOUT >= CAPACITY) RETURN
 
           COUNT_INOUT = COUNT_INOUT + 1
-          IF (COUNT_INOUT > CAPACITY) THEN
-            COUNT_INOUT = COUNT_INOUT - 1
-            PAIR_ADDED = .FALSE.
-            RETURN
-          END IF
-
           CAND_SEC(COUNT_INOUT) = SEC_SEG_IN
           CAND_MST(COUNT_INOUT) = MST_SEG_IN
+          PAIR_HASH_SEC(IDX) = SEC_SEG_IN
+          PAIR_HASH_MST(IDX) = MST_SEG_IN
+          PAIR_HASH_INDEX(IDX) = COUNT_INOUT
           PAIR_INDEX = COUNT_INOUT
           PAIR_ADDED = .TRUE.
         END SUBROUTINE STS_REMAP_TRY_ADD_PAIR
 
         !=======================================================================
-        ! STS_REMAP_BEST_SEC_SEG_FOR_NODE
+        ! STS_REMAP_ADD_SEC_SEGS_FOR_NODE_PATCH
         !
-        ! Find the secondary segment that is closest to the main segment centroid.
+        ! INT7 stores one master segment per active secondary node. STS projects
+        ! all secondary Lobatto points of the remapped segment, so adjacent
+        ! master facets are required when the projected point lies across the
+        ! original INT7 facet edge.
         !=======================================================================
-        INTEGER FUNCTION STS_REMAP_BEST_SEC_SEG_FOR_NODE(IGRSURF_NODES, &
-     &    NSEG_IN, IRECT_IN, NRTM_IN, MST_SEG_IN, SEC_NODE_IN, &
-     &    NUMNOD_IN, X_IN)
-          INTEGER, INTENT(IN) :: NSEG_IN, NRTM_IN, MST_SEG_IN, SEC_NODE_IN
-          INTEGER, INTENT(IN) :: NUMNOD_IN
+        SUBROUTINE STS_REMAP_ADD_SEC_SEGS_FOR_NODE_PATCH( &
+     &    IGRSURF_NODES, NSEG_IN, SEC_NODE_IN, MST_SEG_IN, &
+     &    SEC_COUNT, SEC_OFF, SEC_LIST, MST_NEI_COUNT, MST_NEI_OFF, &
+     &    MST_NEI_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
+     &    CAPACITY, FOUND_ANY, CAPACITY_FULL)
+          INTEGER, INTENT(IN) :: NSEG_IN, SEC_NODE_IN, MST_SEG_IN
+          INTEGER, INTENT(IN) :: CAPACITY
           INTEGER, INTENT(IN) :: IGRSURF_NODES(NSEG_IN, 4)
-          INTEGER, INTENT(IN) :: IRECT_IN(4, NRTM_IN)
-          my_real, INTENT(IN) :: X_IN(3, NUMNOD_IN)
-          INTEGER :: J, K, NID, NC
-          my_real :: XM(3), XS(3), DIST2, BEST
+          INTEGER, INTENT(IN) :: SEC_COUNT(:), SEC_OFF(:), SEC_LIST(:)
+          INTEGER, INTENT(IN) :: MST_NEI_COUNT(:), MST_NEI_OFF(:)
+          INTEGER, INTENT(IN) :: MST_NEI_LIST(:)
+          INTEGER, INTENT(INOUT) :: COUNT_INOUT
+          INTEGER, INTENT(INOUT) :: CAND_SEC(CAPACITY)
+          INTEGER, INTENT(INOUT) :: CAND_MST(CAPACITY)
+          INTEGER, INTENT(INOUT) :: GP_MASK(CAPACITY, 4)
+          LOGICAL, INTENT(OUT) :: FOUND_ANY, CAPACITY_FULL
+          INTEGER :: MSEG, P, P0, P1
+          LOGICAL :: FOUND_LOCAL, CAPACITY_LOCAL
 
-          STS_REMAP_BEST_SEC_SEG_FOR_NODE = 0
-          IF (MST_SEG_IN <= 0 .OR. MST_SEG_IN > NRTM_IN) RETURN
-          IF (SEC_NODE_IN <= 0 .OR. SEC_NODE_IN > NUMNOD_IN) RETURN
+          FOUND_ANY = .FALSE.
+          CAPACITY_FULL = .FALSE.
+          IF (MST_SEG_IN <= 0 .OR. MST_SEG_IN > SIZE(MST_NEI_COUNT)) RETURN
+
+          CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE(IGRSURF_NODES, &
+     &      NSEG_IN, SEC_NODE_IN, MST_SEG_IN, SEC_COUNT, SEC_OFF, &
+     &      SEC_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
+     &      CAPACITY, FOUND_LOCAL, CAPACITY_LOCAL)
+          FOUND_ANY = FOUND_ANY .OR. FOUND_LOCAL
+          IF (CAPACITY_LOCAL) THEN
+            CAPACITY_FULL = .TRUE.
+            RETURN
+          ENDIF
+
+          IF (.NOT. EXPAND_MASTER_PATCH) RETURN
+
+          P0 = MST_NEI_OFF(MST_SEG_IN)
+          P1 = MST_NEI_OFF(MST_SEG_IN + 1) - 1
+          DO P = P0, P1
+            MSEG = MST_NEI_LIST(P)
+            CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE(IGRSURF_NODES, &
+     &        NSEG_IN, SEC_NODE_IN, MSEG, SEC_COUNT, SEC_OFF, &
+     &        SEC_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
+     &        CAPACITY, FOUND_LOCAL, CAPACITY_LOCAL)
+            FOUND_ANY = FOUND_ANY .OR. FOUND_LOCAL
+            IF (CAPACITY_LOCAL) THEN
+              CAPACITY_FULL = .TRUE.
+              EXIT
+            ENDIF
+          ENDDO
+        END SUBROUTINE STS_REMAP_ADD_SEC_SEGS_FOR_NODE_PATCH
+
+        !=======================================================================
+        ! STS_REMAP_ADD_SEC_SEGS_FOR_NODE
+        !
+        ! A legacy INT7 bucket hit is node-based.  For STS this node represents
+        ! every secondary surface segment sharing it; keeping only one segment
+        ! makes the integrated contact patch too sparse on curved surfaces.
+        !=======================================================================
+        SUBROUTINE STS_REMAP_ADD_SEC_SEGS_FOR_NODE(IGRSURF_NODES, &
+     &    NSEG_IN, SEC_NODE_IN, MST_SEG_IN, SEC_COUNT, SEC_OFF, &
+     &    SEC_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
+     &    CAPACITY, FOUND_ANY, CAPACITY_FULL)
+          INTEGER, INTENT(IN) :: NSEG_IN, SEC_NODE_IN, MST_SEG_IN
+          INTEGER, INTENT(IN) :: CAPACITY
+          INTEGER, INTENT(IN) :: IGRSURF_NODES(NSEG_IN, 4)
+          INTEGER, INTENT(IN) :: SEC_COUNT(:), SEC_OFF(:), SEC_LIST(:)
+          INTEGER, INTENT(INOUT) :: COUNT_INOUT
+          INTEGER, INTENT(INOUT) :: CAND_SEC(CAPACITY)
+          INTEGER, INTENT(INOUT) :: CAND_MST(CAPACITY)
+          INTEGER, INTENT(INOUT) :: GP_MASK(CAPACITY, 4)
+          LOGICAL, INTENT(OUT) :: FOUND_ANY, CAPACITY_FULL
+          INTEGER :: J, P, P0, P1, PAIR_INDEX
+          LOGICAL :: PAIR_ADDED
+
+          FOUND_ANY = .FALSE.
+          CAPACITY_FULL = .FALSE.
+          IF (MST_SEG_IN <= 0) RETURN
+          IF (SEC_NODE_IN <= 0) RETURN
+          IF (SEC_NODE_IN > SIZE(SEC_COUNT)) RETURN
           IF (NSEG_IN <= 0) RETURN
+          IF (SEC_COUNT(SEC_NODE_IN) <= 0) RETURN
 
-          XM = ZERO
-          NC = 0
-          DO K = 1, 4
-            NID = IRECT_IN(K, MST_SEG_IN)
-            IF (NID <= 0 .OR. NID > NUMNOD_IN) CYCLE
-            NC = NC + 1
-            XM(1) = XM(1) + X_IN(1, NID)
-            XM(2) = XM(2) + X_IN(2, NID)
-            XM(3) = XM(3) + X_IN(3, NID)
-          END DO
-          IF (NC <= 0) RETURN
-          XM(1) = XM(1) / NC
-          XM(2) = XM(2) / NC
-          XM(3) = XM(3) / NC
-
-          BEST = HUGE(1.0D0)
-          DO J = 1, NSEG_IN
-            IF (.NOT. ANY(SEC_NODE_IN == IGRSURF_NODES(J, 1:4))) CYCLE
-            XS = ZERO
-            NC = 0
-            DO K = 1, 4
-              NID = IGRSURF_NODES(J, K)
-              IF (NID <= 0 .OR. NID > NUMNOD_IN) CYCLE
-              NC = NC + 1
-              XS(1) = XS(1) + X_IN(1, NID)
-              XS(2) = XS(2) + X_IN(2, NID)
-              XS(3) = XS(3) + X_IN(3, NID)
-            END DO
-            IF (NC <= 0) CYCLE
-            XS(1) = XS(1) / NC
-            XS(2) = XS(2) / NC
-            XS(3) = XS(3) / NC
-            DIST2 = (XS(1) - XM(1))**2 + (XS(2) - XM(2))**2 + &
-     &              (XS(3) - XM(3))**2
-            IF (DIST2 < BEST) THEN
-              BEST = DIST2
-              STS_REMAP_BEST_SEC_SEG_FOR_NODE = J
+          P0 = SEC_OFF(SEC_NODE_IN)
+          P1 = SEC_OFF(SEC_NODE_IN + 1) - 1
+          DO P = P0, P1
+            J = SEC_LIST(P)
+            IF (J <= 0 .OR. J > NSEG_IN) CYCLE
+            FOUND_ANY = .TRUE.
+            CALL STS_REMAP_TRY_ADD_PAIR(J, MST_SEG_IN, COUNT_INOUT, &
+     &        CAND_SEC, CAND_MST, CAPACITY, PAIR_ADDED, PAIR_INDEX)
+            IF (PAIR_ADDED .AND. PAIR_INDEX > 0) THEN
+!             INT7 gives a node hit, but STS integrates segment pairs.
+!             Activating only the matching corner under-integrates curved
+!             contact patches and can let bodies pass through.
+              GP_MASK(PAIR_INDEX, 1:4) = 1
+            ELSE
+              CAPACITY_FULL = .TRUE.
+              EXIT
             END IF
           END DO
-        END FUNCTION STS_REMAP_BEST_SEC_SEG_FOR_NODE
+        END SUBROUTINE STS_REMAP_ADD_SEC_SEGS_FOR_NODE
+
+        !=======================================================================
+        ! STS_REMAP_BUILD_NODE_SEG_ADJ
+        !
+        ! Build a compressed node-to-secondary-segment adjacency table.
+        !=======================================================================
+        SUBROUTINE STS_REMAP_BUILD_NODE_SEG_ADJ(SEG_NODES, NSEG_IN, &
+     &    NUMNOD_IN, NODE_COUNT, NODE_OFF, NODE_LIST)
+          INTEGER, INTENT(IN) :: NSEG_IN, NUMNOD_IN
+          INTEGER, INTENT(IN) :: SEG_NODES(NSEG_IN, 4)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_COUNT(:)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_OFF(:)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_LIST(:)
+          INTEGER :: SEG, C, NID, TOTAL, POS
+
+          ALLOCATE(NODE_COUNT(NUMNOD_IN))
+          ALLOCATE(NODE_OFF(NUMNOD_IN + 1))
+          NODE_COUNT = 0
+
+          DO SEG = 1, NSEG_IN
+            DO C = 1, 4
+              NID = SEG_NODES(SEG, C)
+              IF (NID <= 0 .OR. NID > NUMNOD_IN) CYCLE
+              NODE_COUNT(NID) = NODE_COUNT(NID) + 1
+            ENDDO
+          ENDDO
+
+          NODE_OFF(1) = 1
+          DO NID = 1, NUMNOD_IN
+            NODE_OFF(NID + 1) = NODE_OFF(NID) + NODE_COUNT(NID)
+          ENDDO
+          TOTAL = NODE_OFF(NUMNOD_IN + 1) - 1
+          ALLOCATE(NODE_LIST(MAX(1, TOTAL)))
+
+          NODE_COUNT = 0
+          DO SEG = 1, NSEG_IN
+            DO C = 1, 4
+              NID = SEG_NODES(SEG, C)
+              IF (NID <= 0 .OR. NID > NUMNOD_IN) CYCLE
+              POS = NODE_OFF(NID) + NODE_COUNT(NID)
+              NODE_LIST(POS) = SEG
+              NODE_COUNT(NID) = NODE_COUNT(NID) + 1
+            ENDDO
+          ENDDO
+        END SUBROUTINE STS_REMAP_BUILD_NODE_SEG_ADJ
+
+        !=======================================================================
+        ! STS_REMAP_BUILD_MASTER_NODE_ADJ
+        !
+        ! Build a compressed node-to-master-segment adjacency table.
+        !=======================================================================
+        SUBROUTINE STS_REMAP_BUILD_MASTER_NODE_ADJ(IRECT_IN, NRTM_IN, &
+     &    NUMNOD_IN, NODE_COUNT, NODE_OFF, NODE_LIST)
+          INTEGER, INTENT(IN) :: NRTM_IN, NUMNOD_IN
+          INTEGER, INTENT(IN) :: IRECT_IN(4, NRTM_IN)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_COUNT(:)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_OFF(:)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_LIST(:)
+          INTEGER :: SEG, C, NID, TOTAL, POS
+
+          ALLOCATE(NODE_COUNT(NUMNOD_IN))
+          ALLOCATE(NODE_OFF(NUMNOD_IN + 1))
+          NODE_COUNT = 0
+
+          DO SEG = 1, NRTM_IN
+            DO C = 1, 4
+              NID = IRECT_IN(C, SEG)
+              IF (NID <= 0 .OR. NID > NUMNOD_IN) CYCLE
+              NODE_COUNT(NID) = NODE_COUNT(NID) + 1
+            ENDDO
+          ENDDO
+
+          NODE_OFF(1) = 1
+          DO NID = 1, NUMNOD_IN
+            NODE_OFF(NID + 1) = NODE_OFF(NID) + NODE_COUNT(NID)
+          ENDDO
+          TOTAL = NODE_OFF(NUMNOD_IN + 1) - 1
+          ALLOCATE(NODE_LIST(MAX(1, TOTAL)))
+
+          NODE_COUNT = 0
+          DO SEG = 1, NRTM_IN
+            DO C = 1, 4
+              NID = IRECT_IN(C, SEG)
+              IF (NID <= 0 .OR. NID > NUMNOD_IN) CYCLE
+              POS = NODE_OFF(NID) + NODE_COUNT(NID)
+              NODE_LIST(POS) = SEG
+              NODE_COUNT(NID) = NODE_COUNT(NID) + 1
+            ENDDO
+          ENDDO
+        END SUBROUTINE STS_REMAP_BUILD_MASTER_NODE_ADJ
+
+        !=======================================================================
+        ! STS_REMAP_BUILD_MASTER_NEIGHBORS
+        !
+        ! Build sorted master-segment neighbor lists by shared corner nodes.
+        !=======================================================================
+        SUBROUTINE STS_REMAP_BUILD_MASTER_NEIGHBORS(IRECT_IN, NRTM_IN, &
+     &    NODE_COUNT, NODE_OFF, NODE_LIST, SEG_COUNT, SEG_OFF, SEG_LIST)
+          INTEGER, INTENT(IN) :: NRTM_IN
+          INTEGER, INTENT(IN) :: IRECT_IN(4, NRTM_IN)
+          INTEGER, INTENT(IN) :: NODE_COUNT(:), NODE_OFF(:), NODE_LIST(:)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: SEG_COUNT(:)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: SEG_OFF(:)
+          INTEGER, ALLOCATABLE, INTENT(OUT) :: SEG_LIST(:)
+          INTEGER, ALLOCATABLE :: MARK(:), TMP(:)
+          INTEGER :: SEG, C, NID, P, P0, P1, OTHER, TOTAL, NFOUND, ILOC
+
+          ALLOCATE(SEG_COUNT(NRTM_IN))
+          ALLOCATE(SEG_OFF(NRTM_IN + 1))
+          ALLOCATE(MARK(NRTM_IN))
+          ALLOCATE(TMP(MAX(1, NRTM_IN)))
+          SEG_COUNT = 0
+          MARK = 0
+
+          DO SEG = 1, NRTM_IN
+            NFOUND = 0
+            DO C = 1, 4
+              NID = IRECT_IN(C, SEG)
+              IF (NID <= 0 .OR. NID > SIZE(NODE_COUNT)) CYCLE
+              IF (NODE_COUNT(NID) <= 0) CYCLE
+              P0 = NODE_OFF(NID)
+              P1 = NODE_OFF(NID + 1) - 1
+              DO P = P0, P1
+                OTHER = NODE_LIST(P)
+                IF (OTHER <= 0 .OR. OTHER > NRTM_IN) CYCLE
+                IF (OTHER == SEG) CYCLE
+                IF (MARK(OTHER) == SEG) CYCLE
+                MARK(OTHER) = SEG
+                NFOUND = NFOUND + 1
+              ENDDO
+            ENDDO
+            SEG_COUNT(SEG) = NFOUND
+          ENDDO
+
+          SEG_OFF(1) = 1
+          DO SEG = 1, NRTM_IN
+            SEG_OFF(SEG + 1) = SEG_OFF(SEG) + SEG_COUNT(SEG)
+          ENDDO
+          TOTAL = SEG_OFF(NRTM_IN + 1) - 1
+          ALLOCATE(SEG_LIST(MAX(1, TOTAL)))
+
+          MARK = 0
+          DO SEG = 1, NRTM_IN
+            NFOUND = 0
+            DO C = 1, 4
+              NID = IRECT_IN(C, SEG)
+              IF (NID <= 0 .OR. NID > SIZE(NODE_COUNT)) CYCLE
+              IF (NODE_COUNT(NID) <= 0) CYCLE
+              P0 = NODE_OFF(NID)
+              P1 = NODE_OFF(NID + 1) - 1
+              DO P = P0, P1
+                OTHER = NODE_LIST(P)
+                IF (OTHER <= 0 .OR. OTHER > NRTM_IN) CYCLE
+                IF (OTHER == SEG) CYCLE
+                IF (MARK(OTHER) == SEG) CYCLE
+                MARK(OTHER) = SEG
+                NFOUND = NFOUND + 1
+                TMP(NFOUND) = OTHER
+              ENDDO
+            ENDDO
+            CALL STS_REMAP_SORT_INT(TMP, NFOUND)
+            DO ILOC = 1, NFOUND
+              SEG_LIST(SEG_OFF(SEG) + ILOC - 1) = TMP(ILOC)
+            ENDDO
+          ENDDO
+
+          DEALLOCATE(MARK)
+          DEALLOCATE(TMP)
+        END SUBROUTINE STS_REMAP_BUILD_MASTER_NEIGHBORS
+
+        !=======================================================================
+        ! STS_REMAP_SORT_INT
+        !
+        ! Sort a short integer work array in ascending order.
+        !=======================================================================
+        SUBROUTINE STS_REMAP_SORT_INT(ARR, N)
+          INTEGER, INTENT(INOUT) :: ARR(:)
+          INTEGER, INTENT(IN) :: N
+          INTEGER :: ILOC, JLOC, KEY
+
+          DO ILOC = 2, N
+            KEY = ARR(ILOC)
+            JLOC = ILOC - 1
+            DO WHILE (JLOC >= 1 .AND. ARR(JLOC) > KEY)
+              ARR(JLOC + 1) = ARR(JLOC)
+              JLOC = JLOC - 1
+            ENDDO
+            ARR(JLOC + 1) = KEY
+          ENDDO
+        END SUBROUTINE STS_REMAP_SORT_INT
+
+        !=======================================================================
+        ! STS_REMAP_DEALLOCATE_WORK
+        !
+        ! Release per-call hash and nearest-segment work arrays.
+        !=======================================================================
+        SUBROUTINE STS_REMAP_DEALLOCATE_WORK()
+          IF (ALLOCATED(PAIR_HASH_SEC)) DEALLOCATE(PAIR_HASH_SEC)
+          IF (ALLOCATED(PAIR_HASH_MST)) DEALLOCATE(PAIR_HASH_MST)
+          IF (ALLOCATED(PAIR_HASH_INDEX)) DEALLOCATE(PAIR_HASH_INDEX)
+          IF (ALLOCATED(NEAREST_SEC_CACHE)) DEALLOCATE(NEAREST_SEC_CACHE)
+        END SUBROUTINE STS_REMAP_DEALLOCATE_WORK
+
+        !=======================================================================
+        ! STS_REMAP_CLEAR_TOPO_CACHE
+        !
+        ! Release cached surface topology adjacency tables.
+        !=======================================================================
+        SUBROUTINE STS_REMAP_CLEAR_TOPO_CACHE()
+          IF (ALLOCATED(IGRSURF_S_TEMP)) DEALLOCATE(IGRSURF_S_TEMP)
+          IF (ALLOCATED(SEC_NODE_SEG_COUNT)) DEALLOCATE(SEC_NODE_SEG_COUNT)
+          IF (ALLOCATED(SEC_NODE_SEG_OFF)) DEALLOCATE(SEC_NODE_SEG_OFF)
+          IF (ALLOCATED(SEC_NODE_SEG_LIST)) DEALLOCATE(SEC_NODE_SEG_LIST)
+          IF (ALLOCATED(MST_NODE_SEG_COUNT)) DEALLOCATE(MST_NODE_SEG_COUNT)
+          IF (ALLOCATED(MST_NODE_SEG_OFF)) DEALLOCATE(MST_NODE_SEG_OFF)
+          IF (ALLOCATED(MST_NODE_SEG_LIST)) DEALLOCATE(MST_NODE_SEG_LIST)
+          IF (ALLOCATED(MST_SEG_NEI_COUNT)) DEALLOCATE(MST_SEG_NEI_COUNT)
+          IF (ALLOCATED(MST_SEG_NEI_OFF)) DEALLOCATE(MST_SEG_NEI_OFF)
+          IF (ALLOCATED(MST_SEG_NEI_LIST)) DEALLOCATE(MST_SEG_NEI_LIST)
+          TOPO_CACHE_READY = .FALSE.
+        END SUBROUTINE STS_REMAP_CLEAR_TOPO_CACHE
 
         !=======================================================================
         ! STS_REMAP_NEAREST_SEC_SEG

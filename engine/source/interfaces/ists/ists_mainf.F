@@ -151,6 +151,7 @@ C-----------------------------------------------
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_MST_SEG_ID   !primary segment nodes
       INTEGER, DIMENSION(:,:),     ALLOCATABLE :: CAND_SEC_GP_MASK   !active secondary Lobatto corners
       INTEGER, DIMENSION(:),       ALLOCATABLE :: node_id_load      !node id array (8 nodes per element)
+      INTEGER, DIMENSION(:),       ALLOCATABLE :: STS_IFPEN
       INTEGER, SAVE :: STS_WB_CAPACITY = 0
       INTEGER COUNT !count for the number of contact elements found
       INTEGER :: MAX_STS_SIZE_ACTUAL !actual calculated sts array size needed      
@@ -325,8 +326,10 @@ C           compact starting capacity overflows, grow and retry.
               CALL ISTS_STS_ENSURE_BUFFERS(MAX_STS_SIZE_ACTUAL,
      &            STS_WB_CAPACITY, CONT_ELEMENT, load_arr, STS_STIF,
      &            CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK,
-     &            node_id_load)
-              CAND_SEC_GP_MASK = 1
+     &            node_id_load, STS_IFPEN)
+              IF (STS_BP_ALGO == STS_BP_ALGO_VOXEL) THEN
+                CAND_SEC_GP_MASK = 1
+              ENDIF
             
               CALL sts_gp_state_init(MAX_STS_SIZE_ACTUAL, ISTS_STS_IP_MAX)
             
@@ -339,8 +342,7 @@ C               CAND_E) and remap them to STS segment pairs.
      &              SEC_SURF_ID_STS, MST_SURF_ID_STS,
      &              X, NUMNOD, NSN, NRTM, MAX_STS_SIZE_ACTUAL,
      &              CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK,
-     &              CONT_ELEMENT,
-     &              COUNT, STS_BP_OVERFLOW, STS_D_MIN)
+     &              CONT_ELEMENT, COUNT, STS_BP_OVERFLOW, STS_D_MIN)
               ELSE
                 CALL STS_VOXEL_BROAD_PHASE(
      &              NIN, IGRSURF, NSURF, SEC_SURF_ID_STS, MST_SURF_ID_STS,
@@ -370,7 +372,8 @@ C               CAND_E) and remap them to STS segment pairs.
             ENDIF
 
 C           Friction model 
-C           TODO: placeholder part-ID mapping; proper part-ID resolution is a separate task.
+C           STS uses interface-level friction coefficients on remapped
+C           pairs; per-part pair ids are not available on this path.
             IF (COUNT > 0) THEN
               DO I = 1, MIN(COUNT, MVSIZ)
                 IPARTFRICSI(I) = 0
@@ -407,13 +410,15 @@ C     	      Calculate Contact Stiffness for STS pairs.
 C             STS contact search, also used for friction history.
               OPTION = 1
               QFRICT = 0.d0
+C             STS pair ids do not map to the legacy INT7 IFPEN capacity.
+              STS_IFPEN = 0
               ! Begin the cycle for the current Gauss/Lobatto point
               CALL sts_gp_cycle_begin()
               CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
-     &          NOINT, NCYCLE, TT,
+     &          NOINT, NCYCLE,
      &          CAND_MST_SEG_ID, CAND_SEC_SEG_ID, CAND_SEC_GP_MASK,
      &          load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
-     &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
+     &          MAX_STS_SIZE_ACTUAL, FRICC, XMU, STS_IFPEN, QFRICT,
      &          GAP_FOR_STS, V, MS, VISC, IVIS2, VISCFFRIC,
      &          DT2T, NELTST, ITYPTST,
      &          STS_ECONTT_PASS, STS_ECONVT_PASS,
@@ -437,16 +442,16 @@ C             STS contact search, also used for friction history.
 #include "lockoff.inc"
               ENDIF
             
-C             Run Gauss fallback when the Lobatto pass
-C             found no active contact.
+C             Run Gauss fallback when the Lobatto pass found no active
+C             contact.
               IF (IMPACT_glob == 0) THEN
                 OPTION = 0
                 QFRICT = 0.d0
                 CALL STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION,
-     &            NOINT, NCYCLE, TT,
+     &            NOINT, NCYCLE,
      &            CAND_MST_SEG_ID, CAND_SEC_SEG_ID, CAND_SEC_GP_MASK,
      &            load_arr, node_id_load, L, IMPACT_glob, STS_STIF,
-     &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, INTBUF_TAB%IFPEN, QFRICT,
+     &            MAX_STS_SIZE_ACTUAL, FRICC, XMU, STS_IFPEN, QFRICT,
      &            GAP_FOR_STS, V, MS, VISC, IVIS2, VISCFFRIC,
      &            DT2T, NELTST, ITYPTST,
      &            STS_ECONTT_PASS, STS_ECONVT_PASS,
@@ -472,7 +477,7 @@ C             found no active contact.
               ENDIF
               ! End the cycle for the current Gauss/Lobatto point
               CALL sts_gp_cycle_end()
-            
+
 C             Scatter the per-pair load_arr / node_id_load directly into A / STIFN. 
               IF (IMPACT_glob /= 0) THEN
                 IPARI(29,NIN) = 1

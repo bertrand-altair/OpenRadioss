@@ -11,6 +11,12 @@
         INTEGER, PARAMETER :: STS_HASH_MIN_SLOTS = 1024
         REAL(KIND=WP), PARAMETER :: STS_EPS_STIFF = 1.0E-30_WP
 
+        INTEGER, ALLOCATABLE, SAVE :: NSV_CACHE(:)
+        INTEGER, ALLOCATABLE, SAVE :: NODE_TO_STFNS_CACHE(:)
+        INTEGER, SAVE :: NODE_MAP_NUMNOD = 0
+        INTEGER, SAVE :: NODE_MAP_NSN = 0
+        LOGICAL, SAVE :: NODE_MAP_READY = .FALSE.
+
         PUBLIC :: STS_CONTACT_STIFFNESS
 
       CONTAINS
@@ -18,7 +24,8 @@
 !=======================================================================
 !   STS_CONTACT_STIFFNESS
 !
-!   Stiffness calculation for STS.
+!   Compute one penalty stiffness per STS candidate pair from primary
+!   segment stiffness and active secondary nodal stiffness values.
 !=======================================================================
         SUBROUTINE STS_CONTACT_STIFFNESS( &
      &      CAND_MST_SEG_ID, CAND_SEC_SEG_ID, COUNT, MAX_STS_SIZE, &
@@ -37,11 +44,11 @@
           REAL(KIND=WP), INTENT(IN) :: KMIN, KMAX, STIGLO
           REAL(KIND=WP), INTENT(OUT) :: STIF(MAX_STS_SIZE)
 
-          INTEGER :: I, MST_SEG, NODE_ID
+          INTEGER :: I, MST_SEG
           INTEGER :: NSN_EFF, NRTM_EFF, NPAIR_EFF, HASH_SIZE
-          INTEGER, ALLOCATABLE :: NODE_TO_STFNS(:)
           INTEGER, ALLOCATABLE :: SEG_HASH_KEYS(:,:), SEG_HASH_VALS(:)
           REAL(KIND=WP) :: K_PRIMARY, K_SECONDARY, SECONDARY_FALLBACK
+          LOGICAL :: NEED_PRIMARY_LOOKUP
 
           NPAIR_EFF = MIN(COUNT, MAX_STS_SIZE)
           IF (NPAIR_EFF <= 0) RETURN
@@ -59,52 +66,104 @@
           SECONDARY_FALLBACK = STS_CONTACT_AVERAGE_POSITIVE( &
      &      STFNS, NSN_EFF, ABS(STIGLO))
 
-          HASH_SIZE = MIN(HUGE(1), MAX(STS_HASH_MIN_SLOTS, &
-     &        2 * MAX(1, NRTM_EFF) + 1))
-          ALLOCATE(SEG_HASH_KEYS(4, HASH_SIZE))
-          ALLOCATE(SEG_HASH_VALS(HASH_SIZE))
-          CALL STS_CONTACT_BUILD_SEG_HASH( &
-     &      IRECTM, NRTM_EFF, SEG_HASH_KEYS, SEG_HASH_VALS, HASH_SIZE)
+          NEED_PRIMARY_LOOKUP = .FALSE.
+          DO I = 1, NPAIR_EFF
+            MST_SEG = CAND_MST_SEG_ID(I, 1)
+            IF (MST_SEG <= 0 .OR. MST_SEG > NRTM_EFF) THEN
+              NEED_PRIMARY_LOOKUP = .TRUE.
+              EXIT
+            ENDIF
+          ENDDO
 
-          ALLOCATE(NODE_TO_STFNS(MAX(1, NUMNOD)))
-          NODE_TO_STFNS = 0
-          DO I = 1, NSN_EFF
-            NODE_ID = NSV(I)
-            IF (NODE_ID > 0 .AND. NODE_ID <= NUMNOD) THEN
-              NODE_TO_STFNS(NODE_ID) = I
-            END IF
-          END DO
+          HASH_SIZE = 0
+          IF (NEED_PRIMARY_LOOKUP) THEN
+            HASH_SIZE = MAX(STS_HASH_MIN_SLOTS, &
+     &        2 * MAX(1, NRTM_EFF) + 1)
+            ALLOCATE(SEG_HASH_KEYS(4, HASH_SIZE))
+            ALLOCATE(SEG_HASH_VALS(HASH_SIZE))
+            CALL STS_CONTACT_BUILD_SEG_HASH( &
+     &        IRECTM, NRTM_EFF, SEG_HASH_KEYS, SEG_HASH_VALS, HASH_SIZE)
+          ENDIF
+
+          CALL STS_CONTACT_ENSURE_NODE_MAP(NSV, NSN_EFF, NUMNOD)
 
           DO I = 1, NPAIR_EFF
-            ! find the primary segment
-            ! IRECTM is prepared in starter and passed here as IRECTM/IRECT (INTBUF_TAB%IRECTM).
-            MST_SEG = STS_CONTACT_FIND_PRIMARY_SEG_HASH( &
-     &        CAND_MST_SEG_ID(I, 2:5), CAND_MST_SEG_ID(I, 1), &
-     &        IRECTM, NRTM_EFF, SEG_HASH_KEYS, SEG_HASH_VALS, &
-     &        HASH_SIZE)
+            MST_SEG = CAND_MST_SEG_ID(I, 1)
+            IF (MST_SEG <= 0 .OR. MST_SEG > NRTM_EFF) THEN
+              MST_SEG = STS_CONTACT_FIND_PRIMARY_SEG_HASH( &
+     &          CAND_MST_SEG_ID(I, 2:5), CAND_MST_SEG_ID(I, 1), &
+     &          IRECTM, NRTM_EFF, SEG_HASH_KEYS, SEG_HASH_VALS, &
+     &          HASH_SIZE)
+            ENDIF
             
-     ! get the primary segment stiffness
             K_PRIMARY = STS_CONTACT_PRIMARY_STIFFNESS( &
      &        MST_SEG, STFM, NRTM_EFF)
             IF (K_PRIMARY <= STS_EPS_STIFF) CYCLE
-            ! get the secondary stiffness
+
             K_SECONDARY = STS_CONTACT_SECONDARY_STIFFNESS( &
      &        CAND_SEC_SEG_ID(I, 2:5), CAND_SEC_GP_MASK(I, 1:4), &
-     &        NODE_TO_STFNS, STFNS, &
+     &        NODE_TO_STFNS_CACHE, STFNS, &
      &        NSN_EFF, NUMNOD, SECONDARY_FALLBACK)
             IF (K_SECONDARY <= STS_EPS_STIFF) CYCLE
             
-            ! Store the stiffness value in the STS_STIF array
             STIF(I) = STS_CONTACT_STIFFNESS_VALUE( &
      &        K_PRIMARY, K_SECONDARY, IGSTI, KMIN, KMAX)
           END DO
 
-          DEALLOCATE(NODE_TO_STFNS)
-          DEALLOCATE(SEG_HASH_KEYS, SEG_HASH_VALS)
+          IF (NEED_PRIMARY_LOOKUP) DEALLOCATE(SEG_HASH_KEYS, SEG_HASH_VALS)
         END SUBROUTINE STS_CONTACT_STIFFNESS
 
 !=======================================================================
+!   STS_CONTACT_ENSURE_NODE_MAP
+!
+!   Cache the NSV node-id to STFNS index map while the secondary node
+!   list is unchanged.
+!=======================================================================
+        SUBROUTINE STS_CONTACT_ENSURE_NODE_MAP(NSV, NSN_EFF, NUMNOD)
+          INTEGER, INTENT(IN) :: NSV(:)
+          INTEGER, INTENT(IN) :: NSN_EFF, NUMNOD
+
+          INTEGER :: I, NODE_ID
+          LOGICAL :: REBUILD
+
+          REBUILD = .NOT. NODE_MAP_READY
+          IF (.NOT. REBUILD) THEN
+            REBUILD = NODE_MAP_NUMNOD /= NUMNOD .OR. &
+     &        NODE_MAP_NSN /= NSN_EFF
+          ENDIF
+          IF (.NOT. REBUILD .AND. NSN_EFF > 0) THEN
+            REBUILD = ANY(NSV_CACHE(1:NSN_EFF) /= NSV(1:NSN_EFF))
+          ENDIF
+          IF (.NOT. REBUILD) RETURN
+
+          IF (ALLOCATED(NSV_CACHE)) DEALLOCATE(NSV_CACHE)
+          IF (ALLOCATED(NODE_TO_STFNS_CACHE)) &
+     &      DEALLOCATE(NODE_TO_STFNS_CACHE)
+          ALLOCATE(NSV_CACHE(MAX(1, NSN_EFF)))
+          ALLOCATE(NODE_TO_STFNS_CACHE(MAX(1, NUMNOD)))
+          NSV_CACHE = 0
+          NODE_TO_STFNS_CACHE = 0
+
+          IF (NSN_EFF > 0) THEN
+            NSV_CACHE(1:NSN_EFF) = NSV(1:NSN_EFF)
+          ENDIF
+
+          DO I = 1, NSN_EFF
+            NODE_ID = NSV(I)
+            IF (NODE_ID > 0 .AND. NODE_ID <= NUMNOD) THEN
+              NODE_TO_STFNS_CACHE(NODE_ID) = I
+            ENDIF
+          ENDDO
+
+          NODE_MAP_NUMNOD = NUMNOD
+          NODE_MAP_NSN = NSN_EFF
+          NODE_MAP_READY = .TRUE.
+        END SUBROUTINE STS_CONTACT_ENSURE_NODE_MAP
+
+!=======================================================================
 !   STS_CONTACT_PRIMARY_STIFFNESS
+!
+!   Return primary segment stiffness for a valid master segment id.
 !=======================================================================
         REAL(KIND=WP) FUNCTION STS_CONTACT_PRIMARY_STIFFNESS( &
      &      MST_SEG, STFM, NRTM_EFF)
@@ -166,6 +225,8 @@
 
 !=======================================================================
 !   STS_CONTACT_BUILD_SEG_HASH
+!
+!   Build a hash from canonical master-segment node ids to segment id.
 !=======================================================================
         SUBROUTINE STS_CONTACT_BUILD_SEG_HASH( &
      &      IRECTM, NRTM, HASH_KEYS, HASH_VALS, HASH_SIZE)
@@ -202,6 +263,9 @@
 
 !=======================================================================
 !   STS_CONTACT_FIND_PRIMARY_SEG_HASH
+!
+!   Resolve a primary segment id from candidate node ids using the hash,
+!   with a linear fallback for unexpected hash misses.
 !=======================================================================
         INTEGER FUNCTION STS_CONTACT_FIND_PRIMARY_SEG_HASH( &
      &      PRIMARY_NODES, CAND_SEG, IRECTM, NRTM, HASH_KEYS, &
@@ -269,6 +333,8 @@
 
 !=======================================================================
 !   STS_CONTACT_CANONICAL_NODES
+!
+!   Sort four node ids so segment-node comparison is order independent.
 !=======================================================================
         SUBROUTINE STS_CONTACT_CANONICAL_NODES(NODES_IN, NODES_OUT)
           INTEGER, INTENT(IN) :: NODES_IN(4)
@@ -289,6 +355,8 @@
 
 !=======================================================================
 !   STS_CONTACT_VALID_SEG_KEY
+!
+!   Return true when all segment key node ids are positive.
 !=======================================================================
         LOGICAL FUNCTION STS_CONTACT_VALID_SEG_KEY(KEY)
           INTEGER, INTENT(IN) :: KEY(4)
@@ -298,6 +366,8 @@
 
 !=======================================================================
 !   STS_CONTACT_SEG_HASH
+!
+!   Compute a 1-based open-addressing hash slot for a canonical key.
 !=======================================================================
         INTEGER FUNCTION STS_CONTACT_SEG_HASH(KEY, HASH_SIZE)
           INTEGER, INTENT(IN) :: KEY(4), HASH_SIZE
@@ -314,6 +384,8 @@
 
 !=======================================================================
 !   STS_CONTACT_FIND_PRIMARY_SEG
+!
+!   Linear fallback that searches IRECTM for a segment with the same nodes.
 !=======================================================================
         INTEGER FUNCTION STS_CONTACT_FIND_PRIMARY_SEG( &
      &      PRIMARY_NODES, CAND_SEG, IRECTM, NRTM)
@@ -325,7 +397,6 @@
           STS_CONTACT_FIND_PRIMARY_SEG = 0
 
           IF (CAND_SEG > 0 .AND. CAND_SEG <= NRTM) THEN
-            ! check if the candidate segment CAND_SEG has the same nodes as the primary segment PRIMARY_NODES
             IF (STS_CONTACT_SAME_SEG_NODES(PRIMARY_NODES, IRECTM, CAND_SEG)) THEN
               STS_CONTACT_FIND_PRIMARY_SEG = CAND_SEG
               RETURN
@@ -334,18 +405,17 @@
 
           DO SEG = 1, NRTM
             IF (SEG == CAND_SEG) CYCLE
-            ! check if the other segment SEG has the same nodes as the primary segment PRIMARY_NODES
             IF (STS_CONTACT_SAME_SEG_NODES(PRIMARY_NODES, IRECTM, SEG)) THEN
               STS_CONTACT_FIND_PRIMARY_SEG = SEG
               RETURN
             END IF
           END DO
-          ! return 0 if no primary segment is found
-          ! return the primary segment if found
         END FUNCTION STS_CONTACT_FIND_PRIMARY_SEG
 
 !=======================================================================
 !   STS_CONTACT_SAME_SEG_NODES
+!
+!   Return true when a master segment contains exactly the given node ids.
 !=======================================================================
         LOGICAL FUNCTION STS_CONTACT_SAME_SEG_NODES(PRIMARY_NODES, IRECTM, SEG)
           INTEGER, INTENT(IN) :: PRIMARY_NODES(4)
@@ -361,7 +431,6 @@
             IF (NODE_ID <= 0) RETURN
             FOUND = .FALSE.
             DO J = 1, 4
-              ! check if the node NODE_ID is in the segment SEG
               IF (NODE_ID == IRECTM(4 * (SEG - 1) + J)) THEN
                 FOUND = .TRUE.
                 EXIT
@@ -371,7 +440,6 @@
           END DO
 
           STS_CONTACT_SAME_SEG_NODES = .TRUE.
-          ! return TRUE if the segment SEG has the same nodes as the primary segment PRIMARY_NODES
         END FUNCTION STS_CONTACT_SAME_SEG_NODES
 
 !=======================================================================
@@ -410,6 +478,8 @@
 
 !=======================================================================
 !   STS_CONTACT_AVERAGE_POSITIVE
+!
+!   Average positive absolute values, or return FALLBACK when none exist.
 !=======================================================================
         REAL(KIND=WP) FUNCTION STS_CONTACT_AVERAGE_POSITIVE( &
      &      VALUES, N_EFF, FALLBACK)

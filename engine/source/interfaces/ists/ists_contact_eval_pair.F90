@@ -18,6 +18,10 @@
 !||    sts_shape               ../engine/source/interfaces/ists/ists_shape_fct.F90
 !||    com08_mod               ../engine/share/modules/com08_mod.F
 !||====================================================================
+!
+!   Evaluate one STS segment pair for Gauss or Lobatto quadrature,
+!   including projection, normal penalty, optional friction, and energy.
+!
       subroutine STS_CONTACT_EVAL_PAIR(XUPD, STIF, p, IMPACT, EL_NR, node_stiff, OPTION, &
       &                   FRICC, XMU, IFPEN, &
       &                   p_friction, EFRICT, QFRICT, node_ids, V, &
@@ -51,7 +55,7 @@
 !     IMPACT   : Output flag indicating if penetration was detected
 !     EL_NR    : Pair index in the STS candidate arrays
 !     node_stiff: Output nodal stiffness values (8 components)
-!     OPTION   : 0 = Gauss quadrature, 1 = Lobatto quadrature
+!     OPTION   : 0 = Gauss quadrature, 1 = Lobatto quadrature.
 !     FRICC, XMU: Friction parameters
 !     IFPEN    : Penetration flag array
 !     p_friction: Output friction forces (24 components) - separate output
@@ -347,7 +351,9 @@
      &        DT2T, NELTST, ITYPTST)
 
           INDEX_CAND = EL_NR
-          IFPEN(INDEX_CAND) = 1
+          IF (INDEX_CAND >= 1 .AND. INDEX_CAND <= MAX_STS_SIZE) THEN
+            IFPEN(INDEX_CAND) = 1
+          ENDIF
           
           ! Accumulate the same penalty potential used by legacy TYPE7
           ! for FAC = gap / current_clearance.

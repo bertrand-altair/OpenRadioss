@@ -5,7 +5,11 @@
 !||--- calls ---------------------------------------------------------
 !||    STS_CONTACT_EVAL_PAIR    ../engine/source/interfaces/ists/ists_CONTACT_EVAL_PAIR.F90
 !||====================================================================
-      SUBROUTINE STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION, STS_INTERFACE_ID, NCYCLE_IN, TIME_CUR, &
+!
+!   Evaluate STS candidate pairs for one quadrature mode, accumulate
+!   pair loads, and return force/energy totals for /TH/INTER output.
+!
+      SUBROUTINE STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION, STS_INTERFACE_ID, NCYCLE_IN, &
      & CAND_MST_SEG_ID, CAND_SEC_SEG_ID, CAND_SEC_GP_MASK, &
      & load_arr, node_id_load, L_out, IMPACT_glob, STIF, &
      & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, QFRICT, GAP, V, MS, &
@@ -14,12 +18,10 @@
 !-----------------------------------------------
 !   M o d u l e s
 !-----------------------------------------------
-      USE INTBUFDEF_MOD
-!-----------------------------------------------
-!   M o d u l e s   /   I m p l i c i t   T y p e s
-!-----------------------------------------------
       use constant_mod
       use sts_gp_state_mod
+      use ists_sts_pair_activity_mod, only : &
+     &  STS_PAIR_ACTIVITY_SHOULD_SKIP, STS_PAIR_ACTIVITY_UPDATE
       implicit none
 !-----------------------------------------------
 !   G l o b a l   P a r a m e t e r s
@@ -29,11 +31,9 @@
 !-----------------------------------------------
 !   D u m m y   A r g u m e n t s
 !-----------------------------------------------
-!      TYPE(INTBUF_STRUCT_) INTBUF_TAB(*)
       REAL*8 CONT_ELEMENT(MAX_STS_SIZE_ACTUAL,3,8)
       my_real STIF(MAX_STS_SIZE_ACTUAL)
       INTEGER COUNT, OPTION, STS_INTERFACE_ID, NCYCLE_IN
-      REAL*8 TIME_CUR
       INTEGER CAND_SEC_SEG_ID(MAX_STS_SIZE_ACTUAL,5)
       INTEGER CAND_MST_SEG_ID(MAX_STS_SIZE_ACTUAL,5)
       INTEGER CAND_SEC_GP_MASK(MAX_STS_SIZE_ACTUAL,4)
@@ -56,7 +56,6 @@
       INTEGER selected_option, impact_gauss, impact_lobatto
       INTEGER neltst_probe, ityptst_probe
       INTEGER valid_gauss, valid_lobatto
-      INTEGER LUX_STS
       REAL*8 XUPD(3,8)
       REAL*8 p_load_new(24)
       REAL*8 p_probe(24)
@@ -74,16 +73,12 @@
       my_real EFRICT_LOC
       my_real QFRICT_PROBE, DT2T_PROBE
       INTEGER node_ids(8)  ! Node IDs for velocity interpolation
-      REAL*8 fx_prim, fy_prim, fz_prim, fx_sec, fy_sec, fz_sec
-      REAL*8 fxf_prim, fyf_prim, fzf_prim, fxf_sec, fyf_sec, fzf_sec
       REAL*8 gap_abs, lobatto_margin
-      REAL*8, ALLOCATABLE :: lobatto_gp_weight(:,:)
-      LOGICAL FILE_EXISTS_STS, STS_CSV_INITIALIZED
-      LOGICAL, PARAMETER :: CSV_OUTPUT_ENABLED = .FALSE.
+      REAL*8, ALLOCATABLE, SAVE :: lobatto_gp_weight(:,:)
+      LOGICAL pair_activity_skip, pair_aabb_skip
+      LOGICAL STS_CONTACT_PAIR_AABB_SKIP
       REAL*8, PARAMETER :: STS_MIXED_LOBATTO_GAP_MARGIN = 2.0D-2
       REAL*8, PARAMETER :: STS_MIXED_LOBATTO_REL_MARGIN = 2.0D-1
-      SAVE STS_CSV_INITIALIZED
-      DATA STS_CSV_INITIALIZED /.FALSE./
 !-----------------------------------------------
 !   I n i t i a l i z a t i o n
 !-----------------------------------------------
@@ -93,7 +88,7 @@
       FN_TOT = 0.0D0
       FT_TOT = 0.0D0
       
-      ! Safety check
+!     No candidate pairs are available for this pass.
       IF (COUNT <= 0) THEN
         L_out = 1
         RETURN
@@ -104,8 +99,12 @@
       L = 1
       unit_gp_weight = 1.0D0
 
-      ALLOCATE(lobatto_gp_weight(4, COUNT))
-      lobatto_gp_weight = 1.0D0
+      IF (.NOT. ALLOCATED(lobatto_gp_weight) .OR. &
+     &    SIZE(lobatto_gp_weight, 2) < COUNT) THEN
+        IF (ALLOCATED(lobatto_gp_weight)) DEALLOCATE(lobatto_gp_weight)
+        ALLOCATE(lobatto_gp_weight(4, COUNT))
+      ENDIF
+      lobatto_gp_weight(1:4, 1:COUNT) = 1.0D0
       IF (OPTION == 1 .OR. OPTION == 2) THEN
         lobatto_gp_weight = 0.0D0
         CALL STS_BUILD_LOBATTO_GP_WEIGHTS(COUNT, MAX_STS_SIZE_ACTUAL, &
@@ -113,30 +112,17 @@
      &    lobatto_gp_weight)
       ENDIF
 
-      IF (CSV_OUTPUT_ENABLED) THEN
-        IF (.NOT. STS_CSV_INITIALIZED) THEN
-          INQUIRE(FILE='sts_contact_forces.csv', EXIST=FILE_EXISTS_STS)
-          IF (FILE_EXISTS_STS) THEN
-            OPEN(NEWUNIT=LUX_STS, FILE='sts_contact_forces.csv', &
-     &           STATUS='OLD', ACTION='WRITE', POSITION='APPEND')
-          ELSE
-            OPEN(NEWUNIT=LUX_STS, FILE='sts_contact_forces.csv', &
-     &           STATUS='NEW', ACTION='WRITE')
-            WRITE(LUX_STS,'(A)') &
-     &        'cycle,time,interface_id,entity_id,fx,fy,fz,force_norm,fn,ft,n_pairs,max_penetration'
-          ENDIF
-          STS_CSV_INITIALIZED = .TRUE.
-        ELSE
-          OPEN(NEWUNIT=LUX_STS, FILE='sts_contact_forces.csv', &
-     &         STATUS='OLD', ACTION='WRITE', POSITION='APPEND')
-        ENDIF
-      END IF
 !-----------------------------------------------
 !   M a i n   L o o p
 !-----------------------------------------------
       DO I = 1, COUNT
         IMPACT = 0
         XUPD = CONT_ELEMENT(I, 1:3, 1:8)
+
+        pair_aabb_skip = STS_CONTACT_PAIR_AABB_SKIP(XUPD, GAP)
+        IF (pair_aabb_skip) THEN
+          CYCLE
+        ENDIF
       
         ! Get node IDs for velocity interpolation
         DO J = 1, 4
@@ -175,7 +161,6 @@
      &                      NELTST_PROBE, ITYPTST_PROBE, &
      &                      .FALSE., probe_score_gauss, valid_gauss, &
      &                      min_pene_gauss)
-
           DT2T_PROBE = DT2T
           NELTST_PROBE = NELTST
           ITYPTST_PROBE = ITYPTST
@@ -194,7 +179,6 @@
      &                      NELTST_PROBE, ITYPTST_PROBE, &
      &                      .FALSE., probe_score_lobatto, &
      &                      valid_lobatto, min_pene_lobatto)
-
         ENDIF
 
         IF (OPTION == 2) THEN
@@ -247,6 +231,13 @@
           CYCLE
         ENDIF
 
+        CALL STS_PAIR_ACTIVITY_SHOULD_SKIP(NCYCLE_IN, &
+     &    STS_INTERFACE_ID, CAND_SEC_SEG_ID(I,1), &
+     &    CAND_MST_SEG_ID(I,1), selected_option, pair_activity_skip)
+        IF (pair_activity_skip) THEN
+          CYCLE
+        ENDIF
+
         ! Commit exactly one quadrature. Probe calls above are side-effect free.
         ! Normal penalty: d1 = 0.5*STIF*FAC; friction trial: d1_fric = 0.5*STIF (NTS STIF0).
         CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF(I), p_load_new, IMPACT, I, &
@@ -260,6 +251,9 @@
      &                    VISCFFRIC(MIN(I,MVSIZ)), DT2T, NELTST, ITYPTST, &
      &                    .TRUE., probe_score_gauss, valid_gauss, &
      &                    min_pene_gauss)
+        CALL STS_PAIR_ACTIVITY_UPDATE(NCYCLE_IN, STS_INTERFACE_ID, &
+     &    CAND_SEC_SEG_ID(I,1), CAND_MST_SEG_ID(I,1), selected_option, &
+     &    IMPACT, valid_gauss, min_pene_gauss, DBLE(GAP))
       
         IF (IMPACT == 1) THEN
           IMPACT_glob = 1
@@ -276,46 +270,11 @@
             FT_TOT(3) = FT_TOT(3) + p_friction(3*(J-1)+3)
           ENDDO
 
-          IF (CSV_OUTPUT_ENABLED) THEN
-!           Export two rows per contact pair:
-!           - surface 1 (primary nodes 1..4)
-!           - surface 2 (secondary nodes 5..8)
-            fx_prim = 0.0D0
-            fy_prim = 0.0D0
-            fz_prim = 0.0D0
-            fxf_prim = 0.0D0
-            fyf_prim = 0.0D0
-            fzf_prim = 0.0D0
-            DO J = 1, 4
-              fx_prim = fx_prim + p_load_new(3*(J-1)+1)
-              fy_prim = fy_prim + p_load_new(3*(J-1)+2)
-              fz_prim = fz_prim + p_load_new(3*(J-1)+3)
-              fxf_prim = fxf_prim + p_friction(3*(J-1)+1)
-              fyf_prim = fyf_prim + p_friction(3*(J-1)+2)
-              fzf_prim = fzf_prim + p_friction(3*(J-1)+3)
-            ENDDO
-
-            fx_sec = 0.0D0
-            fy_sec = 0.0D0
-            fz_sec = 0.0D0
-            fxf_sec = 0.0D0
-            fyf_sec = 0.0D0
-            fzf_sec = 0.0D0
-            DO J = 5, 8
-              fx_sec = fx_sec + p_load_new(3*(J-1)+1)
-              fy_sec = fy_sec + p_load_new(3*(J-1)+2)
-              fz_sec = fz_sec + p_load_new(3*(J-1)+3)
-              fxf_sec = fxf_sec + p_friction(3*(J-1)+1)
-              fyf_sec = fyf_sec + p_friction(3*(J-1)+2)
-              fzf_sec = fzf_sec + p_friction(3*(J-1)+3)
-            ENDDO
-
-            CALL STS_CONTACT_EXPORT_CSV_PAIR(LUX_STS, NCYCLE_IN, TIME_CUR, STS_INTERFACE_ID, &
-     &          CAND_MST_SEG_ID(I,1), CAND_SEC_SEG_ID(I,1), pair_max_penetration, &
-     &          fx_prim, fy_prim, fz_prim, fxf_prim, fyf_prim, fzf_prim, &
-     &          fx_sec, fy_sec, fz_sec, fxf_sec, fyf_sec, fzf_sec)
+          IF (L > MAX_STS_SIZE_ACTUAL .OR. &
+     &        K + 7 > MAX_STS_SIZE_ACTUAL*8) THEN
+            EXIT
           END IF
-      
+
           ! Save node IDs: Primary (1-4), Secondary (5-8)
           node_id_load(K:K+3) = CAND_MST_SEG_ID(I, 2:5)
           node_id_load(K+4:K+7) = CAND_SEC_SEG_ID(I, 2:5)
@@ -334,21 +293,79 @@
       
           L = L + 1
           
-          ! Safety check - prevent array overflow
+!         Stop after filling the last available pair-load slot.
           IF (L > MAX_STS_SIZE_ACTUAL .OR. K > MAX_STS_SIZE_ACTUAL*8) THEN
             EXIT
           END IF
         ENDIF
       ENDDO
-      IF (CSV_OUTPUT_ENABLED) THEN
-        CLOSE(LUX_STS)
-      END IF
 
-      DEALLOCATE(lobatto_gp_weight)
-      
       L_out = L
       END SUBROUTINE STS_CONTACTS_ASSEMBLE
 
+!=======================================================================
+!   STS_CONTACT_PAIR_AABB_SKIP
+!
+!   Skip segment pairs (in the narrow phase) whose primary and secondary axis-aligned boxes are
+!   separated by more than a conservative gap-scaled padding.
+!=======================================================================
+      LOGICAL FUNCTION STS_CONTACT_PAIR_AABB_SKIP(XPAIR, GAP_IN)
+      IMPLICIT NONE
+#include      "my_real.inc"
+      REAL*8, INTENT(IN) :: XPAIR(3,8)
+      my_real, INTENT(IN) :: GAP_IN
+      REAL*8, PARAMETER :: STS_AABB_SKIP_GAP_FACTOR = 1.5D0
+      REAL*8, PARAMETER :: STS_AABB_SKIP_ABS = 1.0D-12
+      REAL*8 :: MST_MIN(3), MST_MAX(3), SEC_MIN(3), SEC_MAX(3)
+      REAL*8 :: DELTA, SEP2, PAD
+      INTEGER :: A, J
+
+      STS_CONTACT_PAIR_AABB_SKIP = .FALSE.
+
+      DO A = 1, 3
+        MST_MIN(A) = XPAIR(A,1)
+        MST_MAX(A) = XPAIR(A,1)
+        SEC_MIN(A) = XPAIR(A,5)
+        SEC_MAX(A) = XPAIR(A,5)
+      ENDDO
+
+      DO J = 2, 4
+        DO A = 1, 3
+          MST_MIN(A) = MIN(MST_MIN(A), XPAIR(A,J))
+          MST_MAX(A) = MAX(MST_MAX(A), XPAIR(A,J))
+        ENDDO
+      ENDDO
+
+      DO J = 6, 8
+        DO A = 1, 3
+          SEC_MIN(A) = MIN(SEC_MIN(A), XPAIR(A,J))
+          SEC_MAX(A) = MAX(SEC_MAX(A), XPAIR(A,J))
+        ENDDO
+      ENDDO
+
+      SEP2 = 0.0D0
+      DO A = 1, 3
+        IF (MST_MAX(A) < SEC_MIN(A)) THEN
+          DELTA = SEC_MIN(A) - MST_MAX(A)
+        ELSE IF (SEC_MAX(A) < MST_MIN(A)) THEN
+          DELTA = MST_MIN(A) - SEC_MAX(A)
+        ELSE
+          DELTA = 0.0D0
+        ENDIF
+        SEP2 = SEP2 + DELTA * DELTA
+      ENDDO
+
+      PAD = MAX(DABS(DBLE(GAP_IN)) * STS_AABB_SKIP_GAP_FACTOR, &
+     &  STS_AABB_SKIP_ABS)
+      STS_CONTACT_PAIR_AABB_SKIP = SEP2 > PAD * PAD
+      END FUNCTION STS_CONTACT_PAIR_AABB_SKIP
+
+!=======================================================================
+!   STS_BUILD_LOBATTO_GP_WEIGHTS
+!
+!   Split Lobatto corner weight over duplicate secondary-segment/master-
+!   patch pairs so expanded patches do not multiply the same corner load.
+!=======================================================================
       SUBROUTINE STS_BUILD_LOBATTO_GP_WEIGHTS(COUNT_IN, CAPACITY, &
      & CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK, WEIGHT)
       IMPLICIT NONE
@@ -428,36 +445,3 @@
 
       DEALLOCATE(HASH_SEC_SEG, HASH_CORNER, HASH_COUNT)
       END SUBROUTINE STS_BUILD_LOBATTO_GP_WEIGHTS
-      
-      SUBROUTINE STS_CONTACT_EXPORT_CSV_PAIR(LUX_STS, NCYCLE_IN, TIME_CUR, STS_INTERFACE_ID, &
-     & MST_ENTITY_ID, SEC_ENTITY_ID, pair_max_penetration, &
-     & FX_PRIM, FY_PRIM, FZ_PRIM, FXF_PRIM, FYF_PRIM, FZF_PRIM, &
-     & FX_SEC, FY_SEC, FZ_SEC, FXF_SEC, FYF_SEC, FZF_SEC)
-      IMPLICIT NONE
-      INTEGER LUX_STS, NCYCLE_IN, STS_INTERFACE_ID, MST_ENTITY_ID, SEC_ENTITY_ID
-      REAL*8 TIME_CUR, pair_max_penetration
-      REAL*8 FX_PRIM, FY_PRIM, FZ_PRIM, FXF_PRIM, FYF_PRIM, FZF_PRIM
-      REAL*8 FX_SEC, FY_SEC, FZ_SEC, FXF_SEC, FYF_SEC, FZF_SEC
-      REAL*8 force_norm, fn_mag, ft_mag
-
-      force_norm = SQRT(FX_PRIM*FX_PRIM + FY_PRIM*FY_PRIM + FZ_PRIM*FZ_PRIM)
-      ft_mag = SQRT(FXF_PRIM*FXF_PRIM + FYF_PRIM*FYF_PRIM + FZF_PRIM*FZF_PRIM)
-      fn_mag = SQRT(MAX(0.0D0, (FX_PRIM-FXF_PRIM)*(FX_PRIM-FXF_PRIM) + &
-     &    (FY_PRIM-FYF_PRIM)*(FY_PRIM-FYF_PRIM) + (FZ_PRIM-FZF_PRIM)*(FZ_PRIM-FZF_PRIM)))
-      WRITE(LUX_STS,'(I0,'','',ES23.15,'','',I0,'','',I0)',ADVANCE='NO') &
-     &  NCYCLE_IN, TIME_CUR, ABS(STS_INTERFACE_ID), MST_ENTITY_ID
-      WRITE(LUX_STS,901) FX_PRIM, FY_PRIM, FZ_PRIM, force_norm, fn_mag, ft_mag, 1, &
-     &    pair_max_penetration
-
-      force_norm = SQRT(FX_SEC*FX_SEC + FY_SEC*FY_SEC + FZ_SEC*FZ_SEC)
-      ft_mag = SQRT(FXF_SEC*FXF_SEC + FYF_SEC*FYF_SEC + FZF_SEC*FZF_SEC)
-      fn_mag = SQRT(MAX(0.0D0, (FX_SEC-FXF_SEC)*(FX_SEC-FXF_SEC) + &
-     &    (FY_SEC-FYF_SEC)*(FY_SEC-FYF_SEC) + (FZ_SEC-FZF_SEC)*(FZ_SEC-FZF_SEC)))
-      WRITE(LUX_STS,'(I0,'','',ES23.15,'','',I0,'','',I0)',ADVANCE='NO') &
-     &  NCYCLE_IN, TIME_CUR, -ABS(STS_INTERFACE_ID), SEC_ENTITY_ID
-      WRITE(LUX_STS,901) FX_SEC, FY_SEC, FZ_SEC, force_norm, fn_mag, ft_mag, 1, &
-     &    pair_max_penetration
-
- 901  FORMAT ( ',', ES23.15, ',', ES23.15, ',', ES23.15, ',', ES23.15, ',', &
-     &    ES23.15, ',', ES23.15, ',', I0, ',', ES23.15)
-      END SUBROUTINE STS_CONTACT_EXPORT_CSV_PAIR

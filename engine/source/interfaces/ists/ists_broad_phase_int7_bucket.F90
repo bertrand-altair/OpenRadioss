@@ -47,7 +47,7 @@
         USE GROUPDEF_MOD,  ONLY : SURF_
         USE CONSTANT_MOD,  ONLY : ZERO
         USE ISTS_STS_BP_PERSIST_MOD, ONLY : ISTS_STS_BP_PERSIST_SAVE, &
-     &    ISTS_STS_BP_PERSIST_TOUCH, ISTS_STS_BP_PERSIST_TRY_RESTORE
+     &    ISTS_STS_BP_PERSIST_TRY_RESTORE
         IMPLICIT NONE
         PRIVATE
         PUBLIC :: STS_INT7_BUCKET_BROAD_PHASE
@@ -63,8 +63,7 @@
      &      NIN, INTBUF_TAB, IGRSURF, NSURF, SEC_SURF_IDX, MST_SURF_IDX, &
      &      X, NUMNOD, NSN, NRTM, MAX_STS_SIZE_ACTUAL, &
      &      CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK, &
-     &      CONT_ELEMENT, &
-     &      COUNT, OVERFLOW, D_MIN)
+     &      CONT_ELEMENT, COUNT, OVERFLOW, D_MIN)
 !-----------------------------------------------
 !   I m p l i c i t   T y p e s
 !-----------------------------------------------
@@ -92,20 +91,28 @@
 !-----------------------------------------------
 !   L o c a l   V a r i a b l e s
 !-----------------------------------------------
-          INTEGER, PARAMETER :: PERSIST_EXTRA_LIMIT = 4
-          INTEGER :: I_STOK, I, J, NSEC_BOUNDS, CAND_N_ABS, N_VALID
+          INTEGER :: I_STOK, I, NSEC_BOUNDS, CAND_N_ABS, N_VALID
           INTEGER :: COUNT_FRESH, COUNT_PERSIST, PERSIST_I, FRESH_I
           INTEGER :: OVERLAP_COUNT, MISSING_COUNT, FINAL_LIMIT
+          INTEGER :: FRESH_HASH_SIZE, OUT_HASH_SIZE, HASH_INDEX
           INTEGER, ALLOCATABLE :: CAND_SEC_SEG(:)
           INTEGER, ALLOCATABLE :: CAND_N_COMPACT(:), CAND_E_COMPACT(:)
           INTEGER, ALLOCATABLE :: FRESH_SEC_ID(:,:)
           INTEGER, ALLOCATABLE :: FRESH_MST_ID(:,:)
+          INTEGER, ALLOCATABLE :: FRESH_GP_MASK(:,:)
+          INTEGER, ALLOCATABLE :: FRESH_HASH_SEC(:)
+          INTEGER, ALLOCATABLE :: FRESH_HASH_MST(:)
+          INTEGER, ALLOCATABLE :: FRESH_HASH_INDEX(:)
+          INTEGER, ALLOCATABLE :: OUT_HASH_SEC(:)
+          INTEGER, ALLOCATABLE :: OUT_HASH_MST(:)
+          INTEGER, ALLOCATABLE :: OUT_HASH_INDEX(:)
           INTEGER, ALLOCATABLE :: PERSIST_SEC_ID(:,:)
           INTEGER, ALLOCATABLE :: PERSIST_MST_ID(:,:)
+          INTEGER, ALLOCATABLE :: PERSIST_GP_MASK(:,:)
           my_real, ALLOCATABLE :: FRESH_CONT_ELEMENT(:,:,:)
           my_real, ALLOCATABLE :: PERSIST_CONT_ELEMENT(:,:,:)
           LOGICAL :: PERSIST_RESTORED
-          LOGICAL :: PERSIST_AUGMENTED, PERSIST_STABILIZE, PAIR_EXISTS
+          LOGICAL :: PERSIST_STABILIZE, PAIR_EXISTS
 !-----------------------------------------------
 !   S o u r c e   L i n e s
 !-----------------------------------------------
@@ -117,7 +124,6 @@
           D_MIN = ZERO
 !
           IF (MAX_STS_SIZE_ACTUAL <= 0) RETURN
-          CAND_SEC_GP_MASK = 0
           IF (SEC_SURF_IDX <= 0 .OR. SEC_SURF_IDX > NSURF) RETURN
           IF (MST_SURF_IDX <= 0 .OR. MST_SURF_IDX > NSURF) RETURN
 !
@@ -126,14 +132,14 @@
 !         cycle (e.g. distance criterion), no fresh candidates exist.
           I_STOK = INTBUF_TAB%I_STOK(1)
           IF (I_STOK <= 0) THEN
-            ! Try to restore the last successful STS segment pairs from the cache.
+!           Reuse the last successful STS patch when no fresh INT7
+!           candidates are available.
             CALL ISTS_STS_BP_PERSIST_TRY_RESTORE( &
      &          NIN, X, NUMNOD, MAX_STS_SIZE_ACTUAL, &
-     &          COUNT, CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
-     &          PERSIST_RESTORED)
+     &          COUNT, CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &          CAND_SEC_GP_MASK, CONT_ELEMENT, PERSIST_RESTORED)
             IF (PERSIST_RESTORED) THEN
               IF (COUNT >= MAX_STS_SIZE_ACTUAL) OVERFLOW = .TRUE.
-              IF (COUNT > 0) CAND_SEC_GP_MASK(1:COUNT, 1:4) = 1
               RETURN
             END IF
             RETURN
@@ -144,9 +150,9 @@
             NSEC_BOUNDS = INTBUF_TAB%S_NSV
           ENDIF
 !
-!         Keep INT7 bucket slots which reached the legacy active-force
-!         state.  Testing positive fresh bucket slots here over-includes
-!         candidate patches and destabilizes the STS force integration.
+!         Keep only INT7 bucket slots that reached the legacy active state.
+!         Positive bucket slots are broad candidates only; remapping them
+!         directly to STS segment pairs over-couples curved contact patches.
           N_VALID = 0
           ALLOCATE(CAND_N_COMPACT(I_STOK), CAND_E_COMPACT(I_STOK))
           DO I = 1, I_STOK
@@ -166,14 +172,14 @@
           IF (N_VALID <= 0) THEN
             DEALLOCATE(CAND_N_COMPACT)
             DEALLOCATE(CAND_E_COMPACT)
-            ! Try to restore the last successful STS segment pairs from the cache.
+!           Reuse the last successful STS patch when INT7 produced no
+!           active node/segment candidates.
             CALL ISTS_STS_BP_PERSIST_TRY_RESTORE( &
      &          NIN, X, NUMNOD, MAX_STS_SIZE_ACTUAL, &
-     &          COUNT, CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
-     &          PERSIST_RESTORED)
+     &          COUNT, CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &          CAND_SEC_GP_MASK, CONT_ELEMENT, PERSIST_RESTORED)
             IF (PERSIST_RESTORED) THEN
               IF (COUNT >= MAX_STS_SIZE_ACTUAL) OVERFLOW = .TRUE.
-              IF (COUNT > 0) CAND_SEC_GP_MASK(1:COUNT, 1:4) = 1
               RETURN
             END IF
             RETURN
@@ -188,61 +194,78 @@
      &        IGRSURF, CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
      &        CAND_SEC_GP_MASK, &
      &        MAX_STS_SIZE_ACTUAL, NSURF, SEC_SURF_IDX, MST_SURF_IDX)
-!
+
           COUNT_FRESH = COUNT
-          PERSIST_AUGMENTED = .FALSE.
           IF (COUNT_FRESH > 0) THEN
             ALLOCATE(PERSIST_SEC_ID(MAX_STS_SIZE_ACTUAL, 5))
             ALLOCATE(PERSIST_MST_ID(MAX_STS_SIZE_ACTUAL, 5))
+            ALLOCATE(PERSIST_GP_MASK(MAX_STS_SIZE_ACTUAL, 4))
             ALLOCATE(PERSIST_CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8))
-            ! Try to restore the last successful STS segment pairs from the cache.
             CALL ISTS_STS_BP_PERSIST_TRY_RESTORE( &
      &        NIN, X, NUMNOD, MAX_STS_SIZE_ACTUAL, &
      &        COUNT_PERSIST, PERSIST_SEC_ID, PERSIST_MST_ID, &
-     &        PERSIST_CONT_ELEMENT, PERSIST_RESTORED)
+     &        PERSIST_GP_MASK, PERSIST_CONT_ELEMENT, PERSIST_RESTORED)
 
-!           A partial INT7 candidate wipe is just as damaging to STS as a
-!           full COUNT=0 wipe: the integrated patch loses support abruptly.
-!           Compare partner identities, not only pair counts.  If the
-!           fresh bucket set drops cached partners or expands abruptly,
-!           rebuild from the last stable patch and add only a few new
-!           fresh pairs. Projection/penetration still decides which pairs
-!           actually carry force.
+!           A partial INT7 candidate wipe is as harmful to STS as a full
+!           wipe because the integrated patch can lose support abruptly.
+!           Keep cached segment pairs when fresh active INT7 candidates
+!           drop existing partners, but do not limit legitimate patch
+!           growth during impact.
             IF (PERSIST_RESTORED .AND. COUNT_PERSIST > 0) THEN
+              FRESH_HASH_SIZE = MAX(17, 4 * COUNT_FRESH + 1)
+              ALLOCATE(FRESH_HASH_SEC(FRESH_HASH_SIZE))
+              ALLOCATE(FRESH_HASH_MST(FRESH_HASH_SIZE))
+              ALLOCATE(FRESH_HASH_INDEX(FRESH_HASH_SIZE))
+              FRESH_HASH_SEC = 0
+              FRESH_HASH_MST = 0
+              FRESH_HASH_INDEX = 0
+              DO FRESH_I = 1, COUNT_FRESH
+                CALL STS_PAIR_HASH_INSERT(CAND_SEC_SEG_ID(FRESH_I, 1), &
+     &            CAND_MST_SEG_ID(FRESH_I, 1), FRESH_I, &
+     &            FRESH_HASH_SIZE, FRESH_HASH_SEC, FRESH_HASH_MST, &
+     &            FRESH_HASH_INDEX, HASH_INDEX)
+              ENDDO
+
               OVERLAP_COUNT = 0
               MISSING_COUNT = 0
               DO PERSIST_I = 1, COUNT_PERSIST
-                PAIR_EXISTS = .FALSE.
-                DO J = 1, COUNT_FRESH
-                  IF (CAND_SEC_SEG_ID(J, 1) == &
-     &                PERSIST_SEC_ID(PERSIST_I, 1) .AND. &
-     &                CAND_MST_SEG_ID(J, 1) == &
-     &                PERSIST_MST_ID(PERSIST_I, 1)) THEN
-                    PAIR_EXISTS = .TRUE.
-                    EXIT
-                  ENDIF
-                ENDDO
+                PAIR_EXISTS = STS_PAIR_HASH_CONTAINS( &
+     &            PERSIST_SEC_ID(PERSIST_I, 1), &
+     &            PERSIST_MST_ID(PERSIST_I, 1), FRESH_HASH_SIZE, &
+     &            FRESH_HASH_SEC, FRESH_HASH_MST, FRESH_HASH_INDEX)
                 IF (PAIR_EXISTS) THEN
                   OVERLAP_COUNT = OVERLAP_COUNT + 1
                 ELSE
                   MISSING_COUNT = MISSING_COUNT + 1
                 ENDIF
               ENDDO
-              PERSIST_STABILIZE = MISSING_COUNT > 0 .OR. &
-     &          COUNT_FRESH > COUNT_PERSIST + PERSIST_EXTRA_LIMIT
+
+              PERSIST_STABILIZE = MISSING_COUNT > 0
               IF (PERSIST_STABILIZE .AND. OVERLAP_COUNT > 0) THEN
                 ALLOCATE(FRESH_SEC_ID(COUNT_FRESH, 5))
                 ALLOCATE(FRESH_MST_ID(COUNT_FRESH, 5))
+                ALLOCATE(FRESH_GP_MASK(COUNT_FRESH, 4))
                 ALLOCATE(FRESH_CONT_ELEMENT(COUNT_FRESH, 3, 8))
+
                 FRESH_SEC_ID(1:COUNT_FRESH, 1:5) = &
      &            CAND_SEC_SEG_ID(1:COUNT_FRESH, 1:5)
                 FRESH_MST_ID(1:COUNT_FRESH, 1:5) = &
      &            CAND_MST_SEG_ID(1:COUNT_FRESH, 1:5)
+                FRESH_GP_MASK(1:COUNT_FRESH, 1:4) = &
+     &            CAND_SEC_GP_MASK(1:COUNT_FRESH, 1:4)
                 FRESH_CONT_ELEMENT(1:COUNT_FRESH, 1:3, 1:8) = &
      &            CONT_ELEMENT(1:COUNT_FRESH, 1:3, 1:8)
+
                 COUNT = 0
-                FINAL_LIMIT = MIN(MAX_STS_SIZE_ACTUAL, &
-     &            COUNT_PERSIST + PERSIST_EXTRA_LIMIT)
+                FINAL_LIMIT = MAX_STS_SIZE_ACTUAL
+                OUT_HASH_SIZE = MAX(17, 4 * FINAL_LIMIT + 1)
+                ALLOCATE(OUT_HASH_SEC(OUT_HASH_SIZE))
+                ALLOCATE(OUT_HASH_MST(OUT_HASH_SIZE))
+                ALLOCATE(OUT_HASH_INDEX(OUT_HASH_SIZE))
+                OUT_HASH_SEC = 0
+                OUT_HASH_MST = 0
+                OUT_HASH_INDEX = 0
+
                 DO PERSIST_I = 1, COUNT_PERSIST
                   IF (COUNT >= MAX_STS_SIZE_ACTUAL) THEN
                     OVERFLOW = .TRUE.
@@ -253,40 +276,55 @@
      &              PERSIST_SEC_ID(PERSIST_I, 1:5)
                   CAND_MST_SEG_ID(COUNT, 1:5) = &
      &              PERSIST_MST_ID(PERSIST_I, 1:5)
-                  CAND_SEC_GP_MASK(COUNT, 1:4) = 1
+                  CAND_SEC_GP_MASK(COUNT, 1:4) = &
+     &              PERSIST_GP_MASK(PERSIST_I, 1:4)
                   CONT_ELEMENT(COUNT, 1:3, 1:8) = &
      &              PERSIST_CONT_ELEMENT(PERSIST_I, 1:3, 1:8)
+                  CALL STS_PAIR_HASH_INSERT(CAND_SEC_SEG_ID(COUNT, 1), &
+     &              CAND_MST_SEG_ID(COUNT, 1), COUNT, OUT_HASH_SIZE, &
+     &              OUT_HASH_SEC, OUT_HASH_MST, OUT_HASH_INDEX, &
+     &              HASH_INDEX)
                 ENDDO
+
                 DO FRESH_I = 1, COUNT_FRESH
                   IF (COUNT >= FINAL_LIMIT) EXIT
-                  PAIR_EXISTS = .FALSE.
-                  DO J = 1, COUNT
-                    IF (FRESH_SEC_ID(FRESH_I, 1) == &
-     &                  CAND_SEC_SEG_ID(J, 1) .AND. &
-     &                  FRESH_MST_ID(FRESH_I, 1) == &
-     &                  CAND_MST_SEG_ID(J, 1)) THEN
-                      PAIR_EXISTS = .TRUE.
-                      EXIT
-                    ENDIF
-                  ENDDO
+                  PAIR_EXISTS = STS_PAIR_HASH_CONTAINS( &
+     &              FRESH_SEC_ID(FRESH_I, 1), FRESH_MST_ID(FRESH_I, 1), &
+     &              OUT_HASH_SIZE, OUT_HASH_SEC, OUT_HASH_MST, &
+     &              OUT_HASH_INDEX)
                   IF (PAIR_EXISTS) CYCLE
+
                   COUNT = COUNT + 1
                   CAND_SEC_SEG_ID(COUNT, 1:5) = &
      &              FRESH_SEC_ID(FRESH_I, 1:5)
                   CAND_MST_SEG_ID(COUNT, 1:5) = &
      &              FRESH_MST_ID(FRESH_I, 1:5)
-                  CAND_SEC_GP_MASK(COUNT, 1:4) = 1
+                  CAND_SEC_GP_MASK(COUNT, 1:4) = &
+     &              FRESH_GP_MASK(FRESH_I, 1:4)
                   CONT_ELEMENT(COUNT, 1:3, 1:8) = &
      &              FRESH_CONT_ELEMENT(FRESH_I, 1:3, 1:8)
+                  CALL STS_PAIR_HASH_INSERT(CAND_SEC_SEG_ID(COUNT, 1), &
+     &              CAND_MST_SEG_ID(COUNT, 1), COUNT, OUT_HASH_SIZE, &
+     &              OUT_HASH_SEC, OUT_HASH_MST, OUT_HASH_INDEX, &
+     &              HASH_INDEX)
                 ENDDO
+
+                DEALLOCATE(OUT_HASH_SEC)
+                DEALLOCATE(OUT_HASH_MST)
+                DEALLOCATE(OUT_HASH_INDEX)
                 DEALLOCATE(FRESH_SEC_ID)
                 DEALLOCATE(FRESH_MST_ID)
+                DEALLOCATE(FRESH_GP_MASK)
                 DEALLOCATE(FRESH_CONT_ELEMENT)
-                PERSIST_AUGMENTED = .TRUE.
               ENDIF
+              DEALLOCATE(FRESH_HASH_SEC)
+              DEALLOCATE(FRESH_HASH_MST)
+              DEALLOCATE(FRESH_HASH_INDEX)
             ENDIF
+
             DEALLOCATE(PERSIST_SEC_ID)
             DEALLOCATE(PERSIST_MST_ID)
+            DEALLOCATE(PERSIST_GP_MASK)
             DEALLOCATE(PERSIST_CONT_ELEMENT)
           ENDIF
 !
@@ -297,23 +335,17 @@
           IF (COUNT >= MAX_STS_SIZE_ACTUAL) OVERFLOW = .TRUE.
 !
           IF (COUNT > 0) THEN
-            IF (PERSIST_AUGMENTED) THEN
-              ! Touch the cached STS segment pairs to update the last save cycle number.
-              CALL ISTS_STS_BP_PERSIST_TOUCH(NIN)
-            ELSE
-              ! Save the current STS segment pairs to the cache.
-              CALL ISTS_STS_BP_PERSIST_SAVE(NIN, COUNT, CAND_SEC_SEG_ID, &
-     &            CAND_MST_SEG_ID, MAX_STS_SIZE_ACTUAL)
-            ENDIF
+!           Save the current STS segment patch for later candidate dropouts.
+            CALL ISTS_STS_BP_PERSIST_SAVE(NIN, COUNT, CAND_SEC_SEG_ID, &
+     &          CAND_MST_SEG_ID, CAND_SEC_GP_MASK, MAX_STS_SIZE_ACTUAL)
           ELSE
-            ! Try to restore the last successful STS segment pairs from the cache.
+!           Fresh remap produced no pairs; try the last successful STS patch.
             CALL ISTS_STS_BP_PERSIST_TRY_RESTORE( &
      &          NIN, X, NUMNOD, MAX_STS_SIZE_ACTUAL, &
-     &          COUNT, CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CONT_ELEMENT, &
-     &          PERSIST_RESTORED)
+     &          COUNT, CAND_SEC_SEG_ID, CAND_MST_SEG_ID, &
+     &          CAND_SEC_GP_MASK, CONT_ELEMENT, PERSIST_RESTORED)
             IF (PERSIST_RESTORED) THEN
               IF (COUNT >= MAX_STS_SIZE_ACTUAL) OVERFLOW = .TRUE.
-              IF (COUNT > 0) CAND_SEC_GP_MASK(1:COUNT, 1:4) = 1
               DEALLOCATE(CAND_SEC_SEG)
               RETURN
             END IF
@@ -321,4 +353,80 @@
 !
           DEALLOCATE(CAND_SEC_SEG)
         END SUBROUTINE STS_INT7_BUCKET_BROAD_PHASE
+
+!=======================================================================
+!   STS_PAIR_HASH_INSERT
+!
+!   Insert a secondary/master segment pair into an open-addressed hash.
+!=======================================================================
+        SUBROUTINE STS_PAIR_HASH_INSERT(SEC_SEG, MST_SEG, PAIR_INDEX_IN, &
+     &    HASH_SIZE, HASH_SEC, HASH_MST, HASH_INDEX, HASH_INDEX_OUT)
+          INTEGER, INTENT(IN) :: SEC_SEG, MST_SEG, PAIR_INDEX_IN
+          INTEGER, INTENT(IN) :: HASH_SIZE
+          INTEGER, INTENT(INOUT) :: HASH_SEC(HASH_SIZE)
+          INTEGER, INTENT(INOUT) :: HASH_MST(HASH_SIZE)
+          INTEGER, INTENT(INOUT) :: HASH_INDEX(HASH_SIZE)
+          INTEGER, INTENT(OUT) :: HASH_INDEX_OUT
+          INTEGER :: IDX, PROBE
+          INTEGER(KIND=8) :: HKEY
+
+          HASH_INDEX_OUT = 0
+          IF (SEC_SEG <= 0 .OR. MST_SEG <= 0) RETURN
+          IF (HASH_SIZE <= 0) RETURN
+
+          HKEY = INT(SEC_SEG, KIND=8) * INT(1000003, KIND=8) + &
+     &      INT(MST_SEG, KIND=8)
+          IDX = INT(MOD(HKEY, INT(HASH_SIZE, KIND=8))) + 1
+
+          DO PROBE = 1, HASH_SIZE
+            IF (HASH_INDEX(IDX) == 0) THEN
+              HASH_SEC(IDX) = SEC_SEG
+              HASH_MST(IDX) = MST_SEG
+              HASH_INDEX(IDX) = PAIR_INDEX_IN
+              HASH_INDEX_OUT = IDX
+              RETURN
+            ENDIF
+            IF (HASH_SEC(IDX) == SEC_SEG .AND. &
+     &          HASH_MST(IDX) == MST_SEG) THEN
+              HASH_INDEX_OUT = IDX
+              RETURN
+            ENDIF
+            IDX = IDX + 1
+            IF (IDX > HASH_SIZE) IDX = 1
+          ENDDO
+        END SUBROUTINE STS_PAIR_HASH_INSERT
+
+!=======================================================================
+!   STS_PAIR_HASH_CONTAINS
+!
+!   Return whether an open-addressed hash contains a segment pair.
+!=======================================================================
+        LOGICAL FUNCTION STS_PAIR_HASH_CONTAINS(SEC_SEG, MST_SEG, &
+     &    HASH_SIZE, HASH_SEC, HASH_MST, HASH_INDEX)
+          INTEGER, INTENT(IN) :: SEC_SEG, MST_SEG, HASH_SIZE
+          INTEGER, INTENT(IN) :: HASH_SEC(HASH_SIZE)
+          INTEGER, INTENT(IN) :: HASH_MST(HASH_SIZE)
+          INTEGER, INTENT(IN) :: HASH_INDEX(HASH_SIZE)
+          INTEGER :: IDX, PROBE
+          INTEGER(KIND=8) :: HKEY
+
+          STS_PAIR_HASH_CONTAINS = .FALSE.
+          IF (SEC_SEG <= 0 .OR. MST_SEG <= 0) RETURN
+          IF (HASH_SIZE <= 0) RETURN
+
+          HKEY = INT(SEC_SEG, KIND=8) * INT(1000003, KIND=8) + &
+     &      INT(MST_SEG, KIND=8)
+          IDX = INT(MOD(HKEY, INT(HASH_SIZE, KIND=8))) + 1
+
+          DO PROBE = 1, HASH_SIZE
+            IF (HASH_INDEX(IDX) == 0) RETURN
+            IF (HASH_SEC(IDX) == SEC_SEG .AND. &
+     &          HASH_MST(IDX) == MST_SEG) THEN
+              STS_PAIR_HASH_CONTAINS = .TRUE.
+              RETURN
+            ENDIF
+            IDX = IDX + 1
+            IF (IDX > HASH_SIZE) IDX = 1
+          ENDDO
+        END FUNCTION STS_PAIR_HASH_CONTAINS
       END MODULE STS_BROAD_PHASE_INT7_BUCKET_MOD

@@ -74,7 +74,8 @@ C-----------------------------------------------
       USE H3D_MOD
       USE MULTI_FVM_MOD
       USE INTER_SORTING_MOD
-      USE ISTS_STS_BP_ALGO_MOD, ONLY : STS_BP_ALGO,STS_BP_ALGO_INT7_BUCKET
+      USE ISTS_STS_BP_ALGO_MOD, ONLY : STS_BP_ALGO,
+     .  STS_BP_ALGO_INT7_BUCKET, STS_INT7_BUCKET_SORT_DECIDE
       use check_sorting_criteria_mod , only : check_sorting_criteria
       use glob_therm_mod
       use element_mod , only : nixs
@@ -137,16 +138,21 @@ C-----------------------------------------------
 
       LOGICAL TYPE18
       INTEGER :: NRTM,NSN,NMN,NTY
-      logical :: need_computation
+      logical :: need_computation, sts_time_active
 C-----------------------------------------------
       ! --------------
       ! check if the current interface needs to be sorted
-      call check_sorting_criteria( need_computation,nin,npari,nspmd,  
+      call check_sorting_criteria( need_computation,nin,npari,nspmd,
      .                             itask,ipari(1,nin),tt,intbuf_tab )
-C     INT7_BUCKET broad-phase consumes fresh INT7 CAND_N/CAND_E every
-C     cycle; do not reuse stale lists when distance>0 skips sorting.
-      if(IPARI(105,NIN)==1.AND.STS_BP_ALGO==STS_BP_ALGO_INT7_BUCKET)
-     .   need_computation = .TRUE.
+      sts_time_active = INTBUF_TAB%VARIABLES(t_start_index) <= TT
+     .  .AND. TT <= INTBUF_TAB%VARIABLES(t_stop_index)
+
+!     Apply the STS INT7-bucket sort-reuse policy at this Type 7
+!     triangular sort entry point.
+      CALL STS_INT7_BUCKET_SORT_DECIDE(NCYCLE, sts_time_active,
+     .  IPARI(105,NIN), STS_BP_ALGO, INTBUF_TAB%I_STOK(1),
+     .  IPARI(22,NIN), IPARI(31,NIN), NUM_IMP, IPARI(85,NIN),
+     .  need_computation)
       if( .not.need_computation ) return
       ! --------------
       I_MEM  = 0
