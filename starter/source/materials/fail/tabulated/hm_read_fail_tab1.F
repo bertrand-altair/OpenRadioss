@@ -52,6 +52,7 @@ C-----------------------------------------------
       USE SUBMODEL_MOD
       USE HM_OPTION_READ_MOD 
       USE TABLE_MOD
+      use my_alloc_mod
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -134,6 +135,13 @@ Card5
       CALL HM_GET_FLOATV ('Shear_limit' ,SHRF        ,IS_AVAILABLE,LSUBMODEL,UNITAB)  
       CALL HM_GET_FLOATV ('Biax_limit'  ,BIAXF       ,IS_AVAILABLE,LSUBMODEL,UNITAB)  
 c-----------------------------------------------------------------------
+!
+      !< /FAIL/TAB1 obsolete message
+      CALL ANCMSG(MSGID=3145,
+     .            MSGTYPE=MSGWARNING,
+     .            ANMODE=ANINFO_BLIND,
+     .            I1=MAT_ID)
+!
       ! Error massage: 'table1_ID' is mandatory:
       IF (ITAB_EPSF == 0) THEN
         CALL ANCMSG(MSGID=2068, MSGTYPE=MSGERROR, ANMODE=ANINFO_BLIND,
@@ -206,10 +214,10 @@ c-----------------------------------------------------------------------
       FAIL%NMOD    = 0
       FAIL%PTHK    = PTHKF      
 c            
-      ALLOCATE (FAIL%UPARAM(FAIL%NUPARAM))
-      ALLOCATE (FAIL%IPARAM(FAIL%NIPARAM))
-      ALLOCATE (FAIL%IFUNC (FAIL%NFUNC))
-      ALLOCATE (FAIL%TABLE (FAIL%NTABLE))
+      call my_alloc(FAIL%UPARAM, FAIL%NUPARAM, "FAIL%UPARAM")
+      call my_alloc(FAIL%IPARAM, FAIL%NIPARAM, "FAIL%IPARAM")
+      call my_alloc(FAIL%IFUNC, FAIL%NFUNC, "FAIL%IFUNC")
+      call my_alloc(FAIL%TABLE, FAIL%NTABLE, "FAIL%TABLE")
 c
       FAIL%UPARAM(1) = ISOLID
       FAIL%UPARAM(2) = IFAIL_SH

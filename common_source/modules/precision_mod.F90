@@ -49,6 +49,7 @@
 !||    arezon                                   ../engine/source/ale/arezon.F90
 !||    arruda_boyce                             ../starter/source/materials/mat/mat092/law92_nlsqf.F90
 !||    arruda_boyce_dyda                        ../starter/source/materials/mat/mat092/law92_nlsqf.F90
+!||    bbc2005_calcul_coeffs                    ../starter/source/materials/mat/mat131/yield_criterion/bbc2005_calcul_coeffs.F90
 !||    bcs_mod                                  ../common_source/modules/boundary_conditions/bcs_mod.F90
 !||    bcs_nrf                                  ../engine/source/boundary_conditions/bcs_nrf.F90
 !||    bcs_wall_trigger                         ../engine/source/boundary_conditions/bcs_wall_trigger.F90
@@ -60,6 +61,7 @@
 !||    brokmann_elem_renum                      ../starter/source/materials/fail/windshield_alter/brokmann_elem_spmd_renum.F90
 !||    brokmann_random                          ../starter/source/materials/fail/windshield_alter/brokmann_random.F90
 !||    brokmann_random_def_mod                  ../common_source/modules/brokmann_random_def_mod.F90
+!||    calc_m                                   ../engine/source/materials/mat/mat136/sigeps136g.F90
 !||    calculp2                                 ../starter/source/materials/mat/mat057/calculp2.F90
 !||    check_sorting_criteria                   ../engine/source/interfaces/intsort/check_sorting_criteria.F90
 !||    chk_shell_offset                         ../starter/source/elements/shell/shell_offset/chk_shell_offset.F90
@@ -168,6 +170,7 @@
 !||    finter_mixed_mod                         ../engine/source/tools/finter_mixed.F90
 !||    fix_principal_dirs                       ../engine/source/materials/mat/mat130/sigeps130.F90
 !||    force                                    ../engine/source/loads/general/force.F90
+!||    forintc_prepare_gpu                      ../engine/source/elements/shell/coque/shell_internal_forces.F90
 !||    fpcont2_max_output                       ../engine/source/output/h3d/h3d_results/fpcont2_max_output.F90
 !||    fpcont2_min_output                       ../engine/source/output/h3d/h3d_results/fpcont2_min_output.F90
 !||    fractal_dmg_init                         ../starter/source/materials/fail/fractal/fractal_dmg_init.F90
@@ -190,6 +193,9 @@
 !||    get_volume_area                          ../engine/source/airbag/get_volume_area.F90
 !||    ghost_shells_mod                         ../engine/source/engine/node_spliting/ghost_shells.F90
 !||    glob_therm_mod                           ../common_source/modules/mat_elem/glob_therm_mod.F90
+!||    gpu_shell_internal_forces                ../engine/source/elements/shell/coque/shell_internal_forces.F90
+!||    gpu_shell_launch_async                   ../engine/source/elements/shell/coque/shell_internal_forces.F90
+!||    gpu_shell_sync_scatter                   ../engine/source/elements/shell/coque/shell_internal_forces.F90
 !||    gradient_reconstruction_new              ../engine/source/ale/alemuscl/gradient_reconstruction.F90
 !||    granular51                               ../engine/source/materials/mat/mat051/granular51.F90
 !||    group_param_mod                          ../common_source/modules/mat_elem/group_param_mod.F90
@@ -202,6 +208,7 @@
 !||    hm_pre_read_preload_axial                ../starter/source/loads/general/preload/hm_read_preload_axial.F90
 !||    hm_preread_inivel                        ../starter/source/initial_conditions/general/inivel/hm_preread_inivel.F90
 !||    hm_preread_skw                           ../starter/source/tools/skew/hm_preread_skw.F90
+!||    hm_read_admas                            ../starter/source/tools/admas/hm_read_admas.F
 !||    hm_read_bcs_nrf                          ../starter/source/boundary_conditions/hm_read_bcs_nrf.F90
 !||    hm_read_bcs_wall                         ../starter/source/boundary_conditions/hm_read_bcs_wall.F90
 !||    hm_read_ebcs_cyclic                      ../starter/source/boundary_conditions/ebcs/hm_read_ebcs_cyclic.F90
@@ -250,6 +257,7 @@
 !||    hm_read_mat133                           ../starter/source/materials/mat/mat133/hm_read_mat133.F90
 !||    hm_read_mat134                           ../starter/source/materials/mat/mat134/hm_read_mat134.F90
 !||    hm_read_mat135                           ../starter/source/materials/mat/mat135/hm_read_mat135.F90
+!||    hm_read_mat136                           ../starter/source/materials/mat/mat136/hm_read_mat136.F90
 !||    hm_read_mat163                           ../starter/source/materials/mat/mat163/hm_read_mat163.F90
 !||    hm_read_mat169_arup                      ../starter/source/materials/mat/mat169/hm_read_mat169.F90
 !||    hm_read_mat50                            ../starter/source/materials/mat/mat050/hm_read_mat50.F90
@@ -281,6 +289,7 @@
 !||    hm_read_yield_criterion                  ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion.F90
 !||    hm_read_yield_criterion_barlat1989       ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_barlat1989.F90
 !||    hm_read_yield_criterion_barlat2000       ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_barlat2000.F90
+!||    hm_read_yield_criterion_bbc2005          ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_BBC2005.F90
 !||    hm_read_yield_criterion_hershey          ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_hershey.F90
 !||    hm_read_yield_criterion_hill             ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_hill.F90
 !||    hm_read_yield_criterion_vonmises         ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_vonmises.F90
@@ -329,7 +338,6 @@
 !||    law123_upd                               ../starter/source/materials/mat/mat123/law123_upd.F90
 !||    law129_init                              ../starter/source/materials/mat/mat129/law129_init.F90
 !||    law133_upd                               ../starter/source/materials/mat/mat133/law133_upd.F90
-!||    law163_upd                               ../starter/source/materials/mat/mat163/law163_upd.F90
 !||    law190_upd                               ../starter/source/materials/mat/mat190/law190_upd.F90
 !||    law42c_ini                               ../starter/source/materials/mat/mat042/law42c_ini.F90
 !||    law76_func_comp                          ../starter/source/materials/mat/mat076/law76_func_comp.F90
@@ -376,6 +384,7 @@
 !||    nice_solids                              ../engine/source/materials/mat/mat131/return_mapping/nice_solids.F90
 !||    nodal_arrays_mod                         ../common_source/modules/nodal_arrays.F90
 !||    offset_nproj                             ../engine/source/interfaces/shell_offset/offset_nproj.F90
+!||    optiondef_mod                            ../common_source/modules/optiondef_mod.F
 !||    order3                                   ../engine/source/materials/mat/mat130/sigeps130.F90
 !||    output_mod                               ../common_source/modules/output/output_mod.F90
 !||    parith_on_mod                            ../common_source/modules/parith_on_mod.F90
@@ -495,6 +504,7 @@
 !||    sh_offset_jonct_chk                      ../starter/source/elements/shell/shell_offset/sh_offset_jonkt_chk.F90
 !||    sh_offset_nproj                          ../starter/source/elements/shell/shell_offset/shell_offset_nproj.F90
 !||    sh_offset_setn                           ../starter/source/elements/shell/shell_offset/sh_offset_setn.F90
+!||    shell_gpu_mod                            ../engine/source/elements/shell/coque/shell_gpu_mod.F90
 !||    shell_offset_ini                         ../starter/source/elements/shell/shell_offset/shell_offset_ini.F90
 !||    shell_offset_wm_ini                      ../engine/source/elements/shell/shell_offset_wm_ini.F90
 !||    shell_offsetp                            ../starter/source/elements/shell/shell_offset/shell_offsetp.F90
@@ -519,6 +529,7 @@
 !||    sigeps132c                               ../engine/source/materials/mat/mat132/sigeps132c.F90
 !||    sigeps133                                ../engine/source/materials/mat/mat133/sigeps133.F90
 !||    sigeps134s                               ../engine/source/materials/mat/mat134/sigeps134s.F90
+!||    sigeps136g                               ../engine/source/materials/mat/mat136/sigeps136g.F90
 !||    sigeps163                                ../engine/source/materials/mat/mat163/sigeps163.F90
 !||    sigeps169_connect                        ../engine/source/materials/mat/mat169/sigeps169_connect.F90
 !||    sigeps50s                                ../engine/source/materials/mat/mat050/sigeps50s.F90
@@ -593,6 +604,7 @@
 !||    xyz16                                    ../engine/source/output/anim/generate/monvol_anim.F90
 !||    yield_criterion_barlat1989               ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_barlat1989.F90
 !||    yield_criterion_barlat2000               ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_barlat2000.F90
+!||    yield_criterion_bbc2005                  ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_BBC2005.F90
 !||    yield_criterion_hershey                  ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_hershey.F90
 !||    yield_criterion_hill                     ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_hill.F90
 !||    yield_criterion_vonmises                 ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_vonmises.F90

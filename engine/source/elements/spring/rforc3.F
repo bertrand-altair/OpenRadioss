@@ -78,6 +78,8 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    element_mod         ../common_source/modules/elements/element_mod.F90
 !||    h3d_mod             ../engine/share/modules/h3d_mod.F
 !||    message_mod         ../engine/share/message_module/message_mod.F
+!||    my_alloc_mod        ../common_source/tools/memory/my_alloc.F90
+!||    my_dealloc_mod      ../common_source/tools/memory/my_dealloc.F90
 !||    preload_axial_mod   ../engine/source/elements/spring/preload_axial.F90
 !||    python_funct_mod    ../common_source/modules/python_mod.F90
 !||    sensor_mod          ../common_source/modules/sensor_mod.F90
@@ -116,6 +118,8 @@ C-----------------------------------------------
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
+      use my_alloc_mod
+      use my_dealloc_mod, only : my_dealloc
 #include      "implicit_f.inc"
 C-----------------------------------------------
 C   G l o b a l   P a r a m e t e r s
@@ -909,7 +913,7 @@ C
              USER_VR_REPCVTY(I) = GBUF%VR_REPCVT(II(2)+I-1)
              USER_VR_REPCVTZ(I) = GBUF%VR_REPCVT(II(3)+I-1)
           ENDDO
-          ALLOCATE(USER_UVAR(NUVAR*NEL))
+          call my_alloc(USER_UVAR, NUVAR*NEL, "USER_UVAR")
           USER_UVAR(1:NUVAR*NEL)=GBUF%VAR(1:NUVAR*NEL)
         ENDIF
 
@@ -993,7 +997,7 @@ C
              GBUF%VR_REPCVT(II(3)+I-1) = USER_VR_REPCVTZ(I)
           ENDDO
           GBUF%VAR(1:NUVAR*NEL) = USER_UVAR(1:NUVAR*NEL)
-          DEALLOCATE(USER_UVAR)
+          call my_dealloc(USER_UVAR)
         ENDIF
 C
         DO I=JFT,JLT

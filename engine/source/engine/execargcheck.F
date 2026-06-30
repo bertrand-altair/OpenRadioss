@@ -26,7 +26,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    radioss0                ../engine/source/engine/radioss0.F
 !||--- calls      -----------------------------------------------------
 !||    arret                   ../engine/source/system/arret.F
-!||    build_msg               ../common_source/tools/memory/my_alloc.F90
+!||    build_msg               ../common_source/tools/memory/my_alloc_tools.F90
 !||    isanargument            ../engine/source/engine/execargcheck.F
 !||    pexecinfo               ../engine/source/engine/execargcheck.F
 !||    phelpinfo               ../engine/source/engine/execargcheck.F
@@ -115,6 +115,7 @@ C-----------------------------------------------
        MDS_PATHI = 0
        MDS_DIRI = 0
        GOT_PREVIEW= 0
+       GPU = 0
 
        ! Initialize MDS_PATH Array
        MDS_PATH=''
@@ -221,6 +222,8 @@ C -MEM-MAP
              GOT_INSPIRE_ALM=1
           CASE ( '-INSPIRE')
              GOT_INSPIRE=1
+          CASE ( '-GPU')
+             GPU=1
 C------------------------------------------------
 C -NORST : no restart file command
           CASE ( '-NORST')

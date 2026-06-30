@@ -113,6 +113,7 @@ C-----------------------------------------------
       USE HM_READ_FAIL_HASHIN_MOD
       USE HM_READ_FAIL_CHANG_MOD
       USE NAMES_AND_TITLES_MOD , ONLY : NCHARTITLE, NCHARLINE, NCHARKEY
+      use my_alloc_mod
 C============================================================================
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -129,7 +130,7 @@ C-----------------------------------------------
       INTEGER ,INTENT(IN) :: NUMMAT
       INTEGER ,INTENT(IN) :: NTABLE
       INTEGER ,INTENT(IN) :: MAXFAIL
-      TYPE (FAIL_TAG_), DIMENSION(0:MAXFAIL ) :: FAIL_TAG
+      TYPE (FAIL_TAG_), DIMENSION(NUMMAT,MAXFAIL) :: FAIL_TAG
       TYPE (FAILWAVE_STR_) :: FAILWAVE 
       TYPE (NLOCAL_STR_)   :: NLOC_DMG 
       TYPE (TTABLE)  ,INTENT(IN) :: TABLE(NTABLE)    
@@ -159,14 +160,14 @@ C======================================================================-
 c
 c     default allocation sizes of internal variables in element buffer
 c
-      DO I = 0,MAXFAIL   !  common to all failure models of the same type (IRUPT) 
-        FAIL_TAG(I)%LF_DAM    = 0
-        FAIL_TAG(I)%LF_DAMMX  = 1
-        FAIL_TAG(I)%LF_DAMINI = 0
-        FAIL_TAG(I)%LF_TDEL   = 1
-        FAIL_TAG(I)%LF_INDX   = 0
-        FAIL_TAG(I)%LF_OFF    = 1
-        FAIL_TAG(I)%LF_DIR    = 0
+      DO I = 1,MAXFAIL   !  common to all failure models of the same type (IRUPT) 
+        FAIL_TAG(1:NUMMAT,I)%LF_DAM    = 0
+        FAIL_TAG(1:NUMMAT,I)%LF_DAMMX  = 1
+        FAIL_TAG(1:NUMMAT,I)%LF_DAMINI = 0
+        FAIL_TAG(1:NUMMAT,I)%LF_TDEL   = 1
+        FAIL_TAG(1:NUMMAT,I)%LF_INDX   = 0
+        FAIL_TAG(1:NUMMAT,I)%LF_OFF    = 1
+        FAIL_TAG(1:NUMMAT,I)%LF_DIR    = 0
       ENDDO
 c      
       ICRACK3D = 0
@@ -179,13 +180,13 @@ c
 C--------------------------------------------------
 C     EXTRACT DATAS OF /FAIL/... LINE
 C--------------------------------------------------
-      ALLOCATE (FAIL_MAT_NUM(HM_NBFAIL))
+      call my_alloc(FAIL_MAT_NUM, HM_NBFAIL, "FAIL_MAT_NUM")
       FAIL_MAT_NUM(:) = 0
 c
       CALL HM_OPTION_START('FAILURE')      
 c
       !< Check if optional failure ID is not duplicated
-      ALLOCATE (FAIL_ID_ARRAY(HM_NBFAIL))
+      call my_alloc(FAIL_ID_ARRAY, HM_NBFAIL, "FAIL_ID_ARRAY")
       FAIL_ID_ARRAY(:) = 0
 c
       DO IFAIL = 1,HM_NBFAIL
@@ -348,13 +349,13 @@ c
               IRUPT = 7    
               CALL HM_READ_FAIL_FLD(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,IXFEM    ,
-     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IRUPT))
+     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IMAT,IFL))
 c     
             ELSEIF (KEY(1:5) == 'SPALL') THEN
               IRUPT = 8    
               CALL HM_READ_FAIL_SPALLING(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,
-     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IRUPT),IOUT       )
+     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IMAT,IFL),IOUT       )
 c     
             ELSEIF (KEY(1:6) == 'WIERZB') THEN
               IRUPT = 9 
@@ -377,20 +378,20 @@ c
               IRUPT = 12                    
               CALL HM_READ_FRACTAL_DMG(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB   ,IOUT    )
-              FAIL_TAG(IRUPT)%LF_DAM    = 1
-              FAIL_TAG(IRUPT)%LF_DAMMX  = 1
+              FAIL_TAG(IMAT,IFL)%LF_DAM    = 1
+              FAIL_TAG(IMAT,IFL)%LF_DAMMX  = 1
 c     
             ELSEIF (KEY(1:5) == 'CHANG') THEN
               IRUPT = 13
               CALL HM_READ_FAIL_CHANG(MAT_PARAM(IMAT)%FAIL(IFL),
      .             FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB   ,
-     .             FAIL_TAG(IRUPT),IOUT    ,MLAW_TAG(IMAT))
+     .             FAIL_TAG(IMAT,IFL),IOUT    ,MLAW_TAG(IMAT))
 c     
             ELSEIF (KEY(1:6) == 'HASHIN') THEN
               IRUPT = 14
               CALL HM_READ_FAIL_HASHIN(MAT_PARAM(IMAT)%FAIL(IFL),
      .             FAIL_ID  ,IRUPT    , LSUBMODEL,UNITAB   ,
-     .             FAIL_TAG(IRUPT),IOUT     ,MLAW_TAG(IMAT))
+     .             FAIL_TAG(IMAT,IFL),IOUT     ,MLAW_TAG(IMAT))
 c     
             !!  ELSEIF (KEY(1:6) == '') THEN   
             !!     IRUPT = 15                      ! not used
@@ -399,7 +400,7 @@ c
               IRUPT = 16 
               CALL HM_READ_FAIL_PUCK(MAT_PARAM(IMAT)%FAIL(IFL),
      .             FAIL_ID    ,IRUPT      ,LSUBMODEL,UNITAB   ,
-     .             FAIL_TAG(IRUPT),IOUT   ,MLAW_TAG(IMAT))
+     .             FAIL_TAG(IMAT,IFL),IOUT   ,MLAW_TAG(IMAT))
 c     
             !! ELSEIF (KEY(1:10) == '') THEN
             !!       IRUPT = 17                     ! not used
@@ -417,7 +418,7 @@ c
               IRUPT = 20
               CALL HM_READ_FAIL_CONNECT(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,UNIT_ID ,
-     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IRUPT))
+     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IMAT,IFL))
 c     
             !! ELSEIF (KEY(1:10) == ' ') THEN 
             !!       IRUPT = 21                     ! not used
@@ -445,7 +446,7 @@ c
 c     
             ELSEIF (KEY(1:10) == 'ORTHSTRAIN') THEN
               IRUPT = 24 
-              CALL HM_READ_FAIL_ORTHSTRAIN(MAT_PARAM(IMAT)%FAIL(IFL),FAIL_TAG(IRUPT),
+              CALL HM_READ_FAIL_ORTHSTRAIN(MAT_PARAM(IMAT)%FAIL(IFL),FAIL_TAG(IMAT,IFL),
      .             TITLE   ,MAT_ID   ,FAIL_ID   ,IRUPT    ,
      .             NTABLE  ,TABLE    ,LSUBMODEL ,UNITAB   )
 c     
@@ -453,13 +454,13 @@ c
               IRUPT = 25   
               CALL HM_READ_FAIL_NXT(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,
-     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IRUPT))
+     .             LSUBMODEL,UNITAB   ,FAIL_TAG(IMAT,IFL))
 c     
             ELSEIF (KEY(1:9) == 'SNCONNECT') THEN
               IRUPT = 26
               CALL HM_READ_FAIL_SNCONNECT(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB   )
-              FAIL_TAG(IRUPT)%LF_DAM = 3
+              FAIL_TAG(IMAT,IFL)%LF_DAM = 3
 c     
             ELSEIF (KEY(1:3) == 'EMC') THEN
               IRUPT = 27 
@@ -468,7 +469,7 @@ c
 c     
             ELSEIF (KEY(1:5) == 'ALTER') THEN
               IRUPT = 28
-              CALL HM_READ_FAIL_ALTER(MAT_PARAM(IMAT)%FAIL(IFL)   ,FAIL_TAG  ,
+              CALL HM_READ_FAIL_ALTER(MAT_PARAM(IMAT)%FAIL(IFL)   ,FAIL_TAG(IMAT,IFL)  ,
      .             MAXFAIL  ,MAT_ID   ,FAIL_ID  ,IRUPT  ,IXFEM     ,
      .             IFAILWAVE,LSUBMODEL,UNITAB   )
 c     
@@ -493,8 +494,8 @@ c
               IRUPT = 32
               CALL HM_READ_FAIL_HC_DSSE(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB   )
-              FAIL_TAG(IRUPT)%LF_DAM  = 1    ! damag
-              FAIL_TAG(IRUPT)%LF_INDX = 1    ! HC_DSc     
+              FAIL_TAG(IMAT,IFL)%LF_DAM  = 1    ! damag
+              FAIL_TAG(IMAT,IFL)%LF_INDX = 1    ! HC_DSc     
             ELSEIF (KEY(1:10) == 'MULLINS_OR') THEN
               IRUPT = 33
               CALL HM_READ_MULLINS_OR(MAT_PARAM(IMAT)%FAIL(IFL),
@@ -526,7 +527,7 @@ c
               IRUPT = 39
               CALL HM_READ_FAIL_GENE1(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,TITLE ,
-     .             LSUBMODEL,UNITAB,FAIL_TAG(IRUPT),NTABLE,TABLE)
+     .             LSUBMODEL,UNITAB,FAIL_TAG(IMAT,IFL),NTABLE,TABLE)
 c     
             ELSEIF (KEY(1:4) == 'RTCL') THEN
               IRUPT = 40
@@ -538,7 +539,7 @@ c
               CALL HM_READ_FAIL_INIEVO(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,
      .             MAT_PARAM(IMAT)%TITLE ,LSUBMODEL,UNITAB   )
-              FAIL_TAG(IRUPT)%LF_DAMINI = 1
+              FAIL_TAG(IMAT,IFL)%LF_DAMINI = 1
 c
             ELSEIF (KEY(1:7) == 'SYAZWAN') THEN
               IRUPT = 43
@@ -550,25 +551,25 @@ c
               IRUPT = 44
               CALL HM_READ_FAIL_TSAIWU(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB,
-     .             FAIL_TAG(IRUPT))
+     .             FAIL_TAG(IMAT,IFL))
 c
             ELSEIF (KEY(1:8) == 'TSAIHILL') THEN
               IRUPT = 45
               CALL HM_READ_FAIL_TSAIHILL(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB ,
-     .             FAIL_TAG(IRUPT))
+     .             FAIL_TAG(IMAT,IFL))
 c
             ELSEIF (KEY(1:7) == 'HOFFMAN') THEN
               IRUPT = 46
               CALL HM_READ_FAIL_HOFFMAN(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB,
-     .             FAIL_TAG(IRUPT))
+     .             FAIL_TAG(IMAT,IFL))
 c
             ELSEIF (KEY(1:9) == 'MAXSTRAIN') THEN
               IRUPT = 47
               CALL HM_READ_FAIL_MAXSTRAIN(MAT_PARAM(IMAT)%FAIL(IFL),
      .             MAT_ID   ,FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB  ,
-     .             FAIL_TAG(IRUPT))
+     .             FAIL_TAG(IMAT,IFL))
 c
             ELSEIF(KEY(1:9) == 'ORTHENERG')THEN
               IRUPT = 48
@@ -583,7 +584,7 @@ c
             ELSEIF (KEY(1:9) == 'COMPOSITE') THEN
               IRUPT = 51
               CALL HM_READ_FAIL_COMPOSITE(MAT_PARAM(IMAT)%FAIL(IFL),
-     .             FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB ,FAIL_TAG(IRUPT),
+     .             FAIL_ID  ,IRUPT    ,LSUBMODEL,UNITAB ,FAIL_TAG(IMAT,IFL),
      .             IOUT)
             ENDIF
 c-------  --
@@ -601,8 +602,8 @@ c
 c
       END DO  ! IFAIL        
 c------------------------------
-      DEALLOCATE (FAIL_MAT_NUM)
-      DEALLOCATE (FAIL_ID_ARRAY)
+      CALL MY_DEALLOC(FAIL_MAT_NUM)
+      CALL MY_DEALLOC(FAIL_ID_ARRAY)
 C-----------       
       RETURN
 C-----------       

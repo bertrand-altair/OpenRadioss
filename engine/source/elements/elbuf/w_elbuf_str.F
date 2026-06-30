@@ -21,14 +21,16 @@ Copyright>        As an alternative to this open-source version, Altair also off
 Copyright>        software under a commercial license.  Contact Altair to discuss further if the
 Copyright>        commercial version may interest you: https://www.altair.com/radioss/.
 !||====================================================================
-!||    w_elbuf_str    ../engine/source/elements/elbuf/w_elbuf_str.F
+!||    w_elbuf_str      ../engine/source/elements/elbuf/w_elbuf_str.F
 !||--- called by ------------------------------------------------------
-!||    wrrestp        ../engine/source/output/restart/wrrestp.F
+!||    wrrestp          ../engine/source/output/restart/wrrestp.F
 !||--- calls      -----------------------------------------------------
-!||    write_db       ../common_source/tools/input_output/write_db.F
-!||    write_dpdb     ../common_source/tools/input_output/write_db.F
+!||    write_db         ../common_source/tools/input_output/write_db.F
+!||    write_dpdb       ../common_source/tools/input_output/write_db.F
 !||--- uses       -----------------------------------------------------
-!||    elbufdef_mod   ../common_source/modules/mat_elem/elbufdef_mod.F90
+!||    elbufdef_mod     ../common_source/modules/mat_elem/elbufdef_mod.F90
+!||    my_alloc_mod     ../common_source/tools/memory/my_alloc.F90
+!||    my_dealloc_mod   ../common_source/tools/memory/my_dealloc.F90
 !||====================================================================
       SUBROUTINE W_ELBUF_STR(IPARG,ELBUF_TAB,FLAG_XFEM)
 C-----------------------------------------------
@@ -38,6 +40,8 @@ C-----------------------------------------------
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
+      use my_alloc_mod
+      use my_dealloc_mod, only : my_dealloc
 #include      "implicit_f.inc"
 C-----------------------------------------------
 C   C o m m o n   B l o c k s
@@ -155,7 +159,7 @@ c         allocate and fill the transfer table for restart
 c---------------------------------------------------          
           BUFLEN = IPARG(66,NG)                                         
 c          print*,'restart : buflen, NG,igtyp,=',buflen,NG,igtyp,ITY
-          ALLOCATE (RBUF_L(BUFLEN), STAT=ERR)
+          call my_alloc(RBUF_L, BUFLEN, "RBUF_L", stat=ERR)
 
 C
           RBUF_L(1:BUFLEN) = ZERO  
@@ -1699,7 +1703,7 @@ C SMSTR must be written in separate Buffer (Forced in double precision)
 C
           SDP_RBUF = SDP_RBUF + G_SMSTR *NEL
           IF(SDP_RBUF > 0)THEN
-            ALLOCATE(DP_RBUF(SDP_RBUF))
+            call my_alloc(DP_RBUF, SDP_RBUF, "DP_RBUF")
           L_DPR = 0
 C--------local buf first          
            DO IL = 1,ELBUF%NLAY                                          
@@ -1722,10 +1726,10 @@ c
            ENDDO                                                       
            DP_RBUF(L_DPR+1:L_DPR+NEL*G_SMSTR)= GBUF%SMSTR(1:NEL*G_SMSTR)
             CALL WRITE_DPDB(DP_RBUF,SDP_RBUF)
-            DEALLOCATE(DP_RBUF)
+            call my_dealloc(DP_RBUF)
           ENDIF
 C---------
-          DEALLOCATE (RBUF_L)
+          call my_dealloc(RBUF_L)
 c---------
         ENDIF   ! ity
       ENDDO      ! NG=1,NGROUP

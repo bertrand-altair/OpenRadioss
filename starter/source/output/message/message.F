@@ -221,6 +221,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    hm_read_eos_sesame                     ../starter/source/materials/eos/hm_read_eos_sesame.F
 !||    hm_read_eos_stiffened_gas              ../starter/source/materials/eos/hm_read_eos_stiffened_gas.F
 !||    hm_read_eos_tabulated                  ../starter/source/materials/eos/hm_read_eos_tabulated.F
+!||    hm_read_eos_tillotson                  ../starter/source/materials/eos/hm_read_eos_tillotson.F
 !||    hm_read_eref                           ../starter/source/loads/reference_state/eref/hm_read_eref.F
 !||    hm_read_fail                           ../starter/source/materials/fail/hm_read_fail.F
 !||    hm_read_fail_biquad                    ../starter/source/materials/fail/biquad/hm_read_fail_biquad.F
@@ -836,6 +837,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    s8zderi3                               ../starter/source/elements/solid/solide8z/s8zderi3.F
 !||    s8zderic3                              ../starter/source/elements/solid/solide8z/s8zderi3.F
 !||    s8zinit3                               ../starter/source/elements/solid/solide8z/s8zinit3.F
+!||    s_ale_message                          ../starter/source/ale/s_ale_message.F90
 !||    sboxboxsurf                            ../starter/source/model/box/bigbox.F
 !||    scaleini                               ../starter/source/elements/initia/scaleini.F
 !||    scderi3                                ../starter/source/elements/thickshell/solidec/scderi3.F
@@ -921,6 +923,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      .                  PRMODE )
 c     .                  PRMODE,IOPTION, IOPTION_TYPE) 
       USE MESSAGE_MOD2
+      use my_alloc_mod
 C-----------------------------------------------
 C Usage sample :
 C      USE MESSAGE_MOD
@@ -1400,11 +1403,11 @@ c
 C ------------------------------------------
 C  All counts are done - Allocating buffers
 C ------------------------------------------
-        ALLOCATE(ITRI(INDXI_INC,NBREPET))
-        ALLOCATE(TMP_INTEGER(INDXI+NB_IBUF))
-        ALLOCATE(TMP_REAL(INDXR+NB_RBUF))
-        ALLOCATE(TMP_CHAR(INDXC+NB_CBUF))
-        ALLOCATE(TMP_I(INDXD))
+        call my_alloc(ITRI, INDXI_INC, NBREPET, "ITRI")
+        call my_alloc(TMP_INTEGER, INDXI+NB_IBUF, "TMP_INTEGER")
+        call my_alloc(TMP_REAL, INDXR+NB_RBUF, "TMP_REAL")
+        allocate(TMP_CHAR(INDXC+NB_CBUF))
+        allocate(TMP_I(INDXD))
 c
         TMP_INTEGER=0
         TMP_REAL=ZERO
@@ -1503,9 +1506,9 @@ C
         CPT = 0
 c remove duplicated messages
         MODE = 0
-        ALLOCATE(INDEX(2*NBREPET_0*INDXI_INC))
+        call my_alloc(INDEX, 2*NBREPET_0*INDXI_INC, "INDEX")
         IF (NBREPET_0 . NE. 0)THEN
-          ALLOCATE(MES_DOUBLE(NBREPET_0))
+          call my_alloc(MES_DOUBLE, NBREPET_0, "MES_DOUBLE")
           MES_DOUBLE(1) = 0
           IF (INDXI_INC == 0)THEN
             MES_DOUBLE(2:NBREPET_0) = 0
@@ -1513,7 +1516,7 @@ c remove duplicated messages
             MES_DOUBLE(2:NBREPET_0) = 1
           ENDIF
         ELSE
-          ALLOCATE(MES_DOUBLE(1))
+          call my_alloc(MES_DOUBLE, 1, "MES_DOUBLE")
           MES_DOUBLE(1) = 0
         ENDIF
 c
@@ -1828,7 +1831,12 @@ C             IF (ITYPE==3.AND.LEN_TRIM(TMPLINE)==0) THEN
            ENDDO
           END IF
         END DO
-        DEALLOCATE(TMP_INTEGER,TMP_REAL,TMP_CHAR,INDEX,ITRI,MES_DOUBLE)
+        CALL MY_DEALLOC(TMP_INTEGER)
+        CALL MY_DEALLOC(TMP_REAL)
+        CALL MY_DEALLOC(INDEX)
+        CALL MY_DEALLOC(ITRI)
+        CALL MY_DEALLOC(MES_DOUBLE)
+        DEALLOCATE(TMP_CHAR)
 
         ENDIF
 

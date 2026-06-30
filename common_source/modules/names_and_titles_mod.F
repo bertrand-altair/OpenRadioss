@@ -36,7 +36,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    boxbox                            ../starter/source/model/box/boxbox.F
 !||    bsigini                           ../starter/source/elements/beam/bsigini.F
 !||    build_admesh                      ../starter/source/model/remesh/build_admesh.F
-!||    build_msg                         ../common_source/tools/memory/my_alloc.F90
+!||    build_msg                         ../common_source/tools/memory/my_alloc_tools.F90
 !||    buserini                          ../starter/source/elements/beam/buserini.F
 !||    c3grhead                          ../starter/source/elements/sh3n/coque3n/c3grhead.F
 !||    c3grtails                         ../starter/source/elements/sh3n/coque3n/c3grtails.F
@@ -605,6 +605,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    hm_read_visc                      ../starter/source/materials/visc/hm_read_visc.F
 !||    hm_read_window_user               ../starter/source/tools/userwi/hm_read_window_user.F
 !||    hm_read_xref                      ../starter/source/loads/reference_state/xref/hm_read_xref.F
+!||    hm_s_ale                          ../starter/source/devtools/hm_reader/hm_s_ale.F90
 !||    hm_set                            ../starter/source/model/sets/hm_set.F
 !||    hm_setfxrbyon                     ../starter/source/constraints/fxbody/hm_setfxrbyon.F
 !||    hm_submodgre                      ../starter/source/groups/hm_submodgr.F

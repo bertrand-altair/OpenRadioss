@@ -41,6 +41,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    arezon                                   ../engine/source/ale/arezon.F90
 !||    arruda_boyce                             ../starter/source/materials/mat/mat092/law92_nlsqf.F90
 !||    arruda_boyce_dyda                        ../starter/source/materials/mat/mat092/law92_nlsqf.F90
+!||    bbc2005_evaluate                         ../starter/source/materials/mat/mat131/yield_criterion/bbc2005_evaluate.F90
 !||    bcs_nrf                                  ../engine/source/boundary_conditions/bcs_nrf.F90
 !||    bcs_wall_trigger                         ../engine/source/boundary_conditions/bcs_wall_trigger.F90
 !||    biquad_tab                               ../starter/source/materials/fail/biquad/biquad_tab.F90
@@ -50,6 +51,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    brokmann_crack_init                      ../starter/source/materials/fail/windshield_alter/brokmann_crack_init.F90
 !||    brokmann_elem_renum                      ../starter/source/materials/fail/windshield_alter/brokmann_elem_spmd_renum.F90
 !||    brokmann_random                          ../starter/source/materials/fail/windshield_alter/brokmann_random.F90
+!||    calc_m                                   ../engine/source/materials/mat/mat136/sigeps136g.F90
 !||    calculp2                                 ../starter/source/materials/mat/mat057/calculp2.F90
 !||    check_sorting_criteria                   ../engine/source/interfaces/intsort/check_sorting_criteria.F90
 !||    checkaxes                                ../engine/source/materials/mat/mat038/sigeps38.F
@@ -144,6 +146,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    find_prev_next_nodes                     ../starter/source/tools/seatbelts/find_prev_next_nodes.F90
 !||    find_segment_in_list                     ../engine/source/engine/node_spliting/detach_node.F90
 !||    force                                    ../engine/source/loads/general/force.F90
+!||    forintc_prepare_gpu                      ../engine/source/elements/shell/coque/shell_internal_forces.F90
 !||    fpcont2_max_output                       ../engine/source/output/h3d/h3d_results/fpcont2_max_output.F90
 !||    fpcont2_min_output                       ../engine/source/output/h3d/h3d_results/fpcont2_min_output.F90
 !||    fractal_dmg_init                         ../starter/source/materials/fail/fractal/fractal_dmg_init.F90
@@ -216,6 +219,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    hm_read_mat133                           ../starter/source/materials/mat/mat133/hm_read_mat133.F90
 !||    hm_read_mat134                           ../starter/source/materials/mat/mat134/hm_read_mat134.F90
 !||    hm_read_mat135                           ../starter/source/materials/mat/mat135/hm_read_mat135.F90
+!||    hm_read_mat136                           ../starter/source/materials/mat/mat136/hm_read_mat136.F90
 !||    hm_read_mat163                           ../starter/source/materials/mat/mat163/hm_read_mat163.F90
 !||    hm_read_mat169_arup                      ../starter/source/materials/mat/mat169/hm_read_mat169.F90
 !||    hm_read_mat50                            ../starter/source/materials/mat/mat050/hm_read_mat50.F90
@@ -246,6 +250,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    hm_read_yield_criterion                  ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion.F90
 !||    hm_read_yield_criterion_barlat1989       ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_barlat1989.F90
 !||    hm_read_yield_criterion_barlat2000       ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_barlat2000.F90
+!||    hm_read_yield_criterion_bbc2005          ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_BBC2005.F90
 !||    hm_read_yield_criterion_hershey          ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_hershey.F90
 !||    hm_read_yield_criterion_hill             ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_hill.F90
 !||    hm_read_yield_criterion_vonmises         ../starter/source/materials/mat/mat131/yield_criterion/hm_read_yield_criterion_vonmises.F90
@@ -291,7 +296,6 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    law02_upd                                ../starter/source/materials/mat/mat002/law02_upd.F90
 !||    law123_upd                               ../starter/source/materials/mat/mat123/law123_upd.F90
 !||    law133_upd                               ../starter/source/materials/mat/mat133/law133_upd.F90
-!||    law163_upd                               ../starter/source/materials/mat/mat163/law163_upd.F90
 !||    law190_upd                               ../starter/source/materials/mat/mat190/law190_upd.F90
 !||    law42c_ini                               ../starter/source/materials/mat/mat042/law42c_ini.F90
 !||    law76_func_comp                          ../starter/source/materials/mat/mat076/law76_func_comp.F90
@@ -366,6 +370,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    rbe3f_pen                                ../engine/source/constraints/general/rbe3/rbe3f_pen.F90
 !||    rbe3fpen_ininp                           ../engine/source/constraints/general/rbe3/rbe3pen_init.F90
 !||    rbe3pen_init                             ../engine/source/constraints/general/rbe3/rbe3pen_init.F90
+!||    read_bcs_nrf                             ../engine/source/output/restart/read_bcs_nrf.F90
 !||    read_common_data                         ../common_source/modules/boundary_conditions/ebcs_mod.F90
 !||    read_mat25_crasurv                       ../starter/source/materials/mat/mat025/read_mat25_crasurv.F90
 !||    read_mat25_tsaiwu                        ../starter/source/materials/mat/mat025/read_mat25_tsaiwu.F90
@@ -452,6 +457,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    sigeps132c                               ../engine/source/materials/mat/mat132/sigeps132c.F90
 !||    sigeps133                                ../engine/source/materials/mat/mat133/sigeps133.F90
 !||    sigeps134s                               ../engine/source/materials/mat/mat134/sigeps134s.F90
+!||    sigeps136g                               ../engine/source/materials/mat/mat136/sigeps136g.F90
 !||    sigeps163                                ../engine/source/materials/mat/mat163/sigeps163.F90
 !||    sigeps169_connect                        ../engine/source/materials/mat/mat169/sigeps169_connect.F90
 !||    sigeps50s                                ../engine/source/materials/mat/mat050/sigeps50s.F90
@@ -510,6 +516,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    xyznor16                                 ../engine/source/output/anim/generate/monvol_anim.F90
 !||    yield_criterion_barlat1989               ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_barlat1989.F90
 !||    yield_criterion_barlat2000               ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_barlat2000.F90
+!||    yield_criterion_bbc2005                  ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_BBC2005.F90
 !||    yield_criterion_hershey                  ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_hershey.F90
 !||    yield_criterion_hill                     ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_hill.F90
 !||    yield_criterion_vonmises                 ../engine/source/materials/mat/mat131/yield_criterion/yield_criterion_vonmises.F90

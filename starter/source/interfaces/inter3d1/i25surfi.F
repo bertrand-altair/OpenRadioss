@@ -55,9 +55,11 @@ C-----------------------------------------------
       USE PARAMETERS_MOD
       USE FORMAT_MOD , ONLY : FMW_10I, FMW_4I
       use element_mod , only :nixs,nixc,nixtg
+      use my_alloc_mod
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
+      use my_dealloc_mod, only : my_dealloc
 #include      "implicit_f.inc"
 C-----------------------------------------------
 C   C o m m o n   B l o c k s
@@ -106,7 +108,7 @@ C-----------------------------------------------
      .        IMBIN,IDEB,ISN,LINE_TYP,NEDGEP
       LOGICAL :: NEED_SOLID_EROSION
       INTEGER :: IDEL,SOLID_SEGMENT,ELEM
-      LOGICAL LINE_SEG
+      LOGICAL LINE_SEG , LINE_SEG_S, LINE_SEG_M
 C-----------------------------------------------
 C   E x t e r n a l   F u n c t i o n s
 C-----------------------------------------------
@@ -148,8 +150,12 @@ c-----------------------------------------------------------------
       NEDGE_L = 0
       IF(IEDG >0) THEN
          LINE_SEG = .TRUE.
+         LINE_SEG_S = .TRUE.
+         LINE_SEG_M = .TRUE.
       ELSE
          LINE_SEG = .FALSE.
+         LINE_SEG_S = .FALSE.
+         LINE_SEG_M = .FALSE.
       ENDIF
       SELECT CASE (ILEV)
 C-----attention: ISU2=ISU1 /=0            
@@ -161,28 +167,38 @@ C-----attention: ISU2=ISU1 /=0
               IF(IGRSURF(ISU1)%ELTYP(J)==1.OR.IGRSURF(ISU1)%ELTYP(J)==3
      .          .OR.IGRSURF(ISU1)%ELTYP(J)==7.OR.IGRSURF(ISU1)%ELTYP(J)==0) LINE_SEG = .FALSE.
             ENDDO
+            IF(.NOT.LINE_SEG) THEN
+               LINE_SEG_M = .FALSE.
+               LINE_SEG_S = .FALSE.
+            ENDIF
           ENDIF
           IF(ISU3==0) LINE_SEG = .FALSE.
+          IF(LINE_SEG) NRTM = 0
         CASE(2)
           NRTM = IGRSURF(ISU1)%NSEG
           NRTS = IGRSURF(ISU2)%NSEG
-          NRTM = NRTM + NRTS
           IF(IEDG >0.AND.ISU3>0) NEDGE_L =IGRSLIN(ISU3)%NSEG
           IF(IEDG >0.AND.ISU4>0) NEDGE_L =NEDGE_L + IGRSLIN(ISU4)%NSEG
           IF(IEDG > 0) THEN
             DO J=1,IGRSURF(ISU1)%NSEG
              IF(IGRSURF(ISU1)%ELTYP(J)==1.OR.IGRSURF(ISU1)%ELTYP(J)==3
-     .          .OR.IGRSURF(ISU1)%ELTYP(J)==7.OR.IGRSURF(ISU1)%ELTYP(J)==0) LINE_SEG = .FALSE.
+     .          .OR.IGRSURF(ISU1)%ELTYP(J)==7.OR.IGRSURF(ISU1)%ELTYP(J)==0) LINE_SEG_M = .FALSE.
             ENDDO
             DO J=1,IGRSURF(ISU2)%NSEG
              IF(IGRSURF(ISU2)%ELTYP(J)==1.OR.IGRSURF(ISU2)%ELTYP(J)==3
-     .          .OR.IGRSURF(ISU2)%ELTYP(J)==7.OR.IGRSURF(ISU2)%ELTYP(J)==0) LINE_SEG = .FALSE.
+     .          .OR.IGRSURF(ISU2)%ELTYP(J)==7.OR.IGRSURF(ISU2)%ELTYP(J)==0) LINE_SEG_S = .FALSE.
             ENDDO
+            IF(.NOT.LINE_SEG_S.OR..NOT.LINE_SEG_M) LINE_SEG = .FALSE.
           ENDIF
           IF(ISU3==0.AND.ISU4==0) LINE_SEG = .FALSE.
+          IF(LINE_SEG_M) NRTM = 0
+          IF(LINE_SEG_S) NRTS = 0
+          NRTM = NRTM + NRTS
         CASE(3)
           NRTM = IGRSURF(ISU2)%NSEG
           LINE_SEG = .FALSE.
+          LINE_SEG_M = .FALSE.
+          LINE_SEG_S = .FALSE.
       END SELECT
 
       IF(LINE_SEG) THEN
@@ -191,18 +207,19 @@ C-----attention: ISU2=ISU1 /=0
       ENDIF
 
 c-----------------------------------------------------------------
-      ALLOCATE(INDEX(2*NRTM),IRECTMP(6,NRTM),STAT=stat)
+      call my_alloc(INDEX, 2*NRTM, "INDEX", stat=stat)
+      call my_alloc(IRECTMP, 6, NRTM, "IRECTMP", stat=stat)
       IF (STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
      .                           MSGTYPE=MSGERROR,
      .                           C1='IRECTSAV')
       IRECTMP(1:6,1:NRTM)=0
-        IF( NEDGE_L >0) ALLOCATE(TAGNOD(NUMNOD),STAT=stat) 
+        IF( NEDGE_L >0) call my_alloc(TAGNOD, NUMNOD, "TAGNOD", stat=stat)
 C
 c---------------------------------------
 c     Copy of surfaces (Iallo == 2)
 c---------------------------------------
       L = 0
-      IF(ISU1 /= 0.AND..NOT.LINE_SEG)THEN
+      IF(ISU1 /= 0.AND..NOT.LINE_SEG_M)THEN
         DO J=1,IGRSURF(ISU1)%NSEG
           L = L+1
           DO K=1,4
@@ -220,7 +237,7 @@ c---------------------------------------
         ENDDO
       ENDIF
       NSU1 = L
-      IF(ISU2 /= 0 .AND.ILEV /=1.AND..NOT.LINE_SEG)THEN
+      IF(ISU2 /= 0 .AND.ILEV /=1.AND..NOT.LINE_SEG_S)THEN
         DO J=1,IGRSURF(ISU2)%NSEG
           L = L+1
           DO K=1,4
@@ -241,7 +258,7 @@ C=======================================================================
 c     Filtre
       NRTMP=NRTM
 C
-      ALLOCATE(IRECTMP_SAV(6,NRTM),STAT=stat)
+      call my_alloc(IRECTMP_SAV, 6, NRTM, "IRECTMP_SAV", stat=stat)
 
         
       IRECTMP_SAV(1:6,1:NRTM) =  IRECTMP(1:6,1:NRTM)
@@ -442,26 +459,28 @@ c          ALLOCATE(TAGNOD(NUMNOD),STAT=stat)
       END IF
 
 
-      DEALLOCATE(INDEX,IRECTMP)
-      IF(ALLOCATED(IRECTMP_SAV)) DEALLOCATE(IRECTMP_SAV)
+      CALL MY_DEALLOC(INDEX)
+      CALL MY_DEALLOC(IRECTMP)
+      IF(ALLOCATED(IRECTMP_SAV)) CALL MY_DEALLOC(IRECTMP_SAV)
 C=======================================================================
 c     NODES C=======================================================================
 c-----------------------------------------------------------------
 c     tag nodes surfaces S1 S2; 1,2 on S1,S2, 3 on both (ILEV=1)
 c-----------------------------------------------------------------
-      ALLOCATE(TAG(NUMNOD),TAGS(NUMNOD))
+      call my_alloc(TAG, NUMNOD, "TAG")
+      call my_alloc(TAGS, NUMNOD, "TAGS")
       DO I=1,NUMNOD
         TAG(I)=0 ! initialisation
         TAGS(I)=0 ! initialisation
       ENDDO
-      IF(ISU2 /= 0.AND..NOT.LINE_SEG)THEN
+      IF(ISU2 /= 0.AND..NOT.LINE_SEG_S)THEN
         DO J=1,IGRSURF(ISU2)%NSEG
           DO K=1,4
             TAG(IGRSURF(ISU2)%NODES(J,K)) = 2
           ENDDO
         ENDDO
       ENDIF
-      IF(ISU1 /= 0.AND..NOT.LINE_SEG)THEN
+      IF(ISU1 /= 0.AND..NOT.LINE_SEG_M)THEN
         DO J=1,IGRSURF(ISU1)%NSEG
           DO K=1,4
             I=IGRSURF(ISU1)%NODES(J,K)
@@ -475,7 +494,7 @@ c-----------------------------------------------------------------
       ENDIF
 C for inteply activation needed for Plyxfem + Type24      
       IF(IALLO == 1) THEN
-        IF(ISU2 /= 0)THEN
+        IF(ISU2 /= 0.AND..NOT.LINE_SEG_S)THEN
            DO J=1,IGRSURF(ISU2)%NSEG
               DO K=1,4
 
@@ -485,7 +504,7 @@ C for inteply activation needed for Plyxfem + Type24
               ENDDO
             ENDDO
          ENDIF
-         IF(ISU1 /= 0.AND..NOT.LINE_SEG)THEN
+         IF(ISU1 /= 0.AND..NOT.LINE_SEG_M)THEN
            DO J=1,IGRSURF(ISU1)%NSEG
               DO K=1,4
                 I=IGRSURF(ISU1)%NODES(J,K)
@@ -499,7 +518,7 @@ C for inteply activation needed for Plyxfem + Type24
 c-----------------------------------------------------------------
 c     Surface nodes S2: Build Tags, Set NSV, Msr If Iallo = 2
 c-----------------------------------------------------------------
-      IF(ISU2 /= 0.AND..NOT.LINE_SEG)THEN
+      IF(ISU2 /= 0.AND..NOT.LINE_SEG_S)THEN
         DO J=1,IGRSURF(ISU2)%NSEG
           DO K=1,4
             I=IGRSURF(ISU2)%NODES(J,K)
@@ -525,7 +544,7 @@ c     taged nodes on S2 -> negative value
 c-----------------------------------------------------------------
 c     Surface nodes S1: Build Tags, Set NSV, Msr If Iallo = 2
 c-----------------------------------------------------------------
-      IF(ISU1 /= 0.AND..NOT.LINE_SEG)THEN
+      IF(ISU1 /= 0.AND..NOT.LINE_SEG_M)THEN
         DO J=1,IGRSURF(ISU1)%NSEG
           DO K=1,4
             I=IGRSURF(ISU1)%NODES(J,K)
@@ -625,21 +644,26 @@ C----------due the fact that NRTM is modified w/ shell seg
         ENDIF
         ! -------------------
       END IF
-      IF(ALLOCATED(TAGNOD)) DEALLOCATE(TAGNOD)
+      IF(ALLOCATED(TAGNOD)) call my_dealloc(TAGNOD)
 
-      DEALLOCATE(TAG,TAGS)
+      CALL MY_DEALLOC(TAG)
+      CALL MY_DEALLOC(TAGS)
 C
       RETURN
       END
 !||====================================================================
-!||    sh2surf25   ../starter/source/interfaces/inter3d1/i25surfi.F
+!||    sh2surf25        ../starter/source/interfaces/inter3d1/i25surfi.F
 !||--- called by ------------------------------------------------------
-!||    i25surfi    ../starter/source/interfaces/inter3d1/i25surfi.F
+!||    i25surfi         ../starter/source/interfaces/inter3d1/i25surfi.F
+!||--- calls      -----------------------------------------------------
+!||--- uses       -----------------------------------------------------
 !||====================================================================
       SUBROUTINE SH2SURF25(NRTM0,IRECT,IMBIN,MBINFLG,MSEGTYP,NRTM )
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
+      use my_alloc_mod
+      use my_dealloc_mod, only : my_dealloc
 #include      "implicit_f.inc"
 C-----------------------------------------------
 C   D u m m y   A r g u m e n t s
@@ -652,7 +676,7 @@ C-----------------------------------------------
       INTEGER I, NR, IT
       INTEGER, DIMENSION(:), ALLOCATABLE :: ETYP
 C=======================================================================
-       ALLOCATE(ETYP(NRTM0))
+       call my_alloc(ETYP, NRTM0, "ETYP")
 C------add asymmetric shell segs at end, change MSEGTYP
        DO I=1,NRTM0
         ETYP(I) = MSEGTYP(I)
@@ -702,7 +726,7 @@ C--------coating shell <=> MSEGTYP(I) > NRTM
         END IF
        END DO
 C------------------------------------------------------------
-      DEALLOCATE(ETYP)
+      call my_dealloc(ETYP)
       RETURN
       END
 

@@ -77,6 +77,8 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    initbuf_mod             ../engine/share/resol/initbuf.F
 !||    mat_elem_mod            ../common_source/modules/mat_elem/mat_elem_mod.F90
 !||    message_mod             ../engine/share/message_module/message_mod.F
+!||    my_alloc_mod            ../common_source/tools/memory/my_alloc.F90
+!||    my_dealloc_mod          ../common_source/tools/memory/my_dealloc.F90
 !||    nlocal_reg_mod          ../common_source/modules/nlocal_reg_mod.F
 !||    output_mod              ../common_source/modules/output/output_mod.F90
 !||    preload_axial_mod       ../engine/source/elements/spring/preload_axial.F90
@@ -155,6 +157,8 @@ C-----------------------------------------------
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
+      use my_alloc_mod
+      use my_dealloc_mod, only : my_dealloc
 #include      "implicit_f.inc"
 #include      "comlock.inc"
 C-----------------------------------------------
@@ -272,9 +276,13 @@ C-----------------------------------------------
       integer :: fake_size = 0
       LOGICAL :: DUMP_Q1NP_STATE = .FALSE.
 C======================================================================|
-       ALLOCATE(FX(MVSIZ,64),FY(MVSIZ,64),FZ(MVSIZ,64),STAT=IERROR)
-       ALLOCATE(MX(MVSIZ,4),MY(MVSIZ,4),MZ(MVSIZ,4),STAT=IERROR)
-       ALLOCATE(JFAC(MVSIZ,729)) ! for solid 8z
+       call my_alloc(FX, MVSIZ, 64, "FX", stat=IERROR)
+       call my_alloc(FY, MVSIZ, 64, "FY", stat=IERROR)
+       call my_alloc(FZ, MVSIZ, 64, "FZ", stat=IERROR)
+       call my_alloc(MX, MVSIZ, 4, "MX", stat=IERROR)
+       call my_alloc(MY, MVSIZ, 4, "MY", stat=IERROR)
+       call my_alloc(MZ, MVSIZ, 4, "MZ", stat=IERROR)
+       call my_alloc(JFAC, MVSIZ, 729, "JFAC") ! for solid 8z
        SBID=1
 !
        IF(IERROR/=0)THEN
@@ -1677,6 +1685,13 @@ C
       ENDIF
 C
       DEALLOCATE(FX,FY,FZ,MX,MY,MZ,JFAC)
+      call my_dealloc(FX)
+      call my_dealloc(FY)
+      call my_dealloc(FZ)
+      call my_dealloc(MX)
+      call my_dealloc(MY)
+      call my_dealloc(MZ)
+      call my_dealloc(JFAC)
 
 C-----------
       RETURN

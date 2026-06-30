@@ -32,6 +32,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    inivol_def_mod         ../starter/share/modules1/inivol_mod.F
 !||    message_mod            ../starter/share/message_module/message_mod.F
 !||    r2r_mod                ../starter/share/modules1/r2r_mod.F
+!||    reorder_mod            ../starter/share/modules1/reorder_mod.F
 !||====================================================================
       SUBROUTINE QGRTAILS(
      1       IXQ    ,PM      ,IPARG  ,GEO    ,
@@ -50,6 +51,7 @@ C-----------------------------------------------
       USE NAMES_AND_TITLES_MOD , ONLY : NCHARTITLE
       USE ALE_MOD , ONLY : ALE
       use element_mod , only : nixq
+      use reorder_mod
 C-----------------------------------------------
 C            A R G U M E N T S
 C-----------------------------------------------
@@ -67,6 +69,8 @@ C     ITR1(NSELQ)        TABLEAU DE TRAVAIL                         E/S
 C-----------------------------------------------
 C   I M P L I C I T   T Y P E S
 C-----------------------------------------------
+      use my_alloc_mod
+      use my_dealloc_mod, only : my_dealloc
 #include      "implicit_f.inc"
 C-----------------------------------------------
 C   C O M M O N   B L O C K S
@@ -107,9 +111,12 @@ C-----------------------------------------------
       INTEGER ID,MFT,ILOC,JJ
       CHARACTER(LEN=NCHARTITLE)::TITR
       LOGICAL lFOUND
+      integer, dimension(:), allocatable :: index2
 C--------------------------------------------------------------
 C         bounding of MVSIZ groups
 C--------------------------------------------------------------
+      call my_alloc(index2, numelq, "index2")
+      index2(1:numelq) = permutation%quad(1:numelq)
       NGR1 = NGROUP + 1
 C
 C Phase 1: Domain Decomposition
@@ -157,6 +164,7 @@ C
           IXQ(7,I+NFT)=INUM(8,INDEX(I))
           IQUAOFF(I+NFT)=INUM(9,INDEX(I))
           ITR1(NFT+INDEX(I)) = NFT+I
+          permutation%quad(i+nft)=index2(index(i)+nft)
         ENDDO
 
 C dd-iad
@@ -489,5 +497,6 @@ C
      +'       MID    MEDIUM      FLAG      FLAG      TYPE   '/)
  1001 FORMAT(17(I10))
 C
+      call my_dealloc(index2)
       RETURN
       END

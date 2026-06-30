@@ -69,7 +69,6 @@
 !||    aniskew                             ../engine/source/output/anim/generate/aniskew.F
 !||    arezon                              ../engine/source/ale/arezon.F90
 !||    atherm                              ../engine/source/ale/atherm.F
-!||    bcs_nrf                             ../engine/source/boundary_conditions/bcs_nrf.F90
 !||    bforc2                              ../engine/source/ale/bimat/bforc2.F
 !||    binit2                              ../starter/source/ale/bimat/binit2.F
 !||    bsigini                             ../starter/source/elements/beam/bsigini.F
@@ -228,6 +227,7 @@
 !||    failini                             ../starter/source/elements/solid/solide/failini.F
 !||    forint                              ../engine/source/elements/forint.F
 !||    forintc                             ../engine/source/elements/forintc.F
+!||    forintc_prepare_gpu                 ../engine/source/elements/shell/coque/shell_internal_forces.F90
 !||    forintp                             ../engine/source/elements/forintp.F
 !||    forints                             ../engine/source/elements/forints.F
 !||    funct_python_update_elements        ../engine/source/tools/curve/funct_python_update_elements.F90
@@ -422,6 +422,9 @@
 !||    multifluid_init2t                   ../starter/source/multifluid/multifluid_init2t.F
 !||    multifluid_init3                    ../starter/source/multifluid/multifluid_init3.F
 !||    multifluid_init3t                   ../starter/source/multifluid/multifluid_init3t.F
+!||    my_alloc_impl_idx4_mod              ../common_source/tools/memory/my_alloc_impl_idx4.F90
+!||    my_alloc_impl_idx8_mod              ../common_source/tools/memory/my_alloc_impl_idx8.F90
+!||    my_dealloc_mod                      ../common_source/tools/memory/my_dealloc.F90
 !||    nloc_dmg_init                       ../starter/source/materials/fail/nloc_dmg_init.F
 !||    nlocal_init_sta                     ../starter/source/materials/fail/nlocal_init_sta.F
 !||    nodal_schlieren                     ../engine/source/output/anim/generate/nodal_schlieren.F

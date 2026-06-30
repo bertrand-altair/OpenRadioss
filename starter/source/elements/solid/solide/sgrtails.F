@@ -147,18 +147,18 @@ C-----------------------------------------------
 C--------------------------------------------------------------
 C         GROUPING BY MVSIZ GROUPS
 C--------------------------------------------------------------
-      CALL MY_ALLOC(INDEXS2,NUMELS)
+      CALL MY_ALLOC(INDEXS2,NUMELS,"INDEXS2")
       nullify(MATPARAM)
       INDEXS2(1:NUMELS)=PERMUTATION%SOLID(1:NUMELS)
       NGR1 = NGROUP + 1
 C
       IF (NPERTURB > 0) THEN
-        ALLOCATE(XNUM_RNOISE(NPERTURB,NUMELS),STAT=stat)
+        call my_alloc(XNUM_RNOISE, NPERTURB, NUMELS, "XNUM_RNOISE", stat=stat)
         IF (STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
      .                           MSGTYPE=MSGERROR,
      .                           C1='XNUM_RNOISE')
       ELSE
-        ALLOCATE(XNUM_RNOISE(0,0))
+        call my_alloc(XNUM_RNOISE, 0, 0, "XNUM_RNOISE")
       ENDIF
 C
       IF (NUMELQ1NP_G > 0) THEN
@@ -453,12 +453,12 @@ C
         CLUSTER_TYP = CLUSTERS(I)%TYPE
         IF(CLUSTER_TYP==1) THEN
             CLUSTER_NEL = CLUSTERS(I)%NEL
-            ALLOCATE( SAVE_CLUSTER( CLUSTER_NEL ) )
+            call my_alloc(SAVE_CLUSTER, CLUSTER_NEL, "SAVE_CLUSTER")
             SAVE_CLUSTER( 1:CLUSTER_NEL ) = CLUSTERS(I)%ELEM( 1:CLUSTER_NEL )
             DO J=1,CLUSTER_NEL
                 CLUSTERS(I)%ELEM(J) = ITR1( SAVE_CLUSTER( J ) )
             ENDDO
-            DEALLOCATE( SAVE_CLUSTER )
+            CALL MY_DEALLOC(SAVE_CLUSTER)
         ENDIF
       ENDDO
 !   -----------------------
@@ -656,6 +656,8 @@ c
             END IF
           ENDIF
 C
+          IF (MLN == 68) ITET4 = 1
+C
           ! Compatibility with /MAT/LAW115 statistic formulation
           IF ((MLN == 115).AND.(((JHBE>2).AND.(JHBE<21)).OR.((ITET4>0).AND.(ITET4<3)))) THEN
             CALL ANCMSG(MSGID=1905,
@@ -667,17 +669,16 @@ C
      .                  PRMOD=MSG_CUMU)
           ENDIF
 C
-          !< Compatibility of ITET4 = 3 with /MAT/LAW88 is not supported
-    !       IF ((MLN == 88).AND.(ITET4 == 3)) THEN
-    !         ITET4 = 0
-    !         CALL ANCMSG(MSGID=3123,
-    !  .                  MSGTYPE=MSGWARNING,
-    !  .                  ANMODE=ANINFO_BLIND_2,
-    !  .                  I1=ID,
-    !  .                  C1=TITR,
-    !  .                  I2=MLN,
-    !  .                  PRMOD=MSG_CUMU)
-    !       ENDIF
+          !< Choose default value for ITET4 according to the material law
+          IF ((IGEO(29,PID) /= 1) .AND. (ITET4 == 0) .AND. 
+     .        ((IGT == 14) .OR. (IGT == 6))) THEN
+            IF (MATPARAM_TAB(MID)%ITETRA4 == 1) THEN
+              ITET4 = 1000
+            ELSEIF (MATPARAM_TAB(MID)%ITETRA4 == 2) THEN
+              ITET4 = 3
+            ENDIF
+          ENDIF
+          IF (ITET4 == 1000) ITET4 = 0
 C
           IFAIL = 0
           NFAIL = 0
@@ -712,14 +713,27 @@ c
           ELSEIF(IKSNOD0 == 4)THEN
             NPT=1
           ENDIF
-          IF ((JHBE/=1 .AND. JHBE/=2) .AND. MLN==68 ) THEN
-            CALL ANCMSG(MSGID=672,
-     .                  MSGTYPE=MSGERROR,
-     .                  ANMODE=ANINFO_BLIND_1,
+          IF (MLN==68 ) THEN
+            IF (IKSNOD0/=8 ) THEN      ! error out
+              CALL ANCMSG(MSGID=672,
+     .                    MSGTYPE=MSGERROR,
+     .                    ANMODE=ANINFO_BLIND_1,
      .                    I1=ID,
      .                    C1=TITR,     
-     .                  I2=IGEO(1,PID))
-          ENDIF
+     .                    I2=IGEO(1,PID))
+            ELSE
+              IF (JHBE/=1 .AND. JHBE/=2 .OR. JCVT>0 ) THEN ! warning out
+                CALL ANCMSG(MSGID=3150,
+     .                      MSGTYPE=MSGERROR,
+     .                      ANMODE=ANINFO_BLIND_1,
+     .                      I1=ID,
+     .                      C1=TITR,     
+     .                      I2=IGEO(1,PID))
+                JHBE = 1
+                JCVT = 0 
+              END IF
+            END IF
+          END IF
           IF (JHBE ==  2) JHBE=0     ! Hourglass Halquist
           IF(MLN == 1 .AND.IGT /= 22) THEN
             IF ((JHBE == 14 .AND. NPT /= 222).OR.(JHBE == 15 .AND. NPT /= 2) ) THEN
@@ -1558,11 +1572,7 @@ C group/processor identification
           IPARG(42,NGROUP)= ISORTH
           IPARG(40,NGROUP)= ISRAT
           IPARG(43,NGROUP)= IFAIL
-          IF(MLN == 68)THEN
-            IPARG(41,NGROUP)=1
-          ELSE
-            IPARG(41,NGROUP)=ITET4
-          ENDIF
+          IPARG(41,NGROUP)= ITET4
           IF(MLN/=25.AND.MLN<28)THEN
             IPARG(44,NGROUP)= ISTRAIN
           ELSEIF(MLN>=28)THEN
@@ -1750,8 +1760,8 @@ C-----------
      .                  ANMODE=ANINFO_BLIND_2,
      .                  PRMOD=MSG_PRINT)
 c-----
-      DEALLOCATE(INDEXS2)
-      IF (ALLOCATED(XNUM_RNOISE)) DEALLOCATE(XNUM_RNOISE) 
+      CALL MY_DEALLOC(INDEXS2)
+      IF (ALLOCATED(XNUM_RNOISE)) CALL MY_DEALLOC(XNUM_RNOISE)
       IF (ALLOCATED(INUM_Q1NP)) DEALLOCATE(INUM_Q1NP) 
 c------------------------------------------------------------
  1010 FORMAT(//,

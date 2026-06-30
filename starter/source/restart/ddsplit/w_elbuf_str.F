@@ -21,9 +21,9 @@ Copyright>        As an alternative to this open-source version, Altair also off
 Copyright>        software under a commercial license.  Contact Altair to discuss further if the
 Copyright>        commercial version may interest you: https://www.altair.com/radioss/.
 !||====================================================================
-!||    w_elbuf_str    ../starter/source/restart/ddsplit/w_elbuf_str.F
+!||    w_elbuf_str      ../starter/source/restart/ddsplit/w_elbuf_str.F
 !||--- called by ------------------------------------------------------
-!||    ddsplit        ../starter/source/restart/ddsplit/ddsplit.F
+!||    ddsplit          ../starter/source/restart/ddsplit/ddsplit.F
 !||--- calls      -----------------------------------------------------
 !||--- uses       -----------------------------------------------------
 !||====================================================================
@@ -32,6 +32,8 @@ C-----------------------------------------------
 C   M o d u l e s
 C----------------------------------------------- 
       USE ELBUFDEF_MOD      
+      use my_alloc_mod
+      use my_dealloc_mod, only : my_dealloc
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -154,7 +156,7 @@ c---------------------------------------------------
 c         allocate and fill the transfer table for restart
 c---------------------------------------------------          
           BUFLEN = IPARG(66,NG) 
-          ALLOCATE (RBUF_L(BUFLEN), STAT=ERR)
+          call my_alloc(RBUF_L, BUFLEN, "RBUF_L", stat=ERR)
 c                                                      
 c---------------------------------------------------          
 C         IF (DEBUG_PRINT == 1) THEN
@@ -184,7 +186,7 @@ C-- add VOL0DP
           ENDDO 
           SDP_RBUF = SDP_RBUF + GBUF%G_SMSTR *NEL
           IF(SDP_RBUF > 0)THEN
-            ALLOCATE(DP_RBUF(SDP_RBUF))
+            call my_alloc(DP_RBUF, SDP_RBUF, "DP_RBUF")
           ENDIF
           L_DPREL = 0
 C
@@ -1821,10 +1823,10 @@ C---------
           CALL WRITE_DB (RBUF_L,L_REL)
           IF( SDP_RBUF >0)THEN 
             CALL WRITE_DPDB(DP_RBUF,SDP_RBUF)
-            DEALLOCATE(DP_RBUF)
+            call my_dealloc(DP_RBUF)
           ENDIF
 C---------
-          DEALLOCATE (RBUF_L)
+          CALL my_dealloc(RBUF_L)
 c---------
           LEN_AM = LEN_AM + L_REL
          ENDIF   ! ity

@@ -21,155 +21,90 @@
 !Copyright>        software under a commercial license.  Contact Altair to discuss further if the
 !Copyright>        commercial version may interest you: https://www.altair.com/radioss/.
 !||====================================================================
-!||    constraint_mod   ../starter/source/modules/constaint_mod.F90
+!||    apply_permutation_mod   ../starter/source/spmd/tools/apply_permutation.F90
 !||--- called by ------------------------------------------------------
-!||    ddsplit          ../starter/source/restart/ddsplit/ddsplit.F
-!||    lectur           ../starter/source/starter/lectur.F
-!||    split_rwall      ../starter/source/constraints/general/rwall/split_rwall.F90
-!||    w_front          ../starter/source/restart/ddsplit/w_front.F
+!||    lectur                  ../starter/source/starter/lectur.F
 !||====================================================================
-      module constraint_mod
-!=======================================================================================================================
-!!\brief
-!=======================================================================================================================
+      module apply_permutation_mod
         implicit none
-
-        ! --------------------------------
-        ! Structure for domdec
-        type spmd_
-          integer ::  pmain !< main processor of the current rwall/rbody/rbe3/...
-          integer ::  s_node_number !< number of S nodes
-          integer, dimension(:), allocatable ::  m_proc_list !< list of proc where M node is defined
-        end type  spmd_
-        ! --------------------------------
-
-        ! --------------------------------
-        ! Structure for /RWALL
-        type rwall_
-          integer, dimension(:,:), allocatable :: dd !< domain decomposition data (number of node per proc, main proc,...)
-          type(spmd_), dimension(:), allocatable ::  spmd    !< data per rwall
-        end type  rwall_
-        ! --------------------------------
-
-        ! --------------------------------
-        ! Structure for /RBE3
-        type rbe3_
-          integer, dimension(:,:), allocatable :: dd !< domain decomposition data (number of node per proc, main proc,...)
-          type(spmd_), dimension(:), allocatable ::  spmd    !< data per rwall
-        end type  rbe3_
-        ! --------------------------------
-
-        ! --------------------------------
-        ! Structure for /RBODY
-        type rbody_
-          integer, dimension(:,:), allocatable :: dd !< domain decomposition data (number of node per proc, main proc,...)
-          type(spmd_), dimension(:), allocatable ::  spmd    !< data per rwall
-        end type  rbody_
-        ! --------------------------------
-
-        type constraint_
-          type(rwall_) ::  rwall    !<
-          type(rbody_) ::  rbody    !<
-          type(rbe3_) ::  rbe3    !<
-        end type constraint_
-
-
+        interface apply_permutation
+          module procedure apply_permutation_elem
+          module procedure apply_permutation_with_type
+        end interface apply_permutation        
       contains
-
 ! ======================================================================================================================
 !                                                   PROCEDURES
 ! ======================================================================================================================
-!! \brief Allocation of constraint_struct
+!! \brief Permute the entity according to the given permutation and the type of entity
 !||====================================================================
-!||    alloc_constraint_struct   ../starter/source/modules/constaint_mod.F90
-!||--- called by ------------------------------------------------------
-!||    lectur                    ../starter/source/starter/lectur.F
+!||    apply_permutation_with_type   ../starter/source/spmd/tools/apply_permutation.F90
 !||====================================================================
-        subroutine alloc_constraint_struct(nrwall,nspmd,constraint_struct)
+        subroutine apply_permutation_with_type(my_type,entity_nb,entity_type,entity,permutation_s,permutation)
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Modules
 ! ----------------------------------------------------------------------------------------------------------------------
 
 ! ----------------------------------------------------------------------------------------------------------------------
-!                                                   Implicit none
+!                                                   Included files
 ! ----------------------------------------------------------------------------------------------------------------------
           implicit none
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Arguments
 ! ----------------------------------------------------------------------------------------------------------------------
-          integer, intent(in) :: nrwall !< number of RWALL
-          integer, intent(in) :: nspmd !< number of processor
-          type(constraint_), intent(inout) :: constraint_struct
+          integer, intent(in) :: my_type !< type of the entity to be permuted
+          integer, intent(in) :: entity_nb !< number of entity
+          integer, dimension(entity_nb), intent(in) :: entity_type !< entity type          
+          integer, dimension(entity_nb), intent(inout) :: entity !< entity to be permuted
+          integer, intent(in) :: permutation_s !< size of the permutation
+          integer, dimension(2*permutation_s), intent(in) :: permutation !< permutation to be applied
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Local variables
 ! ----------------------------------------------------------------------------------------------------------------------
-          integer :: n
-! ----------------------------------------------------------------------------------------------------------------------
-!                                                   External functions
-! ----------------------------------------------------------------------------------------------------------------------
+          integer :: i,my_index
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Body
 ! ----------------------------------------------------------------------------------------------------------------------
-          allocate( constraint_struct%rwall%dd(nspmd+2,nrwall) )
-          constraint_struct%rwall%dd(1:nspmd+2,1:nrwall) = 0
-
-          allocate( constraint_struct%rwall%spmd(nrwall) )
-          ! ------------
-          do n=1,nrwall
-            allocate( constraint_struct%rwall%spmd(n)%m_proc_list(nspmd) )
-            constraint_struct%rwall%spmd(n)%m_proc_list(1:nspmd) = 0
-          end do
-          ! ------------
-
+          
 ! ----------------------------------------------------------------------------------------------------------------------
-        end subroutine alloc_constraint_struct
-
-
+          do i=1,entity_nb
+            if(my_type==entity_type(i)) then
+              entity(i) = permutation( entity(i) + permutation_s ) ! apply the permutation to the entity
+            endif
+          enddo
+        end subroutine apply_permutation_with_type
 ! ======================================================================================================================
 !                                                   PROCEDURES
 ! ======================================================================================================================
-!! \brief Deallocation of constraint_struct
+!! \brief Permute the entity
 !||====================================================================
-!||    dealloc_constraint_struct   ../starter/source/modules/constaint_mod.F90
-!||--- called by ------------------------------------------------------
-!||    lectur                      ../starter/source/starter/lectur.F
+!||    apply_permutation_elem   ../starter/source/spmd/tools/apply_permutation.F90
 !||====================================================================
-        subroutine dealloc_constraint_struct(nrwall,constraint_struct)
+        subroutine apply_permutation_elem(entity_nb,entity)
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Modules
 ! ----------------------------------------------------------------------------------------------------------------------
 
 ! ----------------------------------------------------------------------------------------------------------------------
-!                                                   Implicit none
+!                                                   Included files
 ! ----------------------------------------------------------------------------------------------------------------------
           implicit none
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Arguments
 ! ----------------------------------------------------------------------------------------------------------------------
-          integer, intent(in) :: nrwall !< number of RWALL
-          type(constraint_), intent(inout) :: constraint_struct
+          integer, intent(in) :: entity_nb !< number of entity
+          integer, dimension(2*entity_nb), intent(inout) :: entity !< entity to be permuted
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Local variables
 ! ----------------------------------------------------------------------------------------------------------------------
-          integer :: n
-! ----------------------------------------------------------------------------------------------------------------------
-!                                                   External functions
-! ----------------------------------------------------------------------------------------------------------------------
+          integer :: i,my_index
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Body
 ! ----------------------------------------------------------------------------------------------------------------------
-          ! ------------
-          do n=1,nrwall
-            deallocate( constraint_struct%rwall%spmd(n)%m_proc_list )
-          end do
-          ! ------------
-          deallocate( constraint_struct%rwall%spmd )
-
-          deallocate( constraint_struct%rwall%dd )
-
+          
 ! ----------------------------------------------------------------------------------------------------------------------
-        end subroutine dealloc_constraint_struct
-
-
-
-      end module constraint_mod
+          do i=1,entity_nb
+            my_index = entity(i) + entity_nb
+            entity(my_index) = i ! apply the permutation to the entity   
+          enddo
+        end subroutine apply_permutation_elem    
+      end module apply_permutation_mod
