@@ -415,12 +415,15 @@ C----6---------------------------------------------------------------7---------8
 C---------
 C         Q1NP HEX8 group detection (Isolid 1, 24, ...).
 C         Q1NP groups override any JHBE-specific element kernel.
-C         Detection requires:
+C         Starter must split Q1NP and non-Q1NP HEX8 elements into
+C         separate groups.  Engine-side detection therefore trusts
+C         IPARG(94); the element scan below is only a consistency check.
+C         Dispatch requires:
 C           (a) HEX8 group with global Q1NP context available
-C           (b) IPARG(94)==1 OR all element IDs in KQ1NP_TAB
+C           (b) IPARG(94)==1 and all element IDs in KQ1NP_TAB
 C           (c) ELBUF actually dimensioned for Q1NP Gauss scheme
-C               (NPT==18 + LBUF layered (3,3,2)). This last check
-C               prevents the early branch from firing for groups
+C               (LBUF layered, default 3x3x2). This last check
+C               prevents the Q1NP branch from firing for groups
 C               whose ELBUF was built with NPT=1 (stale starter run).
 C---------
           IS_Q1NP_GROUP = .FALSE.
@@ -428,9 +431,6 @@ C---------
      .        ALLOCATED(KQ1NP_TAB) .AND. ALLOCATED(IQ1NP_TAB) .AND.
      .        ALLOCATED(IQ1NP_BULK_TAB) .AND. ALLOCATED(Q1NP_KTAB)) THEN
             IF (IPARG(94,NG) == 1) THEN
-              IS_Q1NP_GROUP = .TRUE.
-            ELSE
-C             Fallback: scan element IDs (covers stale restart of IPARG(94))
               IS_Q1NP_GROUP = .TRUE.
               DO I = 1, NEL
                 lFOUND = .FALSE.
@@ -442,8 +442,10 @@ C             Fallback: scan element IDs (covers stale restart of IPARG(94))
                   ENDIF
                 ENDDO
                 IF (.NOT. lFOUND) THEN
-                  IS_Q1NP_GROUP = .FALSE.
-                  EXIT
+                  WRITE(IOUT,'(A,I8,A,I8)')
+     .              ' ** ERROR: Q1NP group ',NG,
+     .              ' contains non-Q1NP element ID=',IXS(NIXS,NFT + I)
+                  CALL ARRET(2)
                 ENDIF
               ENDDO
             ENDIF
@@ -1192,7 +1194,7 @@ C-------------------------
      9           DMELS(NF1),ITASK ,IPRI    ,JTHE    ,TABLE    ,
      A           IDTMINS,DTFACS   ,DTMINS)
 C--------------------------
-          ELSEIF (NPT == 1 .OR. NPT == 18)THEN
+          ELSEIF (NPT == 1)THEN
             IF (JHBE == 24) THEN
 C-------------------------
 C              SOLID HEPH FORMULATION

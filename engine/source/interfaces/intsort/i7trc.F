@@ -58,8 +58,8 @@ C   D u m m y   A r g u m e n t s
 C-----------------------------------------------
       INTEGER I_STOK,NSN,INACTI,IFQ,NUM_IMP,IND_IMP(*),
      .        NIN, NSNL, ITIED, IPSTS
-     ! IPSTS == 1 means that the STS is enabled.
-     ! Passed with IPARI(105,NIN) on inter_trc_7.F.
+C     IPSTS == 1 means that the STS is enabled.
+C     Passed with IPARI(105,NIN) on inter_trc_7.F.
       INTEGER CAND_N(*),CAND_E(*),CAND_A(*), IFPEN(*),
      .        CAND_T
 C     REAL

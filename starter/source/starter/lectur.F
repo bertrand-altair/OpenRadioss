@@ -8078,21 +8078,21 @@ C
       IF(IDDLEVEL == 0) THEN
 C       MSSA(NUMELS): filled when IREST_MSELT/=0 (solid mass restart path).
 C       Q1NP_MASS3 writes MSSA(iel_hex8), iel_hex8 in 1..NUMELS, when NUMELQ1NP_G>0.
-        IF(IREST_MSELT/=0 .OR. NUMELQ1NP_G > 0)THEN
-          ALLOCATE(MSSA(NUMELS)     ,STAT=stat)
-          IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
-     .                             MSGTYPE=MSGERROR,
-     .                         C1='MSSA')
-        ELSE
-          ALLOCATE(MSSA(0)          ,STAT=stat)
-        ENDIF
-        IF(IREST_MSELT/=0)THEN
-          ALLOCATE(MSRT(NUMELR)     ,STAT=stat)
-          IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
-     .                             MSGTYPE=MSGERROR,
-     .                         C1='MSRT')
+C        IF(IREST_MSELT/=0 .OR. NUMELQ1NP_G > 0)THEN
+C          ALLOCATE(MSSA(NUMELS)     ,STAT=stat)
+C          IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
+C     .                             MSGTYPE=MSGERROR,
+C     .                         C1='MSSA')
+C        ELSE
+C          ALLOCATE(MSSA(0)          ,STAT=stat)
+C        ENDIF
+C        IF(IREST_MSELT/=0)THEN
+C          ALLOCATE(MSRT(NUMELR)     ,STAT=stat)
+C          IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
+C     .                             MSGTYPE=MSGERROR,
+C     .                         C1='MSRT')
           
-          ! REVIEW HERE
+          ! REVIEW HERE IF Q1NP IS NOT WORKING
           IF(IREST_MSELT/=0)THEN
           CALL MY_ALLOC(MSSA,NUMELS,"MSSA")
           CALL MY_ALLOC(MSRT,NUMELR,"MSRT")

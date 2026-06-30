@@ -1393,6 +1393,10 @@ C coupling coupling
               logical :: ongoing
               double precision :: dt2max_coupling
 C-----------------------------------------------------------------------------------
+C GPU
+              type(SHELLS_) :: SHELLS
+              integer :: ipri
+C     
 C-----------------------------------------------
 C Build NODE_MAT: Local ID, Global ID, and Coordinates
 C-----------------------------------------------
@@ -1770,11 +1774,7 @@ C           Here we are building a Nodelist for the contact search algorithm.
         write(*,*) "%STFNS", INTERFACES%INTBUF_TAB(1)%STFNS, ": contact stiffness of secondary node"
         write(*,*) "%XSAV", INTERFACES%INTBUF_TAB(1)%XSAV, ": position stored at last sorting"
       endif
-      
-C GPU
-              type(SHELLS_) :: SHELLS
-              integer :: ipri
-C             
+             
 
               call resol_alloc_phase1(rby6,dxancg,nb25_candt,nb25_impct,nb25_dst1,nb25_dst2,igrouc,igrounc, 
      .                                interfaces,int18add,idamp_rdof_tab,icontact_old, 
