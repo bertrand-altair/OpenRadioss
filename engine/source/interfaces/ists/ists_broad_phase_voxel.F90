@@ -56,6 +56,8 @@
         USE GROUPDEF_MOD,  ONLY : SURF_
         USE CONTACT_BROAD_PHASE_TOL_MOD
         USE ISTS_STS_VOXEL_GRID_MOD
+        USE MY_ALLOC_MOD
+        USE MY_DEALLOC_MOD, ONLY : MY_DEALLOC
         IMPLICIT NONE
         PRIVATE
 !-----------------------------------------------------------------------
@@ -129,22 +131,25 @@
 !-----------------------------------------------
 !         Build sample point clouds
 !-----------------------------------------------
-          ALLOCATE(PTS_S(3, NSEG_SEC * STS_VOXEL_NSAMPLES_PER_SEG))
-          ALLOCATE(SEG_OF_PT_S(NSEG_SEC * STS_VOXEL_NSAMPLES_PER_SEG))
+          CALL MY_ALLOC(PTS_S, 3, NSEG_SEC * STS_VOXEL_NSAMPLES_PER_SEG, "PTS_S")
+          CALL MY_ALLOC(SEG_OF_PT_S, NSEG_SEC * STS_VOXEL_NSAMPLES_PER_SEG, "SEG_OF_PT_S")
           CALL STS_VOXEL_BUILD_SEG_POINTS( &
      &        IGRSURF, NSURF, SEC_SURF_IDX, X, NUMNOD, &
      &        STS_VOXEL_NSAMPLES_PER_SEG, &
      &        PTS_S, SEG_OF_PT_S, NPTS_S)
 !
-          ALLOCATE(PTS_M(3, NSEG_MST * STS_VOXEL_NSAMPLES_PER_SEG))
-          ALLOCATE(SEG_OF_PT_M(NSEG_MST * STS_VOXEL_NSAMPLES_PER_SEG))
+          CALL MY_ALLOC(PTS_M, 3, NSEG_MST * STS_VOXEL_NSAMPLES_PER_SEG, "PTS_M")
+          CALL MY_ALLOC(SEG_OF_PT_M, NSEG_MST * STS_VOXEL_NSAMPLES_PER_SEG, "SEG_OF_PT_M")
           CALL STS_VOXEL_BUILD_SEG_POINTS( &
      &        IGRSURF, NSURF, MST_SURF_IDX, X, NUMNOD, &
      &        STS_VOXEL_NSAMPLES_PER_SEG, &
      &        PTS_M, SEG_OF_PT_M, NPTS_M)
 !
           IF (NPTS_S <= 0 .OR. NPTS_M <= 0) THEN
-            DEALLOCATE(PTS_S, PTS_M, SEG_OF_PT_S, SEG_OF_PT_M)
+            CALL MY_DEALLOC(PTS_S)
+            CALL MY_DEALLOC(PTS_M)
+            CALL MY_DEALLOC(SEG_OF_PT_S)
+            CALL MY_DEALLOC(SEG_OF_PT_M)
             RETURN
           END IF
 
@@ -182,7 +187,10 @@
      &          COUNT, MAX_STS_SIZE_ACTUAL)
           END IF
 
-          DEALLOCATE(PTS_S, PTS_M, SEG_OF_PT_S, SEG_OF_PT_M)
+          CALL MY_DEALLOC(PTS_S)
+          CALL MY_DEALLOC(PTS_M)
+          CALL MY_DEALLOC(SEG_OF_PT_S)
+          CALL MY_DEALLOC(SEG_OF_PT_M)
 !
         END SUBROUTINE STS_VOXEL_BROAD_PHASE
 !=======================================================================
@@ -414,7 +422,9 @@
           ! Compute the size of the hash table (needed for the linked-list per cell)
           HASH_SIZE = MIN(HUGE(1), MAX(STS_VOXEL_HASH_MIN_SLOTS, 2 * MAX_STS_SIZE_ACTUAL + 1))
           HASH_STRIDE = MAX(NSEG_SEC, 1) + 1
-          ALLOCATE(VOXEL(NVOXELS), NEXT_PT(NPTS_M), HASH_KEYS(HASH_SIZE))
+          CALL MY_ALLOC(VOXEL, NVOXELS, "VOXEL")
+          CALL MY_ALLOC(NEXT_PT, NPTS_M, "NEXT_PT")
+          ALLOCATE(HASH_KEYS(HASH_SIZE))
           ! Initialize the voxel grid and the linked-list per cell
           VOXEL = 0
           NEXT_PT = 0
@@ -492,7 +502,9 @@
             IF (OVERFLOW) EXIT
           END DO
 !
-          DEALLOCATE(VOXEL, NEXT_PT, HASH_KEYS)
+          CALL MY_DEALLOC(VOXEL)
+          CALL MY_DEALLOC(NEXT_PT)
+          DEALLOCATE(HASH_KEYS)
           D_MIN_OUT = SQRT(D_MIN_SQ)
 !
         END SUBROUTINE STS_VOXEL_PAIR_SEARCH

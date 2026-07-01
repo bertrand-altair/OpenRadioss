@@ -21,7 +21,7 @@
 !Copyright>        software under a commercial license.  Contact Altair to discuss further if the
 !Copyright>        commercial version may interest you: https://www.altair.com/radioss/.
 !||====================================================================
-!||    q1np_contact_algorithms           ../engine/source/interfaces/int26/q1np_contact_algorithms.F90
+!||    q1np_contact_algorithms           ../engine/source/interfaces/ists_q1np/q1np_contact_algorithms.F90
 !||--- called by ------------------------------------------------------
 !||    resol                             ../engine/source/engine/resol.F
 !||--- calls      -----------------------------------------------------
@@ -46,6 +46,8 @@
 ! ----------------------------------------------------------------------------------------------------------------------
         USE PRECISION_MOD, ONLY : WP
         USE CONSTANT_MOD , ONLY : ZERO, ONE, TWO, THREE, TEN, HALF
+        USE MY_ALLOC_MOD, ONLY : MY_ALLOC
+        USE MY_DEALLOC_MOD, ONLY : MY_DEALLOC
         USE Q1NP_RESTART_MOD
         USE Q1NP_CONTACT_EXPORT_MOD, ONLY : Q1NP_CONTACT_EXPORT_ACCUMULATE
         USE Q1NP_NURBS_SURFACE_EVALUATION_MOD, ONLY : &
@@ -178,12 +180,14 @@
 !  ----------------------------------------------------------------------------------------------------------------------
           MAX_PTS = NUMELQ1NP * Q1NP_CONTACT_BP_NGP_U &
      &                        * Q1NP_CONTACT_BP_NGP_V
-          ALLOCATE(WS%SURF_POINTS_A(3, MAX_PTS))
-          ALLOCATE(WS%SURF_POINTS_B(3, MAX_PTS))
-          ALLOCATE(WS%ELEM_IDS_A(MAX_PTS), WS%XI_A(MAX_PTS), &
-     &             WS%ETA_A(MAX_PTS))
-          ALLOCATE(WS%ELEM_IDS_B(MAX_PTS), WS%XI_B(MAX_PTS), &
-     &             WS%ETA_B(MAX_PTS))
+          CALL MY_ALLOC(WS%SURF_POINTS_A, 3, MAX_PTS, "SURF_POINTS_A")
+          CALL MY_ALLOC(WS%SURF_POINTS_B, 3, MAX_PTS, "SURF_POINTS_B")
+          CALL MY_ALLOC(WS%ELEM_IDS_A, MAX_PTS, "ELEM_IDS_A")
+          CALL MY_ALLOC(WS%XI_A, MAX_PTS, "XI_A")
+          CALL MY_ALLOC(WS%ETA_A, MAX_PTS, "ETA_A")
+          CALL MY_ALLOC(WS%ELEM_IDS_B, MAX_PTS, "ELEM_IDS_B")
+          CALL MY_ALLOC(WS%XI_B, MAX_PTS, "XI_B")
+          CALL MY_ALLOC(WS%ETA_B, MAX_PTS, "ETA_B")
 
           CALL Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS( &
      &        KQ1NP_TAB, IQ1NP_TAB, Q1NP_KTAB, NUMELQ1NP,    &
@@ -201,10 +205,10 @@
      &        WS%SURF_POINTS_B, WS%NPTS_B,                    &
      &        WS%ELEM_IDS_B, WS%XI_B, WS%ETA_B, MAX_PTS)
 
-          ALLOCATE(WS%CANDIDATE_IA( &
-     &      Q1NP_CONTACT_MAX_CANDIDATES_PER_B, MAX(1, WS%NPTS_B)))
-          ALLOCATE(WS%CANDIDATE_COUNT(MAX(1, WS%NPTS_B)))
-          ALLOCATE(WS%CANDIDATE_OVERFLOW(MAX(1, WS%NPTS_B)))
+          CALL MY_ALLOC(WS%CANDIDATE_IA, &
+     &      Q1NP_CONTACT_MAX_CANDIDATES_PER_B, MAX(1, WS%NPTS_B), "CANDIDATE_IA")
+          CALL MY_ALLOC(WS%CANDIDATE_COUNT, MAX(1, WS%NPTS_B), "CANDIDATE_COUNT")
+          CALL MY_ALLOC(WS%CANDIDATE_OVERFLOW, MAX(1, WS%NPTS_B), "CANDIDATE_OVERFLOW")
           WS%CANDIDATE_IA(:,:) = 0
           WS%CANDIDATE_COUNT(:) = 0
           WS%CANDIDATE_OVERFLOW(:) = .FALSE.
@@ -306,18 +310,18 @@
 !=======================================================================
         SUBROUTINE Q1NP_CONTACT_WORKSPACE_FREE(WS)
           TYPE(Q1NP_CONTACT_WORKSPACE), INTENT(INOUT) :: WS
-          IF (ALLOCATED(WS%SURF_POINTS_A))    DEALLOCATE(WS%SURF_POINTS_A)
-          IF (ALLOCATED(WS%SURF_POINTS_B))    DEALLOCATE(WS%SURF_POINTS_B)
-          IF (ALLOCATED(WS%ELEM_IDS_A))       DEALLOCATE(WS%ELEM_IDS_A)
-          IF (ALLOCATED(WS%ELEM_IDS_B))       DEALLOCATE(WS%ELEM_IDS_B)
-          IF (ALLOCATED(WS%XI_A))             DEALLOCATE(WS%XI_A)
-          IF (ALLOCATED(WS%ETA_A))            DEALLOCATE(WS%ETA_A)
-          IF (ALLOCATED(WS%XI_B))             DEALLOCATE(WS%XI_B)
-          IF (ALLOCATED(WS%ETA_B))            DEALLOCATE(WS%ETA_B)
-          IF (ALLOCATED(WS%CANDIDATE_IA))     DEALLOCATE(WS%CANDIDATE_IA)
-          IF (ALLOCATED(WS%CANDIDATE_COUNT))  DEALLOCATE(WS%CANDIDATE_COUNT)
+          IF (ALLOCATED(WS%SURF_POINTS_A)) CALL MY_DEALLOC(WS%SURF_POINTS_A)
+          IF (ALLOCATED(WS%SURF_POINTS_B)) CALL MY_DEALLOC(WS%SURF_POINTS_B)
+          IF (ALLOCATED(WS%ELEM_IDS_A)) CALL MY_DEALLOC(WS%ELEM_IDS_A)
+          IF (ALLOCATED(WS%ELEM_IDS_B)) CALL MY_DEALLOC(WS%ELEM_IDS_B)
+          IF (ALLOCATED(WS%XI_A)) CALL MY_DEALLOC(WS%XI_A)
+          IF (ALLOCATED(WS%ETA_A)) CALL MY_DEALLOC(WS%ETA_A)
+          IF (ALLOCATED(WS%XI_B)) CALL MY_DEALLOC(WS%XI_B)
+          IF (ALLOCATED(WS%ETA_B)) CALL MY_DEALLOC(WS%ETA_B)
+          IF (ALLOCATED(WS%CANDIDATE_IA)) CALL MY_DEALLOC(WS%CANDIDATE_IA)
+          IF (ALLOCATED(WS%CANDIDATE_COUNT)) CALL MY_DEALLOC(WS%CANDIDATE_COUNT)
           IF (ALLOCATED(WS%CANDIDATE_OVERFLOW)) &
-     &      DEALLOCATE(WS%CANDIDATE_OVERFLOW)
+     &      CALL MY_DEALLOC(WS%CANDIDATE_OVERFLOW)
           WS%NPTS_A = 0
           WS%NPTS_B = 0
         END SUBROUTINE Q1NP_CONTACT_WORKSPACE_FREE
@@ -372,7 +376,8 @@
 
           ! Compute the maximum knot vector length in U and V
           CALL Q1NP_CONTACT_MAX_KNOT_LEN(KQ1NP_TAB, NUMELQ1NP, U_MAX, V_MAX)
-          ALLOCATE(U_KNOT_WS(U_MAX), V_KNOT_WS(V_MAX))
+          CALL MY_ALLOC(U_KNOT_WS, U_MAX, "U_KNOT_WS")
+          CALL MY_ALLOC(V_KNOT_WS, V_MAX, "V_KNOT_WS")
 
           DO IEL = 1, NUMELQ1NP
             IF (KQ1NP_TAB(KQ1NP_KNOT_SET, IEL) /= KNOT_SET_ID_FILTER) CYCLE
@@ -407,7 +412,8 @@
             END DO
           END DO
 
-          DEALLOCATE(U_KNOT_WS, V_KNOT_WS)
+          CALL MY_DEALLOC(U_KNOT_WS)
+          CALL MY_DEALLOC(V_KNOT_WS)
 
         END SUBROUTINE Q1NP_CONTACT_BP_BUILD_SURFACE_POINTS
 
@@ -552,8 +558,8 @@
           NVOXELS = NBX * NBY * NBZ
 
 !   ----- Step 5: allocate and fill voxel grid with B points -----
-          ALLOCATE(VOXEL(NVOXELS))
-          ALLOCATE(NEXT_PT(NPTS_B))
+          CALL MY_ALLOC(VOXEL, NVOXELS, "VOXEL")
+          CALL MY_ALLOC(NEXT_PT, NPTS_B, "NEXT_PT")
           VOXEL(1:NVOXELS) = 0
           NEXT_PT(1:NPTS_B) = 0
 
@@ -641,7 +647,8 @@
             END DO
           END DO
 
-          DEALLOCATE(VOXEL, NEXT_PT)
+          CALL MY_DEALLOC(VOXEL)
+          CALL MY_DEALLOC(NEXT_PT)
 
         END SUBROUTINE Q1NP_CONTACT_BROAD_PHASE_VOXEL_MIN_DISTANCE
 
@@ -700,7 +707,8 @@
 
           CALL Q1NP_CONTACT_MAX_KNOT_LEN( &
      &      KQ1NP_TAB, SIZE(KQ1NP_TAB, 2), U_MAX, V_MAX)
-          ALLOCATE(U_KNOT_WS(U_MAX), V_KNOT_WS(V_MAX))
+          CALL MY_ALLOC(U_KNOT_WS, U_MAX, "U_KNOT_WS")
+          CALL MY_ALLOC(V_KNOT_WS, V_MAX, "V_KNOT_WS")
 
           DO IB = 1, NPTS_B
             X_SRC(1:3) = SURF_POINTS_B(1:3, IB)
@@ -746,7 +754,8 @@
             CONTACT_PAIRS(N_PAIRS)%ELEM_B      = ELEM_IDS_B(IB)
           END DO
 
-          DEALLOCATE(U_KNOT_WS, V_KNOT_WS)
+          CALL MY_DEALLOC(U_KNOT_WS)
+          CALL MY_DEALLOC(V_KNOT_WS)
 
         END SUBROUTINE Q1NP_CONTACT_NARROW_PHASE_PROJECT
 
@@ -818,17 +827,18 @@
           NRTM_EFF = MIN(NRTM, SIZE(STFM), SIZE(IRECTM) / 4)
 
           NODE_MAP_SIZE = Q1NP_CONTACT_NODE_MAP_SIZE(NUMNOD, NSV, NSN_EFF, IQ1NP_BULK_TAB)
-          ALLOCATE(NODE_TO_STFNS(NODE_MAP_SIZE))
+          CALL MY_ALLOC(NODE_TO_STFNS, NODE_MAP_SIZE, "NODE_TO_STFNS")
           ! Build the node to STFNS map
           CALL Q1NP_CONTACT_BUILD_NODE_TO_STFNS(NSV, NSN_EFF, NODE_TO_STFNS)
 
-          ALLOCATE(ELEM_TO_STFM_SEG(MAX(1, SIZE(KQ1NP_TAB, 2))))  
+          CALL MY_ALLOC(ELEM_TO_STFM_SEG, MAX(1, SIZE(KQ1NP_TAB, 2)), "ELEM_TO_STFM_SEG")  
           CALL Q1NP_CONTACT_BUILD_PRIMARY_SEG_MAP(KQ1NP_TAB, IQ1NP_BULK_TAB, IRECTM, NRTM_EFF, ELEM_TO_STFM_SEG)
 
           ! Compute the maximum knot vector length in U and V
           CALL Q1NP_CONTACT_MAX_KNOT_LEN( &
      &      KQ1NP_TAB, SIZE(KQ1NP_TAB, 2), U_MAX, V_MAX)
-          ALLOCATE(U_KNOT_WS(U_MAX), V_KNOT_WS(V_MAX))
+          CALL MY_ALLOC(U_KNOT_WS, U_MAX, "U_KNOT_WS")
+          CALL MY_ALLOC(V_KNOT_WS, V_MAX, "V_KNOT_WS")
 
           DO IP = 1, N_PAIRS
             PEN_ABS = GAP_REF - CONTACT_PAIRS(IP)%PENETRATION
@@ -947,9 +957,10 @@
             END IF
           END DO
 
-          DEALLOCATE(NODE_TO_STFNS)
-          DEALLOCATE(ELEM_TO_STFM_SEG)
-          DEALLOCATE(U_KNOT_WS, V_KNOT_WS)
+          CALL MY_DEALLOC(NODE_TO_STFNS)
+          CALL MY_DEALLOC(ELEM_TO_STFM_SEG)
+          CALL MY_DEALLOC(U_KNOT_WS)
+          CALL MY_DEALLOC(V_KNOT_WS)
 
         END SUBROUTINE Q1NP_CONTACT_COMPUTE_PENALTY_FORCES
 
@@ -1933,8 +1944,8 @@
           IF (.NOT. ALLOCATED(KQ1NP_TAB)) RETURN
           IF (.NOT. ALLOCATED(IQ1NP_BULK_TAB)) RETURN
 
-          IF (ALLOCATED(Q1NP_FCONT_GRID_IDS)) DEALLOCATE(Q1NP_FCONT_GRID_IDS)
-          ALLOCATE(Q1NP_FCONT_GRID_IDS(4, NUMELQ1NP_G))
+          IF (ALLOCATED(Q1NP_FCONT_GRID_IDS)) CALL MY_DEALLOC(Q1NP_FCONT_GRID_IDS)
+          CALL MY_ALLOC(Q1NP_FCONT_GRID_IDS, 4, NUMELQ1NP_G, "Q1NP_FCONT_GRID_IDS")
           Q1NP_FCONT_GRID_IDS(:,:) = 0
 
           DO IEL = 1, NUMELQ1NP_G

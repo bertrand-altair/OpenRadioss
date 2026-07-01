@@ -95,7 +95,6 @@ C-----------------------------------------------
      .        NI(4),NS(4),MI(4),MS(4),NMIN,MMIN,NF,MF,IPERM,N1,N2,I
       INTEGER FACES(4,6),PWR(7),
      .        FACES10(3,6),NNS,ISHEL,ISEG
-      INTEGER NFAST
       INTEGER, DIMENSION(:), ALLOCATABLE :: NODTAG,FASTAG
 !     FLAG_PART : check for tagged part
       LOGICAL :: FLAG_PART      
@@ -131,12 +130,10 @@ C       External surface only.
           ELSE
             IF (TAGBUF(IPARTS(JS))==0) CYCLE  !case of tagged parts
           END IF
-C
           DO JJ=1,6
-C             8-node element: all nodes are valid
-              DO II=1,4
-                NS(II)=IXS(FACES(II,JJ)+1,JS)
-              END DO
+            DO II=1,4
+              NS(II)=IXS(FACES(II,JJ)+1,JS)
+            END DO
 C
 C           keep only 1 occurrence of each node (triangles, degenerated cases...)
             DO K1=1,3
@@ -187,9 +184,9 @@ C           looks for an elt sharing the face.
               END DO
               IF(NN==NF)THEN
                 DO KK=1,6
-                    DO II=1,4
-                      MS(II)=IXS(FACES(II,KK)+1,KS)
-                    END DO
+            DO II=1,4
+              MS(II)=IXS(FACES(II,KK)+1,KS)
+            END DO
 C
 C                 keep only 1 occurrence of each node (triangles, degenerated cases...)
             DO K1=1,3
@@ -234,12 +231,6 @@ C                    Factag (JS) Less Face JJ
         END DO
       END IF
 C-----------
-      WRITE(*,'(A)') 'SSURFTAG: finished IEXT=1 external surface pass'
-      NFAST = 0
-      DO JS=1,NUMELS8+NUMELS10
-        IF (FASTAG(JS) .NE. 0) NFAST = NFAST + 1
-      END DO
-      WRITE(*,'(A,I8)') 'SSURFTAG: elements with nonzero FASTAG = ', NFAST
       IF(KEY(1:6)/='GRBRIC') THEN
         FLAG_PART=.TRUE.
         NUM_PART = NINDX
@@ -557,15 +548,16 @@ C-----------------------------------------------
 !||--- called by ------------------------------------------------------
 !||    lectur         ../starter/source/starter/lectur.F
 !||--- calls      -----------------------------------------------------
+!||    q1np_get_elem_nodes   ../starter/source/elements/solid/solid_q1np/q1np_get_elem_nodes_mod.F90
 !||--- uses       -----------------------------------------------------
+!||    q1np_get_elem_nodes_mod   ../starter/source/elements/solid/solid_q1np/q1np_get_elem_nodes_mod.F90
+!||    q1np_restart_mod   ../common_source/modules/q1np_restart_mod.F90
 !||====================================================================
-      SUBROUTINE SURFEXT_TAGN(IXS    ,KNOD2ELS,NOD2ELS  ,IXS10   ,FASTAG)
+      SUBROUTINE SURFEXT_TAGN(IXS    ,KNOD2ELS,NOD2ELS  ,IXS10   ,FASTAG,itab)
       use element_mod , only : nixs
       use my_alloc_mod
-C-----------------------------------------------
-C   M o d u l e s
-C-----------------------------------------------
-      USE Q1NP_RESTART_MOD
+      use q1np_restart_mod , only : numelq1np_g, kq1np_tab_inv
+      use q1np_get_elem_nodes_mod , only : q1np_get_elem_nodes
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -575,16 +567,16 @@ C-----------------------------------------------
 C   D u m m y   A r g u m e n t s
 C-----------------------------------------------
       INTEGER IXS(NIXS,*),KNOD2ELS(*),NOD2ELS(*),
-     .        IXS10(6,*),FASTAG(NUMELS)
+     .        IXS10(6,*),FASTAG(NUMELS),itab(*)
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
-      INTEGER K,JS,KS,II,JJ,K1,K2,NN,KK,I1,
+      INTEGER K,JS,KS,II,JJ,K1,K2,NN,KK,
      .        NI(4),NS(4),MI(4),MS(4),NMIN,MMIN,NF,MF,IPERM,N1
       INTEGER FACES(4,6),PWR(7)
       INTEGER, DIMENSION(:), ALLOCATABLE :: NODTAG
-      INTEGER ::  FACES10(3,6),NNS
-      INTEGER NFAST
+      INTEGER ::  FACES10(3,6)
+      INTEGER NSJS8(8),NSKS8(8),IQ_JS,IQ_KS
       DATA FACES/4,3,2,1,
      .           5,6,7,8,
      .           1,2,6,5,
@@ -598,149 +590,24 @@ C-----------------------------------------------
      .             1,2,3,
      .             4,5,1/
       DATA PWR/1,2,4,8,16,32,64/
-C     Q1NP helper variables
-      INTEGER IEL_Q1NP, OFFSET_CTRL, OFFSET_BULK
-      INTEGER N_CTRL, P, Q, IDX_CP
-      INTEGER Q1NP_NODES(8)
-      LOGICAL IS_Q1NP_ELEMENT, HAS_Q1NP
-C=======================================================================
-C     Check if Q1NP arrays are available
-C     Q1NP data are available only if all optional arrays are present,
-C     at least one Q1NP element exists, and TABVINT_LEN_G (control point
-C     buffer length) is strictly positive.
-        HAS_Q1NP = NUMELQ1NP_G > 0 .AND. TABVINT_LEN_G > 0
 Co=======================================================================
         call my_alloc(NODTAG, NUMNOD, "NODTAG")
         FASTAG=0
 C       Tag nodes External surface (solid)
         DO JS=1,NUMELS
-C         Check if JS is a Q1NP element (Q1NP elements replace HEX8 elements)
-          IS_Q1NP_ELEMENT = .FALSE.
-          IEL_Q1NP = 0
-          IF (HAS_Q1NP) THEN
-            DO IEL_Q1NP = 1, NUMELQ1NP_G
-              IF (KQ1NP_TAB(10, IEL_Q1NP) == JS) THEN
-                IS_Q1NP_ELEMENT = .TRUE.
-                EXIT
-              ENDIF
-            ENDDO
-          ENDIF
-C
+C         Q1NP element : rebuild the 8 corner nodes from the Q1NP tables
+          IQ_JS=0
+          IF(NUMELQ1NP_G>0) IQ_JS=KQ1NP_TAB_INV(JS)
+          IF(IQ_JS>0)CALL Q1NP_GET_ELEM_NODES(IQ_JS,NSJS8)
+C          
           DO JJ=1,6
-            IF (IS_Q1NP_ELEMENT) THEN
-C             Q1NP element: get face nodes from Q1NP arrays
-              OFFSET_BULK = KQ1NP_TAB(14, IEL_Q1NP)
-              OFFSET_CTRL = KQ1NP_TAB(4, IEL_Q1NP)
-              P = KQ1NP_TAB(8, IEL_Q1NP)
-              Q = KQ1NP_TAB(9, IEL_Q1NP)
-              IDX_CP = OFFSET_CTRL - 1
-              IF (OFFSET_BULK < 1 .OR. OFFSET_BULK+3 > SQ1NPBULK_G) THEN
-                WRITE(*,*) 'SURFEXT_TAGN: IQ1NP_BULK_TAB index OOB in',
-     &                         ' JS=',JS,' JJ=',JJ,' OFFSET_BULK=',
-     &                         OFFSET_BULK,' SQ1NPBULK_G=',SQ1NPBULK_G
-                CYCLE
-              ENDIF
-              IF (JJ == 1) THEN
-C               Bottom face: use bulk nodes
-                NS(1) = IQ1NP_BULK_TAB(OFFSET_BULK)
-                NS(2) = IQ1NP_BULK_TAB(OFFSET_BULK + 1)
-                NS(3) = IQ1NP_BULK_TAB(OFFSET_BULK + 2)
-                NS(4) = IQ1NP_BULK_TAB(OFFSET_BULK + 3)
-              ELSE IF (JJ == 2) THEN
-C               Top face: use control points
-                IF (IDX_CP+1        < 1 .OR.
-     &              IDX_CP+(P+1)*(Q+1) > TABVINT_LEN_G) THEN
-                  WRITE(*,*) 'SURFEXT_TAGN: IQ1NP_TAB index OOB (top)',
-     &                           ' JS=',JS,' JJ=',JJ,' IDX_CP=',IDX_CP,
-     &                           ' P=',P,' Q=',Q,
-     &                           ' TABVINT_LEN_G=',TABVINT_LEN_G
-                  CYCLE
-                ENDIF
-                NS(1) = IQ1NP_TAB(IDX_CP + 1)
-                NS(2) = IQ1NP_TAB(IDX_CP + (P+1))
-                NS(3) = IQ1NP_TAB(IDX_CP + (P+1)*(Q+1))
-                NS(4) = IQ1NP_TAB(IDX_CP + (P+1)*Q + 1)
+            DO II=1,4
+              IF(IQ_JS>0)THEN
+                NS(II)=NSJS8(FACES(II,JJ))
               ELSE
-C               Side faces: mix of bulk and control points
-                DO II=1,4
-                  I1 = FACES(II,JJ)+1
-                  IF (I1 <= 4) THEN
-                    IF (OFFSET_BULK+I1-2 < 1 .OR.
-     &                  OFFSET_BULK+I1-2 > SQ1NPBULK_G) THEN
-                      WRITE(*,*)
-     &                'SURFEXT_TAGN: IQ1NP_BULK_TAB index OOB (side)',
-     &                ' JS=',JS,' JJ=',JJ,' II=',II,' I1=',I1,
-     &                ' OFFSET_BULK=',OFFSET_BULK,
-     &                ' SQ1NPBULK_G=',SQ1NPBULK_G
-                      CYCLE
-                    ENDIF
-                    NS(II) = IQ1NP_BULK_TAB(OFFSET_BULK + I1 - 2)
-                  ELSE
-                    IF (I1 == 5) THEN
-                      IF (IDX_CP+1 < 1 .OR.
-     &                    IDX_CP+1 > TABVINT_LEN_G) THEN
-                        WRITE(*,*)
-     &                  'SURFEXT_TAGN: IQ1NP_TAB index OOB (side I1=5)',
-     &                  ' JS=',JS,' JJ=',JJ,' IDX_CP=',IDX_CP,
-     &                  ' TABVINT_LEN_G=',TABVINT_LEN_G
-                        CYCLE
-                      ENDIF
-                      NS(II) = IQ1NP_TAB(IDX_CP + 1)
-                    ENDIF
-                    IF (I1 == 6) THEN
-                      IF (IDX_CP+(P+1) < 1 .OR.
-     &                    IDX_CP+(P+1) > TABVINT_LEN_G) THEN
-                        WRITE(*,*)
-     &                  'SURFEXT_TAGN: IQ1NP_TAB index OOB (side I1=6)',
-     &                  ' JS=',JS,' JJ=',JJ,' IDX_CP=',IDX_CP,
-     &                  ' P=',P,' TABVINT_LEN_G=',TABVINT_LEN_G
-                        CYCLE
-                      ENDIF
-                      NS(II) = IQ1NP_TAB(IDX_CP + (P+1))
-                    ENDIF
-                    IF (I1 == 7) THEN
-                      IF (IDX_CP+(P+1)*Q+1 < 1 .OR.
-     &                    IDX_CP+(P+1)*Q+1 > TABVINT_LEN_G) THEN
-                        WRITE(*,*)
-     &                  'SURFEXT_TAGN: IQ1NP_TAB index OOB (side I1=7)',
-     &                  ' JS=',JS,' JJ=',JJ,' IDX_CP=',IDX_CP,
-     &                  ' P=',P,' Q=',Q,
-     &                  ' TABVINT_LEN_G=',TABVINT_LEN_G
-                        CYCLE
-                      ENDIF
-                      NS(II) = IQ1NP_TAB(IDX_CP + (P+1)*Q + 1)
-                    ENDIF
-                    IF (I1 == 8) THEN
-                      IF (IDX_CP+(P+1)*(Q+1) < 1 .OR.
-     &                    IDX_CP+(P+1)*(Q+1) > TABVINT_LEN_G) THEN
-                        WRITE(*,*)
-     &                  'SURFEXT_TAGN: IQ1NP_TAB index OOB (side I1=8)',
-     &                  ' JS=',JS,' JJ=',JJ,' IDX_CP=',IDX_CP,
-     &                  ' P=',P,' Q=',Q,
-     &                  ' TABVINT_LEN_G=',TABVINT_LEN_G
-                        CYCLE
-                      ENDIF
-                      NS(II) = IQ1NP_TAB(IDX_CP + (P+1)*(Q+1))
-                    ENDIF
-                  ENDIF
-                ENDDO
-              ENDIF
-            ELSE IF (JS > NUMELS8 .AND. JS <= NUMELS8+NUMELS10) THEN
-C             10-node element: only corner nodes are valid
-              DO II=1,4
-                I1 = FACES(II,JJ)+1
-                IF (I1 == 2 .OR. I1 == 4 .OR. I1 == 6 .OR. I1 == 7) THEN
-                  NS(II) = IXS(I1,JS)
-                ELSE
-                  NS(II) = 0
-                ENDIF
-              ENDDO
-            ELSE
-C             8-node element: all nodes are valid
-              DO II=1,4
                 NS(II)=IXS(FACES(II,JJ)+1,JS)
-              END DO
-            ENDIF
+              END IF
+            END DO
 C
 C           keep only 1 occurrence of each node (triangles, degenerated cases...)
             DO K1=1,3
@@ -777,121 +644,33 @@ C           looks for an elt sharing the face.
             DO K=KNOD2ELS(NI(1))+1,KNOD2ELS(NI(1)+1)
               KS=NOD2ELS(K)
               IF(KS==JS .OR. KS > NUMELS8+NUMELS10)CYCLE
+C             Q1NP neighbour : rebuild the 8 corner nodes from the Q1NP tables
+              IQ_KS=0
+              IF(NUMELQ1NP_G>0)IQ_KS=KQ1NP_TAB_INV(KS)
+              IF(IQ_KS>0) CALL Q1NP_GET_ELEM_NODES(IQ_KS,NSKS8)
               DO II=1,NF
                 NODTAG(NI(II))=0
               END DO
-C           Get nodes for element KS (handles 8-node, 10-node, and Q1NP elements)
-              IS_Q1NP_ELEMENT = .FALSE.
-              IEL_Q1NP = 0
-              IF (HAS_Q1NP) THEN
-                DO IEL_Q1NP = 1, NUMELQ1NP_G
-                  IF (KQ1NP_TAB(10, IEL_Q1NP) == KS) THEN
-                    IS_Q1NP_ELEMENT = .TRUE.
-                    EXIT
-                  ENDIF
-                ENDDO
-              ENDIF
-C
-              IF (IS_Q1NP_ELEMENT) THEN
-C             Q1NP element: get nodes from IQ1NP_BULK_TAB and IQ1NP_TAB
-                OFFSET_BULK = KQ1NP_TAB(14, IEL_Q1NP)
-                OFFSET_CTRL = KQ1NP_TAB(4, IEL_Q1NP)
-                P = KQ1NP_TAB(8, IEL_Q1NP)
-                Q = KQ1NP_TAB(9, IEL_Q1NP)
-                IDX_CP = OFFSET_CTRL - 1
-                IF (OFFSET_BULK < 1 .OR. OFFSET_BULK+3 > SQ1NPBULK_G) THEN
-                  CYCLE
-                ENDIF
-                DO II=1,4
-                  Q1NP_NODES(II) = IQ1NP_BULK_TAB(OFFSET_BULK + II - 1)
-                ENDDO
-                Q1NP_NODES(5) = IQ1NP_TAB(IDX_CP + 1)
-                Q1NP_NODES(6) = IQ1NP_TAB(IDX_CP + (P+1))
-                Q1NP_NODES(7) = IQ1NP_TAB(IDX_CP + (P+1)*Q + 1)
-                Q1NP_NODES(8) = IQ1NP_TAB(IDX_CP + (P+1)*(Q+1))
-                DO II=1,8
-                  IF (Q1NP_NODES(II) > 0 .AND. Q1NP_NODES(II) <= NUMNOD) THEN
-                    NODTAG(Q1NP_NODES(II)) = 1
-                  ENDIF
-                ENDDO
-              ELSE IF (KS > NUMELS8 .AND. KS <= NUMELS8+NUMELS10) THEN
-C             10-node element: only 4 corner nodes are valid
-                NODTAG(IXS(2,KS)) = 1
-                NODTAG(IXS(4,KS)) = 1
-                NODTAG(IXS(6,KS)) = 1
-                NODTAG(IXS(7,KS)) = 1
-              ELSE
-C             8-node element: all 8 nodes are valid
-                DO II=1,8
+              DO II=1,8
+                IF(IQ_KS>0)THEN
+                  NODTAG(NSKS8(II))=1
+                ELSE
                   NODTAG(IXS(II+1,KS))=1
-                END DO
-              ENDIF
+                END IF
+              END DO
               NN=0
               DO II=1,NF
                 NN=NN+NODTAG(NI(II))
               END DO
               IF(NN==NF)THEN
                 DO KK=1,6
-C           Get face nodes - check if Q1NP again
-                  IS_Q1NP_ELEMENT = .FALSE.
-                  IEL_Q1NP = 0
-                  IF (HAS_Q1NP) THEN
-                    DO IEL_Q1NP = 1, NUMELQ1NP_G
-                      IF (KQ1NP_TAB(10, IEL_Q1NP) == KS) THEN
-                        IS_Q1NP_ELEMENT = .TRUE.
-                        EXIT
-                      ENDIF
-                    ENDDO
-                  ENDIF
-C
-                  IF (IS_Q1NP_ELEMENT) THEN
-                    OFFSET_BULK = KQ1NP_TAB(14, IEL_Q1NP)
-                    OFFSET_CTRL = KQ1NP_TAB(4, IEL_Q1NP)
-                    P = KQ1NP_TAB(8, IEL_Q1NP)
-                    Q = KQ1NP_TAB(9, IEL_Q1NP)
-                    IDX_CP = OFFSET_CTRL - 1
-                    IF (KK == 1) THEN
-                      MS(1) = IQ1NP_BULK_TAB(OFFSET_BULK)
-                      MS(2) = IQ1NP_BULK_TAB(OFFSET_BULK + 1)
-                      MS(3) = IQ1NP_BULK_TAB(OFFSET_BULK + 2)
-                      MS(4) = IQ1NP_BULK_TAB(OFFSET_BULK + 3)
-                    ELSE IF (KK == 2) THEN
-                      MS(1) = IQ1NP_TAB(IDX_CP + 1)
-                      MS(2) = IQ1NP_TAB(IDX_CP + (P+1))
-                      MS(3) = IQ1NP_TAB(IDX_CP + (P+1)*(Q+1))
-                      MS(4) = IQ1NP_TAB(IDX_CP + (P+1)*Q + 1)
-                    ELSE
-                      DO II=1,4
-                        I1 = FACES(II,KK)+1
-                        IF (I1 <= 4) THEN
-                          MS(II) = IQ1NP_BULK_TAB(OFFSET_BULK + I1 - 2)
-                        ELSE
-                          IF (I1 == 5) MS(II) = IQ1NP_TAB(IDX_CP + 1)
-                          IF (I1 == 6) MS(II) = IQ1NP_TAB(IDX_CP + (P+1))
-                          IF (I1 == 7) MS(II) = IQ1NP_TAB(IDX_CP + (P+1)*Q + 1)
-                          IF (I1 == 8) MS(II) = IQ1NP_TAB(IDX_CP + (P+1)*(Q+1))
-                        ENDIF
-                      ENDDO
-                    ENDIF
-                  ELSE IF (KS > NUMELS8 .AND. KS <= NUMELS8+NUMELS10) THEN
-                    DO II=1,4
-                      I1 = FACES(II,KK)+1
-                      IF (I1 == 2 .OR. I1 == 4 .OR. I1 == 6 .OR. I1 == 7) THEN
-                        MS(II) = IXS(I1,KS)
-                      ELSE
-                        MS(II) = 0
-                      ENDIF
-                    ENDDO
-                    IF (JS <= 10 .OR. KS <= 10) THEN
-                      WRITE(*,'(A,I2,A,4I8)') 
-     .                  '  SURFEXT_TAGN 10-node Face ', KK, ' nodes: ',
-     .                  (MS(II), II=1,4)
-                    ENDIF
-                  ELSE
-                    DO II=1,4
-                      MS(II)=IXS(FACES(II,KK)+1,KS)
-                    END DO
-                  ENDIF
+            DO II=1,4
+              IF(IQ_KS>0)THEN
+                MS(II)=NSKS8(FACES(II,KK))
+              ELSE
+                MS(II)=IXS(FACES(II,KK)+1,KS)
+              END IF
+            END DO
 C
 C                 keep only 1 occurrence of each node (triangles, degenerated cases...)
             DO K1=1,3
@@ -935,10 +714,6 @@ C                    Factag (JS) Less Face JJ
           END DO
         END DO
 C-----------
-      NFAST = 0
-      DO JS=1,NUMELS
-        IF (FASTAG(JS) .NE. 0) NFAST = NFAST + 1
-      END DO
       CALL MY_DEALLOC(NODTAG)
       RETURN
       END

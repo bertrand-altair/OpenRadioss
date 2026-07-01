@@ -46,6 +46,8 @@
      &                                         x, nx, ny, vol_el, &
      &                                         detj_min_out, &
      &                                         q1np_cptab_opt)
+          use my_alloc_mod, only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
 !C-----------------------------------------------
 !C   D u m m y   A r g u m e n t s
 !C-----------------------------------------------
@@ -95,10 +97,10 @@
 !C----------------------------------------------------------------------
           n_top   = nctrl
           n_total = n_top + 4
-          allocate(node_ids(n_total))
-          allocate(nval(n_total))
-          allocate(dn_local(n_total,3))
-          allocate(xnode(3,n_total))
+          call my_alloc(node_ids, n_total, "NODE_IDS")
+          call my_alloc(nval, n_total, "NVAL")
+          call my_alloc(dn_local, n_total, 3, "DN_LOCAL")
+          call my_alloc(xnode, 3, n_total, "XNODE")
 
 !C----------------------------------------------------------------------
 !C   Allocate and extract U,V knot vectors from global Q1NP_KTAB
@@ -116,8 +118,8 @@
 
           nknot_u = nx_loc + 2*p + 1
           nknot_v = ny_loc + 2*q + 1
-          allocate(u(nknot_u))
-          allocate(v(nknot_v))
+          call my_alloc(u, nknot_u, "U")
+          call my_alloc(v, nknot_v, "V")
           u(:) = q1np_ktab(ktab_off : ktab_off + nknot_u - 1)
           v(:) = q1np_ktab(ktab_off + nknot_u : ktab_off + nknot_u + nknot_v - 1)
 
@@ -249,8 +251,12 @@
 !C----------------------------------------------------------------------
 !C   Deallocate temporary arrays
 !C----------------------------------------------------------------------
-          deallocate(u, v)
-          deallocate(node_ids, nval, dn_local, xnode)
+          call my_dealloc(u)
+          call my_dealloc(v)
+          call my_dealloc(node_ids)
+          call my_dealloc(nval)
+          call my_dealloc(dn_local)
+          call my_dealloc(xnode)
 
           return ! Volume of element computed
         end subroutine q1np_compute_volume_element

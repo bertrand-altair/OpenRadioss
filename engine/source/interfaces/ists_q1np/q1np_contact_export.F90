@@ -21,16 +21,18 @@
 !Copyright>        software under a commercial license.  Contact Altair to discuss further if the
 !Copyright>        commercial version may interest you: https://www.altair.com/radioss/.
 !||====================================================================
-!||    q1np_contact_export              ../engine/source/interfaces/int26/q1np_contact_export.F90
+!||    q1np_contact_export              ../engine/source/interfaces/ists_q1np/q1np_contact_export.F90
 !||--- called by ------------------------------------------------------
-!||    q1np_contact_driver              ../engine/source/interfaces/int26/q1np_contact_driver.F90
-!||    q1np_contact_algorithms          ../engine/source/interfaces/int26/q1np_contact_algorithms.F90
+!||    q1np_contact_driver              ../engine/source/interfaces/ists_q1np/q1np_contact_driver.F90
+!||    q1np_contact_algorithms          ../engine/source/interfaces/ists_q1np/q1np_contact_algorithms.F90
 !||    resol                            ../engine/source/engine/resol.F
 !||--- uses       -----------------------------------------------------
 !||    precision_mod                    ../common_source/modules/precision_mod.F90
 !||====================================================================
       MODULE Q1NP_CONTACT_EXPORT_MOD
         USE PRECISION_MOD, ONLY : WP
+        USE MY_ALLOC_MOD, ONLY : MY_ALLOC
+        USE MY_DEALLOC_MOD, ONLY : MY_DEALLOC
         IMPLICIT NONE
         PRIVATE
 
@@ -60,23 +62,23 @@
           INTEGER, INTENT(IN) :: NUMELQ1NP
 
           IF (NUMELQ1NP <= 0) THEN
-            IF (ALLOCATED(Q1NP_CONTACT_FORCE_SUM)) DEALLOCATE(Q1NP_CONTACT_FORCE_SUM)
-            IF (ALLOCATED(Q1NP_CONTACT_PAIR_COUNT)) DEALLOCATE(Q1NP_CONTACT_PAIR_COUNT)
-            IF (ALLOCATED(Q1NP_CONTACT_MAX_PENETRATION)) DEALLOCATE(Q1NP_CONTACT_MAX_PENETRATION)
+            IF (ALLOCATED(Q1NP_CONTACT_FORCE_SUM)) CALL MY_DEALLOC(Q1NP_CONTACT_FORCE_SUM)
+            IF (ALLOCATED(Q1NP_CONTACT_PAIR_COUNT)) CALL MY_DEALLOC(Q1NP_CONTACT_PAIR_COUNT)
+            IF (ALLOCATED(Q1NP_CONTACT_MAX_PENETRATION)) CALL MY_DEALLOC(Q1NP_CONTACT_MAX_PENETRATION)
             Q1NP_CONTACT_EXPORT_NUMEL = 0
             RETURN
           END IF
 
           IF (ALLOCATED(Q1NP_CONTACT_FORCE_SUM)) THEN
             IF (SIZE(Q1NP_CONTACT_FORCE_SUM, DIM=2) == NUMELQ1NP) RETURN
-            DEALLOCATE(Q1NP_CONTACT_FORCE_SUM)
+            CALL MY_DEALLOC(Q1NP_CONTACT_FORCE_SUM)
           END IF
-          IF (ALLOCATED(Q1NP_CONTACT_PAIR_COUNT)) DEALLOCATE(Q1NP_CONTACT_PAIR_COUNT)
-          IF (ALLOCATED(Q1NP_CONTACT_MAX_PENETRATION)) DEALLOCATE(Q1NP_CONTACT_MAX_PENETRATION)
+          IF (ALLOCATED(Q1NP_CONTACT_PAIR_COUNT)) CALL MY_DEALLOC(Q1NP_CONTACT_PAIR_COUNT)
+          IF (ALLOCATED(Q1NP_CONTACT_MAX_PENETRATION)) CALL MY_DEALLOC(Q1NP_CONTACT_MAX_PENETRATION)
 
-          ALLOCATE(Q1NP_CONTACT_FORCE_SUM(3, NUMELQ1NP))
-          ALLOCATE(Q1NP_CONTACT_PAIR_COUNT(NUMELQ1NP))
-          ALLOCATE(Q1NP_CONTACT_MAX_PENETRATION(NUMELQ1NP))
+          CALL MY_ALLOC(Q1NP_CONTACT_FORCE_SUM, 3, NUMELQ1NP, "Q1NP_CONTACT_FORCE_SUM")
+          CALL MY_ALLOC(Q1NP_CONTACT_PAIR_COUNT, NUMELQ1NP, "Q1NP_CONTACT_PAIR_COUNT")
+          CALL MY_ALLOC(Q1NP_CONTACT_MAX_PENETRATION, NUMELQ1NP, "Q1NP_CONTACT_MAX_PENETRATION")
 
           Q1NP_CONTACT_EXPORT_NUMEL = NUMELQ1NP
         END SUBROUTINE Q1NP_CONTACT_EXPORT_RESIZE

@@ -148,15 +148,9 @@ C
       ENDDO
 C
       DO I=1,NEL
-C       Preserve volume if already set (e.g., for replaced Q1Np elements)
-       IF (VOL(I) > ZERO) THEN
-         DET(I) = VOL(I)
-         VOLDP(I) = DET(I)
-       ELSE
-         VOLDP(I)=ONE_OVER_64*(JAC1(I)*JAC_59_68(I)+JAC2(I)*JAC_67_49(I)+JAC3(I)*JAC_48_57(I))
-         DET(I)=VOLDP(I)
-         VOL(I)=DET(I)
-       ENDIF
+       VOLDP(I)=ONE_OVER_64*(JAC1(I)*JAC_59_68(I)+JAC2(I)*JAC_67_49(I)+JAC3(I)*JAC_48_57(I))
+       DET(I)=VOLDP(I)
+       VOL(I)=DET(I)
       ENDDO     
 C
       IF(JEUL * (1 - IMULTI_FVM) /= 0)THEN
@@ -167,10 +161,6 @@ C
 C
       DO I=1,NEL
         IF (DET(I) > ZERO) CYCLE
-C       Skip error for elements with pre-set volume (replaced Q1Np elements)
-        IF (VOL(I) > ZERO) THEN
-          CYCLE
-        ENDIF
         IF (IGEO(11,NGEO(I)) /= 0 .AND. IGEO(11,NGEO(I)) /= 43) THEN
           CALL ANCMSG(MSGID=245,
      .               MSGTYPE=MSGERROR,

@@ -21,7 +21,7 @@
 
         SUBROUTINE W_Q1NP_INT(NUMELQ1NP_IN, NKQ1NP, KQ1NP_TAB, &
           IQ1NP_TAB, IQ1NP_BULK_TAB, NODLOCAL, CEL,            &
-          LEN_IA)
+          CEP, IPROC, NUMELS, NUMELS_L, LEN_IA)
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Dummy arguments
 ! ----------------------------------------------------------------------------------------------------------------------
@@ -31,6 +31,10 @@
           INTEGER, INTENT(IN)    :: IQ1NP_BULK_TAB(*) 
           INTEGER, INTENT(IN)    :: NODLOCAL(*) ! Local node ID
           INTEGER, INTENT(IN)    :: CEL(*) ! HEX8 element ID
+          INTEGER, INTENT(IN)    :: CEP(*) ! Domain owner of each solid element (0-based)
+          INTEGER, INTENT(IN)    :: IPROC ! Current domain id (0-based)
+          INTEGER, INTENT(IN)    :: NUMELS ! Global number of solid elements
+          INTEGER, INTENT(IN)    :: NUMELS_L ! Local number of solid elements in this domain
           INTEGER, INTENT(INOUT) :: LEN_IA 
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Local variables
@@ -178,6 +182,10 @@
               CALL WRITE_I_C(Q1NP_KTAB_LEN_G, NSETS)
             END IF
             LEN_IA = LEN_IA + 1 + 4 * NSETS
+
+!           Q1NP inverse connectivity (global solid element -> Q1NP element),
+!           localized to the current domain (matches rdresb.F/wrrestp.F read order)
+            CALL W_IELOC(KQ1NP_TAB_INV, CEP, IPROC, NUMELS, NUMELS_L, LEN_IA)
           END SUBROUTINE W_Q1NP_INT_APPEND_META
 
         END SUBROUTINE W_Q1NP_INT

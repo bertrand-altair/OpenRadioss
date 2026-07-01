@@ -6,6 +6,8 @@
 !                                                   Modules
 ! ----------------------------------------------------------------------------------------------------------------------
         USE PRECISION_MOD, ONLY : WP
+        USE MY_ALLOC_MOD, ONLY : MY_ALLOC
+        USE MY_DEALLOC_MOD, ONLY : MY_DEALLOC
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Implicit none
 ! ----------------------------------------------------------------------------------------------------------------------
@@ -29,7 +31,6 @@
         PARAMETER (NKQ1NP=15)
         PARAMETER (NBULKQ1NP=4)
         INTEGER, PARAMETER :: IDEBUG_Q1NP = 2
-        LOGICAL, ALLOCATABLE :: IS_Q1NP_REPLACED_G(:)
 !  
         INTEGER, DIMENSION(:,:), ALLOCATABLE :: KQ1NP_TAB
         INTEGER, DIMENSION(:),   ALLOCATABLE :: IQ1NP_TAB
@@ -59,7 +60,7 @@
         REAL(KIND=WP), DIMENSION(:), POINTER :: Q1NP_KTAB_G => NULL()
 
         ! Per-knot-set metadata to support heterogeneous NX/NY.
-        INTEGER :: Q1NP_NKNOT_SETS_G = 0
+        INTEGER :: Q1NP_NKNOT_SETS_G = 2
         INTEGER, ALLOCATABLE :: Q1NP_NX_SET_G(:)      ! NX for each knot set
         INTEGER, ALLOCATABLE :: Q1NP_NY_SET_G(:)      ! NY for each knot set
         INTEGER, ALLOCATABLE :: Q1NP_KTAB_OFF_G(:)    ! 1-based start index into Q1NP_KTAB_G
@@ -86,16 +87,16 @@
           Q1NP_KTAB_G      => NULL()
 
           Q1NP_NKNOT_SETS_G = 0
-          IF (ALLOCATED(Q1NP_NX_SET_G)) DEALLOCATE(Q1NP_NX_SET_G)
-          IF (ALLOCATED(Q1NP_NY_SET_G)) DEALLOCATE(Q1NP_NY_SET_G)
-          IF (ALLOCATED(Q1NP_KTAB_OFF_G)) DEALLOCATE(Q1NP_KTAB_OFF_G)
-          IF (ALLOCATED(Q1NP_KTAB_LEN_G)) DEALLOCATE(Q1NP_KTAB_LEN_G)
-          IF (ALLOCATED(Q1NP_GP_U_G)) DEALLOCATE(Q1NP_GP_U_G)
-          IF (ALLOCATED(Q1NP_GP_V_G)) DEALLOCATE(Q1NP_GP_V_G)
-          IF (ALLOCATED(Q1NP_GP_T_G)) DEALLOCATE(Q1NP_GP_T_G)
-          IF (ALLOCATED(Q1NP_GW_U_G)) DEALLOCATE(Q1NP_GW_U_G)
-          IF (ALLOCATED(Q1NP_GW_V_G)) DEALLOCATE(Q1NP_GW_V_G)
-          IF (ALLOCATED(Q1NP_GW_T_G)) DEALLOCATE(Q1NP_GW_T_G)
+          IF (ALLOCATED(Q1NP_NX_SET_G)) CALL MY_DEALLOC(Q1NP_NX_SET_G)
+          IF (ALLOCATED(Q1NP_NY_SET_G)) CALL MY_DEALLOC(Q1NP_NY_SET_G)
+          IF (ALLOCATED(Q1NP_KTAB_OFF_G)) CALL MY_DEALLOC(Q1NP_KTAB_OFF_G)
+          IF (ALLOCATED(Q1NP_KTAB_LEN_G)) CALL MY_DEALLOC(Q1NP_KTAB_LEN_G)
+          IF (ALLOCATED(Q1NP_GP_U_G)) CALL MY_DEALLOC(Q1NP_GP_U_G)
+          IF (ALLOCATED(Q1NP_GP_V_G)) CALL MY_DEALLOC(Q1NP_GP_V_G)
+          IF (ALLOCATED(Q1NP_GP_T_G)) CALL MY_DEALLOC(Q1NP_GP_T_G)
+          IF (ALLOCATED(Q1NP_GW_U_G)) CALL MY_DEALLOC(Q1NP_GW_U_G)
+          IF (ALLOCATED(Q1NP_GW_V_G)) CALL MY_DEALLOC(Q1NP_GW_V_G)
+          IF (ALLOCATED(Q1NP_GW_T_G)) CALL MY_DEALLOC(Q1NP_GW_T_G)
         END SUBROUTINE RESET_Q1NP_COUNTS
 
         SUBROUTINE RESET_Q1NP_STATE()
@@ -134,15 +135,15 @@
 
           IF (NSETS_IN <= 0) RETURN
 
-          IF (ALLOCATED(Q1NP_NX_SET_G)) DEALLOCATE(Q1NP_NX_SET_G)
-          IF (ALLOCATED(Q1NP_NY_SET_G)) DEALLOCATE(Q1NP_NY_SET_G)
-          IF (ALLOCATED(Q1NP_KTAB_OFF_G)) DEALLOCATE(Q1NP_KTAB_OFF_G)
-          IF (ALLOCATED(Q1NP_KTAB_LEN_G)) DEALLOCATE(Q1NP_KTAB_LEN_G)
+          IF (ALLOCATED(Q1NP_NX_SET_G)) CALL MY_DEALLOC(Q1NP_NX_SET_G)
+          IF (ALLOCATED(Q1NP_NY_SET_G)) CALL MY_DEALLOC(Q1NP_NY_SET_G)
+          IF (ALLOCATED(Q1NP_KTAB_OFF_G)) CALL MY_DEALLOC(Q1NP_KTAB_OFF_G)
+          IF (ALLOCATED(Q1NP_KTAB_LEN_G)) CALL MY_DEALLOC(Q1NP_KTAB_LEN_G)
 
-          ALLOCATE(Q1NP_NX_SET_G(NSETS_IN))
-          ALLOCATE(Q1NP_NY_SET_G(NSETS_IN))
-          ALLOCATE(Q1NP_KTAB_OFF_G(NSETS_IN))
-          ALLOCATE(Q1NP_KTAB_LEN_G(NSETS_IN))
+          CALL MY_ALLOC(Q1NP_NX_SET_G, NSETS_IN, "Q1NP_NX_SET_G")
+          CALL MY_ALLOC(Q1NP_NY_SET_G, NSETS_IN, "Q1NP_NY_SET_G")
+          CALL MY_ALLOC(Q1NP_KTAB_OFF_G, NSETS_IN, "Q1NP_KTAB_OFF_G")
+          CALL MY_ALLOC(Q1NP_KTAB_LEN_G, NSETS_IN, "Q1NP_KTAB_LEN_G")
 
           DO I = 1, NSETS_IN
             Q1NP_NX_SET_G(I)   = NX_SET_IN(I)
@@ -171,34 +172,68 @@
           Q1NP_NP_T_G = NP_T
 ! 
 !         Deallocate if already allocated
-          IF (ALLOCATED(Q1NP_GP_U_G)) DEALLOCATE(Q1NP_GP_U_G)
-          IF (ALLOCATED(Q1NP_GP_V_G)) DEALLOCATE(Q1NP_GP_V_G)
-          IF (ALLOCATED(Q1NP_GP_T_G)) DEALLOCATE(Q1NP_GP_T_G)
-          IF (ALLOCATED(Q1NP_GW_U_G)) DEALLOCATE(Q1NP_GW_U_G)
-          IF (ALLOCATED(Q1NP_GW_V_G)) DEALLOCATE(Q1NP_GW_V_G)
-          IF (ALLOCATED(Q1NP_GW_T_G)) DEALLOCATE(Q1NP_GW_T_G)
+          IF (ALLOCATED(Q1NP_GP_U_G)) CALL MY_DEALLOC(Q1NP_GP_U_G)
+          IF (ALLOCATED(Q1NP_GP_V_G)) CALL MY_DEALLOC(Q1NP_GP_V_G)
+          IF (ALLOCATED(Q1NP_GP_T_G)) CALL MY_DEALLOC(Q1NP_GP_T_G)
+          IF (ALLOCATED(Q1NP_GW_U_G)) CALL MY_DEALLOC(Q1NP_GW_U_G)
+          IF (ALLOCATED(Q1NP_GW_V_G)) CALL MY_DEALLOC(Q1NP_GW_V_G)
+          IF (ALLOCATED(Q1NP_GW_T_G)) CALL MY_DEALLOC(Q1NP_GW_T_G)
 ! 
 !         Allocate arrays
           IF (NP_U > 0) THEN
-            ALLOCATE(Q1NP_GP_U_G(NP_U))
-            ALLOCATE(Q1NP_GW_U_G(NP_U))
+            CALL MY_ALLOC(Q1NP_GP_U_G, NP_U, "Q1NP_GP_U_G")
+            CALL MY_ALLOC(Q1NP_GW_U_G, NP_U, "Q1NP_GW_U_G")
             CALL Q1NP_GAUSS_1D(NP_U, Q1NP_GP_U_G, Q1NP_GW_U_G)
           END IF
 
           IF (NP_V > 0) THEN
-            ALLOCATE(Q1NP_GP_V_G(NP_V))
-            ALLOCATE(Q1NP_GW_V_G(NP_V))
+            CALL MY_ALLOC(Q1NP_GP_V_G, NP_V, "Q1NP_GP_V_G")
+            CALL MY_ALLOC(Q1NP_GW_V_G, NP_V, "Q1NP_GW_V_G")
             CALL Q1NP_GAUSS_1D(NP_V, Q1NP_GP_V_G, Q1NP_GW_V_G)
           END IF
 
           IF (NP_T > 0) THEN
-            ALLOCATE(Q1NP_GP_T_G(NP_T))
-            ALLOCATE(Q1NP_GW_T_G(NP_T))
+            CALL MY_ALLOC(Q1NP_GP_T_G, NP_T, "Q1NP_GP_T_G")
+            CALL MY_ALLOC(Q1NP_GW_T_G, NP_T, "Q1NP_GW_T_G")
             CALL Q1NP_GAUSS_1D(NP_T, Q1NP_GP_T_G, Q1NP_GW_T_G)
           END IF
 
         END SUBROUTINE Q1NP_INIT_GAUSS_SCHEME_STARTER
-      
+
+!       Thread-safe variant of Q1NP_INIT_GAUSS_SCHEME_STARTER.
+!       It writes ONLY to the caller-supplied allocatable arrays (no
+!       module-global state), so it can be called concurrently from an
+!       OpenMP parallel region (e.g. the FORINT element-group loop that
+!       drives Q1NP_FORC3). Each caller keeps its own thread-local scheme.
+!       NOTE: the ALLOCATE statements below are intentionally kept as raw
+!       Fortran allocations (NOT MY_ALLOC). A named MY_ALLOC call records
+!       the allocation address in a shared global tracker, which is not
+!       thread-safe and would race when this routine runs inside an
+!       OpenMP parallel region.
+        SUBROUTINE Q1NP_BUILD_GAUSS_SCHEME(NP_U, NP_V, NP_T, &
+     &      GP_U, GW_U, GP_V, GW_V, GP_T, GW_T)
+          INTEGER, INTENT(IN) :: NP_U, NP_V, NP_T
+          REAL(KIND=WP), ALLOCATABLE, INTENT(OUT) :: GP_U(:), GW_U(:)
+          REAL(KIND=WP), ALLOCATABLE, INTENT(OUT) :: GP_V(:), GW_V(:)
+          REAL(KIND=WP), ALLOCATABLE, INTENT(OUT) :: GP_T(:), GW_T(:)
+
+          IF (NP_U > 0) THEN
+            ALLOCATE(GP_U(NP_U), GW_U(NP_U))
+            CALL Q1NP_GAUSS_1D(NP_U, GP_U, GW_U)
+          END IF
+
+          IF (NP_V > 0) THEN
+            ALLOCATE(GP_V(NP_V), GW_V(NP_V))
+            CALL Q1NP_GAUSS_1D(NP_V, GP_V, GW_V)
+          END IF
+
+          IF (NP_T > 0) THEN
+            ALLOCATE(GP_T(NP_T), GW_T(NP_T))
+            CALL Q1NP_GAUSS_1D(NP_T, GP_T, GW_T)
+          END IF
+
+        END SUBROUTINE Q1NP_BUILD_GAUSS_SCHEME
+
         SUBROUTINE Q1NP_GAUSS_1D(N, GP, GW)
           INTEGER, INTENT(IN) :: N
           REAL(KIND=WP), INTENT(OUT) :: GP(N), GW(N)

@@ -40,6 +40,8 @@
      &                                   kq1np_tab, iq1np_tab, &
      &                                   iq1np_bulk_tab)
 !-----------------------------------------------------------------------
+          use my_alloc_mod, only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
           integer, intent(in) :: numels
           integer, intent(in) :: numnod
           integer, intent(in) :: iparg(:,:)
@@ -72,7 +74,7 @@
 !=======================================================================
 !   Build a direct HEX8 -> Q1NP lookup once for all groups
 !=======================================================================
-          allocate(hex8_to_q1np(numels))
+          call my_alloc(hex8_to_q1np, numels, "HEX8_TO_Q1NP")
           hex8_to_q1np = 0
 !
           do iel_q1np = 1, numelq1np_g
@@ -112,7 +114,7 @@
             end do
           end do
 !
-          deallocate(hex8_to_q1np)
+          call my_dealloc(hex8_to_q1np)
           return
         end subroutine q1np_init_lbuf_gp_vol
 !
@@ -139,6 +141,8 @@
         subroutine q1np_fill_element_gp_volumes(iel_q1np, iel_local, &
      &      lbuf_arr, x, kq1np_tab, iq1np_tab, iq1np_bulk_tab)
 !-----------------------------------------------------------------------
+          use my_alloc_mod, only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
           integer, intent(in) :: iel_q1np, iel_local
           integer, intent(in) :: kq1np_tab(:,:)
           integer, intent(in) :: iq1np_tab(:)
@@ -174,10 +178,10 @@
           n_top   = nctrl
           n_total = n_top + 4
 !
-          allocate(node_ids(n_total))
-          allocate(nval(n_total))
-          allocate(dn_local(n_total, 3))
-          allocate(xnode(3, n_total))
+          call my_alloc(node_ids, n_total, "NODE_IDS")
+          call my_alloc(nval, n_total, "NVAL")
+          call my_alloc(dn_local, n_total, 3, "DN_LOCAL")
+          call my_alloc(xnode, 3, n_total, "XNODE")
 !
           knot_set_id = kq1np_tab(15, iel_q1np)
           if (q1np_nknot_sets_g > 0 .and. knot_set_id > 0 .and. knot_set_id <= q1np_nknot_sets_g) then
@@ -192,8 +196,8 @@
 
           nknot_u = nx + 2 * p     + 1
           nknot_v = ny + 2 * q_deg + 1
-          allocate(u_knot(nknot_u))
-          allocate(v_knot(nknot_v))
+          call my_alloc(u_knot, nknot_u, "U_KNOT")
+          call my_alloc(v_knot, nknot_v, "V_KNOT")
 !
           if (ktab_off > 0) then
             u_knot(:) = q1np_ktab_g(ktab_off : ktab_off + nknot_u - 1)
@@ -243,8 +247,12 @@
             end do
           end do
 !
-          deallocate(u_knot, v_knot)
-          deallocate(node_ids, nval, dn_local, xnode)
+          call my_dealloc(u_knot)
+          call my_dealloc(v_knot)
+          call my_dealloc(node_ids)
+          call my_dealloc(nval)
+          call my_dealloc(dn_local)
+          call my_dealloc(xnode)
           return
         end subroutine q1np_fill_element_gp_volumes
 !

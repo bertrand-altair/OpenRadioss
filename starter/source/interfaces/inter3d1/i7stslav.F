@@ -26,7 +26,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    inintr1         ../starter/source/interfaces/interf1/inintr1.F
 !||--- uses       -----------------------------------------------------
 !||====================================================================
-      SUBROUTINE I7STSECND(IPARI,STIFINT,INTBUF_TAB)
+      SUBROUTINE I7STSECND(IPARI,STIFINT,INTBUF_TAB )
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -46,10 +46,8 @@ C-----------------------------------------------
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
-      INTEGER NRTS, NRTM, NSN, NMN,
-     .   I, J,
-     .   INACTI,IGAP,MULTIMP,NSN0,ITY,NSNE,S
-      my_real STIF_STS
+      INTEGER NSN,
+     .   I, J
 C---------------------------------------------
 C     SET A JOUR DES RIGIDITES NODALES EQUIVALENTES (COTE SECOND)
 C---------------------------------------------

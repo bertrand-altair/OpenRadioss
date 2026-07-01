@@ -24,7 +24,7 @@
 !||    contact_broad_phase_tol_mod   ../engine/source/interfaces/ists/contact_broad_phase_tol_mod.F90
 !||--- called by ------------------------------------------------------
 !||    sts_broad_phase_voxel_mod      ../engine/source/interfaces/ists/ists_broad_phase_voxel.F90
-!||    q1np_contact_algorithms_mod     ../engine/source/interfaces/int26/q1np_contact_algorithms.F90
+!||    q1np_contact_algorithms_mod     ../engine/source/interfaces/ists_q1np/q1np_contact_algorithms.F90
 !||====================================================================
 !
 !   Shared broad-phase search tolerance for STS and Q1NP voxel contact.

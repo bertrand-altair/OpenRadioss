@@ -64,7 +64,6 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 !||    suforc3                 ../engine/source/user_interface/suforc3.F
 !||    szforc3                 ../engine/source/elements/solid/solidez/szforc3.F
 !||    tforc3                  ../engine/source/elements/truss/tforc3.F
-!||    q1np_dump_hist_state    ../engine/source/elements/solid/solid_q1np/q1np_dump_hist_state.F90
 !||--- uses       -----------------------------------------------------
 !||    ale_connectivity_mod    ../common_source/modules/ale/ale_connectivity_mod.F
 !||    ale_mod                 ../common_source/modules/ale/ale_mod.F
@@ -153,7 +152,6 @@ C-----------------------------------------------
       use element_mod , only : nixs,nixq,nixt,nixr,nixp
       USE Q1NP_RESTART_MOD
       use sfem_mod
-      USE DEBUG_MOD, ONLY : ITAB_DEBUG
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -264,8 +262,7 @@ C-----------------------------------------------
      .   L1,L2,L3,L4,L5,L6,L7,L8,L9,L10,L11,L12,L13,L14,L15,L16,
      .   L17,L18,L19,L20,L21,L22,L23,L24,L25,L26,L27,L28,L29,L30,
      .   ICP,ICS,IMATVIS,IEXPAN,NPT0,IG,OFF_IGRTH,
-     .   NCTRL,IPARSENS,ISECT,GAMA(6),PX,PY,PZ,ISENS_ENERGY,
-     .   IEL_Q1NP_GRP
+     .   NCTRL,IPARSENS,ISECT,GAMA(6),PX,PY,PZ,ISENS_ENERGY
       LOGICAL IS_Q1NP_GROUP, lFOUND
       my_real BID,QMVBID,PRELOAD1,STF_F
       my_real SBID
@@ -274,7 +271,6 @@ C-----------------------------------------------
       my_real, DIMENSION(MVSIZ,6) :: SVIS
       TYPE(G_BUFEL_) ,POINTER :: GBUF
       integer :: fake_size = 0
-      LOGICAL :: DUMP_Q1NP_STATE = .FALSE.
 C======================================================================|
        call my_alloc(FX, MVSIZ, 64, "FX", stat=IERROR)
        call my_alloc(FY, MVSIZ, 64, "FY", stat=IERROR)
@@ -381,6 +377,10 @@ C
         IPREID   = IPARG(72,NG)  
         IFORMDT  = IPARG(73,NG)  
 C
+C       Group of enriched elements for contact
+        IS_Q1NP_GROUP = .FALSE.  
+        IF (IPARG(94,NG) == 1) IS_Q1NP_GROUP = .TRUE.
+C
         IF (ITY==1) ICP = NSG                                       
         IF (ITY==1 .OR. ITY==2) JPLASOL=IPLA
 C---------------------------------
@@ -413,100 +413,22 @@ C----6---------------------------------------------------------------7---------8
      3           GBUF%BPRELD   ,GBUF%G_BPRELD ,NEL          )
           END IF
 C---------
-C         Q1NP HEX8 group detection (Isolid 1, 24, ...).
-C         Q1NP groups override any JHBE-specific element kernel.
-C         Starter must split Q1NP and non-Q1NP HEX8 elements into
-C         separate groups.  Engine-side detection therefore trusts
-C         IPARG(94); the element scan below is only a consistency check.
-C         Dispatch requires:
-C           (a) HEX8 group with global Q1NP context available
-C           (b) IPARG(94)==1 and all element IDs in KQ1NP_TAB
-C           (c) ELBUF actually dimensioned for Q1NP Gauss scheme
-C               (LBUF layered, default 3x3x2). This last check
-C               prevents the Q1NP branch from firing for groups
-C               whose ELBUF was built with NPT=1 (stale starter run).
-C---------
-          IS_Q1NP_GROUP = .FALSE.
-          IF (ISOLNOD == 8 .AND. NUMELQ1NP_G > 0 .AND.
-     .        ALLOCATED(KQ1NP_TAB) .AND. ALLOCATED(IQ1NP_TAB) .AND.
-     .        ALLOCATED(IQ1NP_BULK_TAB) .AND. ALLOCATED(Q1NP_KTAB)) THEN
-            IF (IPARG(94,NG) == 1) THEN
-              IS_Q1NP_GROUP = .TRUE.
-              DO I = 1, NEL
-                lFOUND = .FALSE.
-                DO IEL_Q1NP_GRP = 1, NUMELQ1NP_G
-                  IF (KQ1NP_TAB(5,IEL_Q1NP_GRP) ==
-     .                IXS(NIXS,NFT + I)) THEN
-                    lFOUND = .TRUE.
-                    EXIT
-                  ENDIF
-                ENDDO
-                IF (.NOT. lFOUND) THEN
-                  WRITE(IOUT,'(A,I8,A,I8)')
-     .              ' ** ERROR: Q1NP group ',NG,
-     .              ' contains non-Q1NP element ID=',IXS(NIXS,NFT + I)
-                  CALL ARRET(2)
-                ENDIF
-              ENDDO
-            ENDIF
-C           Guard against stale starter ELBUF: NPT must be > 1.
-C           A correctly built Q1NP group has NPTR*NPTS*NPTT >= 8
-C           (we require >=8; the default Q1NP scheme is 3x3x2 = 18).
-            IF (IS_Q1NP_GROUP) THEN
-              IF (IPARG(6,NG) <= 1 .OR.
-     .            IPARG(56,NG) * IPARG(57,NG) * IPARG(58,NG) < 8) THEN
-                WRITE(IOUT,'(A,I8,A,4I4)')
-     .            ' ** WARNING: Q1NP group ',NG,
-     .            ' has stale ELBUF (NPT,NPTR,NPTS,NPTT)=',
-     .            IPARG(6,NG),IPARG(56,NG),IPARG(57,NG),IPARG(58,NG)
-                WRITE(IOUT,'(A)')
-     .            '             Re-run Starter to refresh ELBUF.'
-                IS_Q1NP_GROUP = .FALSE.
-              ENDIF
-            ENDIF
-          ENDIF
-C---------
           IF(IS_Q1NP_GROUP)THEN
 C-------------------------
 C             Q1NP replacement for tagged HEX8 solids.
 C-------------------------
             CALL Q1NP_FORC3(TIMERS, OUTPUT,
-     1       ELBUF_TAB(NG), PM, GEO, IXS, IGEO, X, A, V, W,
-     2       FV, ALE_CONNECT, IPARG, TF, NPC, BUFMAT, PARTSAV, NPART,
-     3       NLOC_DMG, STIFN, OFFSET, IPARTS(NF1), NEL, DT2T,
-     4       NELTST, ITYPTST, IPM, ITASK, GRESAV, GRTH,
-     5       IGRTH(NF1), MSSA(NF1), DMELS(NF1), TABLE, IPRI,
-     6       MAT_ELEM, NG, H3D_DATA%STRAIN, SVIS, GLOB_THERM,
-     7       SNPC, NUMGEO, NUMNOD, NUMELS, NUMELQ, NGROUP,
-     8       SBUFMAT, STF, NUMMAT, NTABLE, NSVOIS, IRESP,
-     9       IDEL7NOK, MAXFUNC, USERL_AVAIL, IMON_MAT, impl_s,
-     A       idyna, IDTMIN, DT, SENSORS)
-            IF (NSECT > 0)THEN
-               K0=NSTRF(25)
-               N=NINTER+NRWALL+NRBODY
-               DO I=1,NSECT
-                N=N+1
-                K2=K0+30+NSTRF(K0+14)
-                K3=K0+30+NSTRF(K0+14)+NSTRF(K0+6)
-                IPARSENS=0
-                ISECT=0
-                IF (SENSORS%STABSEN > 0) ISECT=SENSORS%TABSENSOR(I+1)-SENSORS%TABSENSOR(I)
-                NULLIFY(pFBSAV6)
-                IF(ISECT/=0) THEN
-                  IPARSENS=1
-                  pFBSAV6 => SENSORS%FSAV(1,1,ISECT)
-                ENDIF
-
-                CALL SECTION_S(JFT,JLT,NFT,NSTRF(K0+7),NSTRF(K0+3),
-     2           NSTRF(K0+4),NSTRF(K0+5),NSTRF(K3),X,V,FSAV(1,N),
-     3           IXS        ,FANI(1,1+2*(I-1)), SECFCUM(1,1,I),FX ,FY ,
-     4           FZ   ,NSTRF(K0),NSTRF(K0+14),NSTRF(K0+26),NSTRF(K0+6),
-     5           NSTRF(K2),MS,
-     7           IXS20,IXS16,ISOLNOD,XSEC(1,1,I),
-     8           pFBSAV6,IPARSENS)
-                K0=NSTRF(K0+24)
-               ENDDO
-            ENDIF
+     1                      ELBUF_TAB(NG), PM, GEO, IXS, IGEO, X, A, V, W,
+     2                      FV, ALE_CONNECT, IPARG, TF, NPC, BUFMAT, PARTSAV, NPART,
+     3                      NLOC_DMG, STIFN, OFFSET, IPARTS(NF1), NEL, DT2T,
+     4                      NELTST, ITYPTST, IPM, ITASK, GRESAV, GRTH,
+     5                      IGRTH(NF1), MSSA(NF1), DMELS(NF1), TABLE, IPRI,
+     6                      MAT_ELEM, NG, H3D_DATA%STRAIN, SVIS, GLOB_THERM,
+     7                      SNPC, NUMGEO, NUMNOD, NUMELS, NUMELQ, NGROUP,
+     8                      SBUFMAT, STF, NUMMAT, NTABLE, NSVOIS, IRESP,
+     9                      IDEL7NOK, MAXFUNC, USERL_AVAIL, IMON_MAT, impl_s,
+     A                      idyna, IDTMIN, DT, SENSORS)    
+C            
           ELSEIF(ISOLNOD==4.AND.(ISROT==0.OR.ISROT==3))THEN
 C---------
             CALL S4FORC3(TIMERS, OUTPUT,
@@ -1195,10 +1117,10 @@ C-------------------------
      A           IDTMINS,DTFACS   ,DTMINS)
 C--------------------------
           ELSEIF (NPT == 1)THEN
+C--------------------------
             IF (JHBE == 24) THEN
 C-------------------------
 C              SOLID HEPH FORMULATION
-C              (Q1NP-tagged groups already handled by the early branch.)
 C-------------------------
                IHET = IINT
 C
@@ -1223,10 +1145,12 @@ C
      I         NALE      ,NLOC_DMG  ,MAT_ELEM,IBID,DT,
      J         OUTPUT,NSVOIS,IBID,SNPC,STF,SBUFMAT,SVIS,IRESP,
      K         MAXFUNC,  USERL_AVAIL, GLOB_THERM, impl_s   ,idyna)
+C
             ELSE
 C-------------------------
 C             STANDARD 8 NODE SOLID ELEMENT (JHBE = 1,2,101,102)
-C-------------------------  
+C-------------------------
+              !
               CALL SFORC3(TIMERS, OUTPUT,
      1   ELBUF_TAB,  NG,         PM,         GEO,
      2   IXS,        X,          NV46,       A,
@@ -1329,7 +1253,8 @@ C
                 K0=NSTRF(K0+24)
                ENDDO
             ENDIF
-            ENDIF
+          ENDIF
+C----6---------------------------------------------------------------7---------8
         ELSEIF(ITY==2.AND.JMULT==0.AND.JLAG==1.AND.
      .         ICRACK==0) THEN
              OFF_IGRTH = NUMELS
@@ -1676,17 +1601,6 @@ C             ROTATION IF COROTA SYSTEM
   250   CONTINUE
       END DO
 C
-C     Dump Q1NP bulk and control-point coordinates for Python post-processing
-C     at output steps only, to avoid huge files.
-C
-
-      IF (NUMELQ1NP_G > 0 .AND. IPRI == 1) THEN
-        IF (DUMP_Q1NP_STATE) THEN
-         CALL Q1NP_DUMP_HIST_STATE(TT, X, NUMNOD)
-        ENDIF
-      ENDIF
-C
-      DEALLOCATE(FX,FY,FZ,MX,MY,MZ,JFAC)
       call my_dealloc(FX)
       call my_dealloc(FY)
       call my_dealloc(FZ)

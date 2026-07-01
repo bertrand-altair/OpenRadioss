@@ -149,7 +149,6 @@ C-----------------------------------------------
 #include      "remesh_c.inc"
 #include      "com_xfem1.inc"
 #include      "sysunit.inc"
-#include      "units_c.inc"
 #include      "intstamp_c.inc"
 #include      "sms_c.inc"
 #include      "submodel.inc"
@@ -1475,20 +1474,12 @@ C Q1Np element data (always stored after SENSORS%STABSEN)
         SQ1NPWEIGHT_L_G = TABVINT(NEXTLOC)
         NEXTLOC = NEXTLOC + 1
         SQ1NPKNOT_L_G = TABVINT(NEXTLOC)
-
         IF (NUMELQ1NP_G > 0 .AND. SKQ1NP_G > 0) THEN
           NKQ1NP_G = SKQ1NP_G / NUMELQ1NP_G
-          IF (MOD(SKQ1NP_G,NUMELQ1NP_G) /= 0) THEN
-            WRITE(ISTDO,'(A,I10,A,I10)') 
-     .        ' ** WARNING: SKQ1NP_G (', SKQ1NP_G,
-     .        ') not divisible by NUMELQ1NP (', NUMELQ1NP_G, ')'
-          ENDIF
         ELSE
           NKQ1NP_G = 0
         ENDIF
-
 C Q1Np counters read from TABVINT (diagnostics removed for verbosity)
-
         NEXT = NEXTLOC
       ELSE
         NUMELQ1NP_G = 0

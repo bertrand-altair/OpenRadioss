@@ -29,7 +29,7 @@
 !||    ige3dbilan                       ../engine/source/elements/ige3d/ige3dbilan.F
 !||    mmain                            ../engine/source/materials/mat_share/mmain.F90
 !||    q1np_get_knot_vectors            ../common_source/modules/q1np_geom_mod.F90
-!||    q1np_init_gauss_scheme_starter   ../common_source/modules/q1np_restart_mod.F90
+!||    q1np_build_gauss_scheme          ../common_source/modules/q1np_restart_mod.F90
 !||    q1np_jacobian                    ../common_source/modules/q1np_geom_mod.F90
 !||    q1np_shape_functions             ../common_source/modules/q1np_geom_mod.F90
 !||    smalla3                          ../engine/source/elements/solid/solide/smalla3.F
@@ -89,6 +89,9 @@
       USE PARAM_C_MOD
       USE COM08_MOD
       USE ELEMENT_MOD, ONLY : NIXS
+      USE PRECISION_MOD, ONLY : WP
+      USE MY_ALLOC_MOD, ONLY : MY_ALLOC
+      USE MY_DEALLOC_MOD, ONLY : MY_DEALLOC
 
       IMPLICIT NONE
   !=======================================================================
@@ -188,6 +191,13 @@
       INTEGER :: NKNOT_U, NKNOT_V, NGP_Q1NP, IPT_Q1NP, IERR
       INTEGER :: NUM_GROUP_NODE, GPOS, LOCAL_ID
       INTEGER :: KNOT_SET_ID
+!     Thread-local Gauss integration scheme (replaces the shared module
+!     globals Q1NP_NP_*_G / Q1NP_GP_*_G / Q1NP_GW_*_G, which were not safe
+!     to write from the parallel FORINT group loop).
+      INTEGER :: NP_U_L, NP_V_L, NP_T_L
+      REAL(KIND=WP), ALLOCATABLE :: GP_U_L(:), GW_U_L(:)
+      REAL(KIND=WP), ALLOCATABLE :: GP_V_L(:), GW_V_L(:)
+      REAL(KIND=WP), ALLOCATABLE :: GP_T_L(:), GW_T_L(:)
       INTEGER :: IEXPAN, ISTRAIN, ILAY, SZ_IX, TH_STRAIN
       INTEGER :: Q1NP_IDS(MVSIZ), II(6)
       INTEGER, ALLOCATABLE :: NCTRL_ELEM(:)
@@ -258,20 +268,7 @@
       Q_MAX = 0
 
       DO K = 1, NEL
-        IQ1NP = 0
-        DO J = 1, NUMELQ1NP_G
-          IF (KQ1NP_TAB(5,J) == IXS(NIXS,NFT_G + K)) THEN
-            IQ1NP = J
-            EXIT
-          ENDIF
-        END DO
-        IF (IQ1NP <= 0) THEN
-          WRITE(*,'(A,I10,A,I8,A,I8,A,I8)') &
-     &      'Q1NP ERROR: no KQ1NP_TAB row for brick user ID=', IXS(NIXS,NFT_G + K), &
-     &      ' NG=', NG, ' lane=', K, ' NUMELQ1NP_G=', NUMELQ1NP_G
-          RETURN
-        ENDIF
-
+        IQ1NP = KQ1NP_TAB_INV(NFT_G + K)
         Q1NP_IDS(K) = IQ1NP
         MAX_NNODE = MAX(MAX_NNODE, KQ1NP_TAB(3,IQ1NP) + 4)
         TOTAL_NODE_REF = TOTAL_NODE_REF + KQ1NP_TAB(3,IQ1NP) + 4
@@ -284,7 +281,8 @@
   !-----------------------------------------------------------------------
   !  (2) Reconstruct Q1NP parametric grid + initialize Gauss scheme
   !-----------------------------------------------------------------------
-      ALLOCATE(U_LEN_EL(NEL), V_LEN_EL(NEL))
+      CALL MY_ALLOC(U_LEN_EL, NEL, "U_LEN_EL")
+      CALL MY_ALLOC(V_LEN_EL, NEL, "V_LEN_EL")
       U_LEN = 0
       V_LEN = 0
       DO K = 1, NEL
@@ -309,25 +307,38 @@
         V_LEN = MAX(V_LEN, V_LEN_EL(K))
       END DO
 
-      CALL Q1NP_INIT_GAUSS_SCHEME_STARTER(P_MAX + 1, Q_MAX + 1, 2)
+  !   Build this group's Gauss scheme into thread-local arrays. This
+  !   replaces the former shared module-global scheme, which was written
+  !   (and reallocated) by every thread of the FORINT !$OMP DO group loop
+  !   and read throughout the routine body -> a data race. Local
+  !   allocatables are automatically thread-private per invocation.
+      NP_U_L = P_MAX + 1
+      NP_V_L = Q_MAX + 1
+      NP_T_L = 2
+      CALL Q1NP_BUILD_GAUSS_SCHEME(NP_U_L, NP_V_L, NP_T_L, &
+     &     GP_U_L, GW_U_L, GP_V_L, GW_V_L, GP_T_L, GW_T_L)
 
+  !   Q1NP_FORC3 is invoked from FORINT inside an !$OMP DO over element
+  !   groups, so several threads may reach this point concurrently.
+!$OMP CRITICAL(Q1NP_BULK_FIX_ALLOC)
       IF (.NOT. ALLOCATED(Q1NP_BULK_FIX_IDS) .OR. .NOT. ALLOCATED(Q1NP_BULK_FIX_READY)) THEN
-        ALLOCATE(Q1NP_BULK_FIX_IDS(4,MAX(NUMELQ1NP_G,1)))
-        ALLOCATE(Q1NP_BULK_FIX_READY(MAX(NUMELQ1NP_G,1)))
+        CALL MY_ALLOC(Q1NP_BULK_FIX_IDS, 4, MAX(NUMELQ1NP_G,1), "Q1NP_BULK_FIX_IDS")
+        CALL MY_ALLOC(Q1NP_BULK_FIX_READY, MAX(NUMELQ1NP_G,1), "Q1NP_BULK_FIX_READY")
         Q1NP_BULK_FIX_IDS = 0
         Q1NP_BULK_FIX_READY = .FALSE.
       ELSE IF (SIZE(Q1NP_BULK_FIX_IDS,2) /= MAX(NUMELQ1NP_G,1) .OR. &
      &         SIZE(Q1NP_BULK_FIX_READY) /= MAX(NUMELQ1NP_G,1)) THEN
-        DEALLOCATE(Q1NP_BULK_FIX_IDS, Q1NP_BULK_FIX_READY)
-        ALLOCATE(Q1NP_BULK_FIX_IDS(4,MAX(NUMELQ1NP_G,1)))
-        ALLOCATE(Q1NP_BULK_FIX_READY(MAX(NUMELQ1NP_G,1)))
+        CALL MY_DEALLOC(Q1NP_BULK_FIX_IDS)
+        CALL MY_DEALLOC(Q1NP_BULK_FIX_READY)
+        CALL MY_ALLOC(Q1NP_BULK_FIX_IDS, 4, MAX(NUMELQ1NP_G,1), "Q1NP_BULK_FIX_IDS")
+        CALL MY_ALLOC(Q1NP_BULK_FIX_READY, MAX(NUMELQ1NP_G,1), "Q1NP_BULK_FIX_READY")
         Q1NP_BULK_FIX_IDS = 0
         Q1NP_BULK_FIX_READY = .FALSE.
       END IF
-      IF (TT == ZERO) Q1NP_BULK_FIX_READY = .FALSE.
+!$OMP END CRITICAL(Q1NP_BULK_FIX_ALLOC)
 
       ! Total Number of Gauss points in the Q1NP element
-      NGP_Q1NP = Q1NP_NP_U_G * Q1NP_NP_V_G * Q1NP_NP_T_G
+      NGP_Q1NP = NP_U_L * NP_V_L * NP_T_L
 
   !-----------------------------------------------------------------------
   !  (3) Allocate and initialize vectorized work arrays
@@ -336,19 +347,29 @@
       ELBUF_TAB_LOCAL(1) = ELBUF_STR
       IPARG_LOCAL(:,1) = IPARG(:,NG)
 
-      ALLOCATE(NCTRL_ELEM(NEL))
-      ALLOCATE(ELEM_U(NEL), ELEM_V(NEL), PID_ELEM(NEL))
-      ALLOCATE(MAT_ID_ELEM(NEL), NGL_ELEM(NEL))
-      ALLOCATE(NODE_GID(MAX_NNODE,NEL), NODE_LID(MAX_NNODE,NEL), NODE_POS(MAX_NNODE,NEL))
-      ALLOCATE(GROUP_GID(TOTAL_NODE_REF), GROUP_LID(TOTAL_NODE_REF))
-      ALLOCATE(X_ELEM(3,MAX_NNODE,NEL), V_ELEM(3,MAX_NNODE,NEL))
-      ALLOCATE(F_INT_ELEM(3,MAX_NNODE,NEL))
-      ALLOCATE(MASS_ELEM(MAX_NNODE,NEL), STIG_ELEM(MAX_NNODE,NEL))
-      ALLOCATE(U_KNOT(U_LEN, NEL))
-      ALLOCATE(V_KNOT(V_LEN, NEL))
-      ALLOCATE(NVAL(MAX_NNODE), DN_LOCAL(MAX_NNODE,3), DN_GLOBAL(MAX_NNODE,3))
-      ALLOCATE(MATB_GP(3*MAX_NNODE,NEL))
-      ALLOCATE(VGAUSS(NGP_Q1NP,NEL))
+      CALL MY_ALLOC(NCTRL_ELEM, NEL, "NCTRL_ELEM")
+      CALL MY_ALLOC(ELEM_U, NEL, "ELEM_U")
+      CALL MY_ALLOC(ELEM_V, NEL, "ELEM_V")
+      CALL MY_ALLOC(PID_ELEM, NEL, "PID_ELEM")
+      CALL MY_ALLOC(MAT_ID_ELEM, NEL, "MAT_ID_ELEM")
+      CALL MY_ALLOC(NGL_ELEM, NEL, "NGL_ELEM")
+      CALL MY_ALLOC(NODE_GID, MAX_NNODE, NEL, "NODE_GID")
+      CALL MY_ALLOC(NODE_LID, MAX_NNODE, NEL, "NODE_LID")
+      CALL MY_ALLOC(NODE_POS, MAX_NNODE, NEL, "NODE_POS")
+      CALL MY_ALLOC(GROUP_GID, TOTAL_NODE_REF, "GROUP_GID")
+      CALL MY_ALLOC(GROUP_LID, TOTAL_NODE_REF, "GROUP_LID")
+      CALL MY_ALLOC(X_ELEM, 3, MAX_NNODE, NEL, "X_ELEM")
+      CALL MY_ALLOC(V_ELEM, 3, MAX_NNODE, NEL, "V_ELEM")
+      CALL MY_ALLOC(F_INT_ELEM, 3, MAX_NNODE, NEL, "F_INT_ELEM")
+      CALL MY_ALLOC(MASS_ELEM, MAX_NNODE, NEL, "MASS_ELEM")
+      CALL MY_ALLOC(STIG_ELEM, MAX_NNODE, NEL, "STIG_ELEM")
+      CALL MY_ALLOC(U_KNOT, U_LEN, NEL, "U_KNOT")
+      CALL MY_ALLOC(V_KNOT, V_LEN, NEL, "V_KNOT")
+      CALL MY_ALLOC(NVAL, MAX_NNODE, "NVAL")
+      CALL MY_ALLOC(DN_LOCAL, MAX_NNODE, 3, "DN_LOCAL")
+      CALL MY_ALLOC(DN_GLOBAL, MAX_NNODE, 3, "DN_GLOBAL")
+      CALL MY_ALLOC(MATB_GP, 3*MAX_NNODE, NEL, "MATB_GP")
+      CALL MY_ALLOC(VGAUSS, NGP_Q1NP, NEL, "VGAUSS")
       PID_ELEM = 0
       MAT_ID_ELEM = 0
       NGL_ELEM = 0
@@ -357,9 +378,9 @@
   !  (4) Snapshot the Gauss-point volume into VOL0DP
   !-----------------------------------------------------------------------
       IF (TT == ZERO) THEN
-        DO IT = 1, Q1NP_NP_T_G
-          DO IV = 1, Q1NP_NP_V_G
-            DO IU = 1, Q1NP_NP_U_G
+        DO IT = 1, NP_T_L
+          DO IV = 1, NP_V_L
+            DO IU = 1, NP_U_L
               LBUF => ELBUF_STR%BUFLY(1)%LBUF(IU,IV,IT)
               LBUF%VOL0DP(1:NEL) = LBUF%VOL(1:NEL)
             END DO
@@ -390,15 +411,15 @@
   !-----------------------------------------------------------------------
 
       IPT_Q1NP = 0
-      DO IT = 1, Q1NP_NP_T_G
-        ZETA = Q1NP_GP_T_G(IT)
-        DO IV = 1, Q1NP_NP_V_G
-          ETA = Q1NP_GP_V_G(IV)
-          DO IU = 1, Q1NP_NP_U_G
-            XI = Q1NP_GP_U_G(IU)
+      DO IT = 1, NP_T_L
+        ZETA = GP_T_L(IT)
+        DO IV = 1, NP_V_L
+          ETA = GP_V_L(IV)
+          DO IU = 1, NP_U_L
+            XI = GP_U_L(IU)
 
             ! Gauss point weight
-            GPW = Q1NP_GW_U_G(IU) * Q1NP_GW_V_G(IV) * Q1NP_GW_T_G(IT)
+            GPW = GW_U_L(IU) * GW_V_L(IV) * GW_T_L(IT)
             IPT_Q1NP = IPT_Q1NP + 1
 
             ! Reset the Gauss point fields
@@ -691,13 +712,19 @@
             IEL_HEX8 = 0
           END IF
           IF (IEL_HEX8 <= 0) THEN
-            DO J_LOCAL = 1, NUMELS
-              IF (IXS(NIXS,J_LOCAL) == KQ1NP_TAB(5,IQ1NP_LOCAL)) THEN
-                IEL_HEX8 = J_LOCAL
-                EXIT
+            ! Direct O(1) recovery: the group loop maps in-group position
+            ! IEL_LOCAL to Q1NP element IQ1NP_LOCAL via KQ1NP_TAB_INV, so the
+            ! parent HEX8 is local solid element NFT_G + IEL_LOCAL.
+            IEL_HEX8 = NFT_G + IEL_LOCAL
+            IF (IEL_HEX8 > 0 .AND. IEL_HEX8 <= NUMELS) THEN
+              IF (IXS(NIXS,IEL_HEX8) == KQ1NP_TAB(5,IQ1NP_LOCAL)) THEN
+                KQ1NP_TAB(10,IQ1NP_LOCAL) = IEL_HEX8
+              ELSE
+                IEL_HEX8 = 0
               END IF
-            END DO
-            IF (IEL_HEX8 > 0) KQ1NP_TAB(10,IQ1NP_LOCAL) = IEL_HEX8
+            ELSE
+              IEL_HEX8 = 0
+            END IF
           END IF
           IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS) RETURN
 
@@ -782,12 +809,19 @@
             IEL_HEX8 = 0
           END IF
           IF (IEL_HEX8 <= 0) THEN
-            DO J_LOCAL = 1, NUMELS
-              IF (IXS(NIXS,J_LOCAL) == KQ1NP_TAB(5,IQ1NP_LOCAL)) THEN
-                IEL_HEX8 = J_LOCAL
-                EXIT
+            ! Direct O(1) recovery: the group loop maps in-group position
+            ! IEL_LOCAL to Q1NP element IQ1NP_LOCAL via KQ1NP_TAB_INV, so the
+            ! parent HEX8 is local solid element NFT_G + IEL_LOCAL.
+            IEL_HEX8 = NFT_G + IEL_LOCAL
+            IF (IEL_HEX8 > 0 .AND. IEL_HEX8 <= NUMELS) THEN
+              IF (IXS(NIXS,IEL_HEX8) == KQ1NP_TAB(5,IQ1NP_LOCAL)) THEN
+                KQ1NP_TAB(10,IQ1NP_LOCAL) = IEL_HEX8
+              ELSE
+                IEL_HEX8 = 0
               END IF
-            END DO
+            ELSE
+              IEL_HEX8 = 0
+            END IF
           END IF
           IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS) RETURN
 
@@ -1418,9 +1452,9 @@
           LOGICAL :: CAN_BILAN_LOCAL
 
           IPT_Q1NP_LOCAL = 0
-          DO IT_LOCAL = 1, Q1NP_NP_T_G
-            DO IV_LOCAL = 1, Q1NP_NP_V_G
-              DO IU_LOCAL = 1, Q1NP_NP_U_G
+          DO IT_LOCAL = 1, NP_T_L
+            DO IV_LOCAL = 1, NP_V_L
+              DO IU_LOCAL = 1, NP_U_L
                 IPT_Q1NP_LOCAL = IPT_Q1NP_LOCAL + 1
                 LBUF => ELBUF_STR%BUFLY(1)%LBUF(IU_LOCAL,IV_LOCAL,IT_LOCAL)
                 CALL IG3DAVERAGE(LBUF%SIG, GBUF%SIG, LBUF%VOL, GBUF%VOL, LBUF%RHO, LBUF%EINT, &
@@ -1439,8 +1473,12 @@
           END DO
 
           IF (CAN_BILAN_LOCAL .AND. IPRI > 0) THEN
-            ALLOCATE(VX_BAL(NCTRL_ELEM(1) + 4,MVSIZ), VY_BAL(NCTRL_ELEM(1) + 4,MVSIZ), VZ_BAL(NCTRL_ELEM(1) + 4,MVSIZ))
-            ALLOCATE(XX_BAL(NCTRL_ELEM(1) + 4,MVSIZ), YY_BAL(NCTRL_ELEM(1) + 4,MVSIZ), ZZ_BAL(NCTRL_ELEM(1) + 4,MVSIZ))
+            CALL MY_ALLOC(VX_BAL, NCTRL_ELEM(1) + 4, MVSIZ, "VX_BAL")
+            CALL MY_ALLOC(VY_BAL, NCTRL_ELEM(1) + 4, MVSIZ, "VY_BAL")
+            CALL MY_ALLOC(VZ_BAL, NCTRL_ELEM(1) + 4, MVSIZ, "VZ_BAL")
+            CALL MY_ALLOC(XX_BAL, NCTRL_ELEM(1) + 4, MVSIZ, "XX_BAL")
+            CALL MY_ALLOC(YY_BAL, NCTRL_ELEM(1) + 4, MVSIZ, "YY_BAL")
+            CALL MY_ALLOC(ZZ_BAL, NCTRL_ELEM(1) + 4, MVSIZ, "ZZ_BAL")
 
             DO IEL_LOCAL = 1, NEL
               DO K_LOCAL = 1, NCTRL_ELEM(IEL_LOCAL) + 4
@@ -1459,7 +1497,12 @@
     &                      ITASK, IPARG(1,NG), SENSORS)
            END IF
 
-            DEALLOCATE(VX_BAL, VY_BAL, VZ_BAL, XX_BAL, YY_BAL, ZZ_BAL)
+            CALL MY_DEALLOC(VX_BAL)
+            CALL MY_DEALLOC(VY_BAL)
+            CALL MY_DEALLOC(VZ_BAL)
+            CALL MY_DEALLOC(XX_BAL)
+            CALL MY_DEALLOC(YY_BAL)
+            CALL MY_DEALLOC(ZZ_BAL)
           END IF
         END SUBROUTINE Q1NP_AVG_SIG_BILAN
 

@@ -67,7 +67,8 @@
       IMPLICIT NONE
 
       INTEGER, INTENT(IN)    :: node_ids(8), NOINT
-      my_real, INTENT(IN)    :: MS(*), d1, GAPV
+      my_real, INTENT(IN)    :: MS(*)
+      REAL*8, INTENT(IN)     :: d1, GAPV
       REAL*8, INTENT(IN)     :: N_xi(3,4), N_eta(3,4), area_weight
       REAL*8, INTENT(IN)     :: PENE
       my_real, INTENT(IN)    :: V(3,*)

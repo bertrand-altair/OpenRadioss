@@ -45,7 +45,7 @@ C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
       USE ALE_MOD
-      USE Q1NP_RESTART_MOD, ONLY: IS_Q1NP_REPLACED_G, NUMELQ1NP_G
+      USE Q1NP_RESTART_MOD, ONLY: KQ1NP_TAB_INV, NUMELQ1NP_G
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -81,9 +81,9 @@ C=======================================================================
 C       Skip mass calculation for Q1Np replaced elements (temporary workaround to avoid mass subtraction)
 C       This will be replaced with proper integration-based calculation in the future, TODO
         IF (NUMELQ1NP_G > 0) THEN
-          IF (ALLOCATED(IS_Q1NP_REPLACED_G)) THEN
-            IF (NFT+I > 0 .AND. NFT+I <= SIZE(IS_Q1NP_REPLACED_G)) THEN
-              IF (IS_Q1NP_REPLACED_G(NFT+I)) CYCLE
+          IF (ALLOCATED(KQ1NP_TAB_INV)) THEN
+            IF (NFT+I <= SIZE(KQ1NP_TAB_INV)) THEN
+              IF (KQ1NP_TAB_INV(NFT+I) > 0) CYCLE
             ENDIF
           ENDIF
         ENDIF

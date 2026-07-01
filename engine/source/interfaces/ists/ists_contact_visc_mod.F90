@@ -51,7 +51,8 @@
       IMPLICIT NONE
 
       REAL*8, INTENT(IN)    :: d1_in, PENE, v_n
-      my_real, INTENT(IN)   :: GAPV, VISC, VISCFFRIC, DT1
+      REAL*8, INTENT(IN)    :: GAPV
+      my_real, INTENT(IN)   :: VISC, VISCFFRIC, DT1
       INTEGER, INTENT(IN)   :: IVIS2
       REAL*8, INTENT(IN)    :: N_eta(3,4)
       INTEGER, INTENT(IN)   :: node_ids(8)

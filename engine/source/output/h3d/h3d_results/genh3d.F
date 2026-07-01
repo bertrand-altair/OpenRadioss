@@ -986,23 +986,19 @@ C
         IF (Q1NP_REMAP_ENABLED .AND. ISPMD == 0 .AND. NSPMD == 1) THEN
           IF (.NOT. Q1NP_REMAP_MAP_READY) THEN
             Q1NP_NMAP = 0
-            IF (ALLOCATED(Q1NP_OLDNODE_IDS_SAVE))
-     .        DEALLOCATE(Q1NP_OLDNODE_IDS_SAVE)
-            IF (ALLOCATED(Q1NP_ELEM_IDS_SAVE))
-     .        DEALLOCATE(Q1NP_ELEM_IDS_SAVE)
-            IF (ALLOCATED(Q1NP_CORNER_IDS_SAVE))
-     .        DEALLOCATE(Q1NP_CORNER_IDS_SAVE)
-            IF (ALLOCATED(Q1NP_REFXYZ_SAVE))
-     .        DEALLOCATE(Q1NP_REFXYZ_SAVE)
+            CALL MY_DEALLOC(Q1NP_OLDNODE_IDS_SAVE)
+            CALL MY_DEALLOC(Q1NP_ELEM_IDS_SAVE)
+            CALL MY_DEALLOC(Q1NP_CORNER_IDS_SAVE)
+            CALL MY_DEALLOC(Q1NP_REFXYZ_SAVE)
 
             IF (NUMNOD > 0 .AND. NUMELQ1NP_G > 0) THEN
               IF (ALLOCATED(KQ1NP_TAB)) THEN
                 IF (ALLOCATED(IQ1NP_TAB)) THEN
                   IF (ALLOCATED(Q1NP_KTAB)) THEN
-              ALLOCATE(Q1NP_NODE_TO_ELEM(NUMNOD))
-              ALLOCATE(Q1NP_NODE_TO_CORNER(NUMNOD))
-              ALLOCATE(Q1NP_NODE_TO_DIST2(NUMNOD))
-              ALLOCATE(Q1NP_NODE_TO_REFXYZ(3,NUMNOD))
+              CALL MY_ALLOC(Q1NP_NODE_TO_ELEM, NUMNOD, 'Q1NP_NODE_TO_ELEM')
+              CALL MY_ALLOC(Q1NP_NODE_TO_CORNER, NUMNOD, 'Q1NP_NODE_TO_CORNER')
+              CALL MY_ALLOC(Q1NP_NODE_TO_DIST2, NUMNOD, 'Q1NP_NODE_TO_DIST2')
+              CALL MY_ALLOC(Q1NP_NODE_TO_REFXYZ, 3, NUMNOD, 'Q1NP_NODE_TO_REFXYZ')
               Q1NP_NODE_TO_ELEM(1:NUMNOD) = 0
               Q1NP_NODE_TO_CORNER(1:NUMNOD) = 0
               Q1NP_NODE_TO_DIST2(1:NUMNOD) = HUGE(0._WP)
@@ -1056,8 +1052,8 @@ C
                 Q1NP_U_LEN = Q1NP_NX_CUR + 2*Q1NP_P_CUR + 1
                 Q1NP_V_LEN = Q1NP_NY_CUR + 2*Q1NP_Q_CUR + 1
                 IF (Q1NP_U_LEN <= 0 .OR. Q1NP_V_LEN <= 0) CYCLE
-                ALLOCATE(Q1NP_U_KNOT(Q1NP_U_LEN))
-                ALLOCATE(Q1NP_V_KNOT(Q1NP_V_LEN))
+                CALL MY_ALLOC(Q1NP_U_KNOT, Q1NP_U_LEN, 'Q1NP_U_KNOT')
+                CALL MY_ALLOC(Q1NP_V_KNOT, Q1NP_V_LEN, 'Q1NP_V_KNOT')
                 IF (Q1NP_NKNOT_SETS_G > 0 .AND.
      .              Q1NP_KNOT_SET_ID > 0 .AND.
      .              Q1NP_KNOT_SET_ID <= Q1NP_NKNOT_SETS_G .AND.
@@ -1103,8 +1099,8 @@ C
      .              + Q1NP_NVAL(Q1NP_KK) * X(3*(Q1NP_II-1)+3)
                   END DO
                 END DO
-                DEALLOCATE(Q1NP_U_KNOT)
-                DEALLOCATE(Q1NP_V_KNOT)
+                CALL MY_DEALLOC(Q1NP_U_KNOT)
+                CALL MY_DEALLOC(Q1NP_V_KNOT)
 
                 Q1NP_BEST_DIST2 = HUGE(0._WP)
                 Q1NP_BEST_IFACE = 0
@@ -1173,16 +1169,17 @@ C
 
               Q1NP_NMAP = COUNT(Q1NP_NODE_TO_ELEM > 0)
               IF (Q1NP_NMAP > 0) THEN
-                IF (ALLOCATED(Q1NP_OLDNODE_IDS_SAVE))
-     .            DEALLOCATE(Q1NP_OLDNODE_IDS_SAVE)
-                IF (ALLOCATED(Q1NP_ELEM_IDS_SAVE))
-     .            DEALLOCATE(Q1NP_ELEM_IDS_SAVE)
-                IF (ALLOCATED(Q1NP_CORNER_IDS_SAVE))
-     .            DEALLOCATE(Q1NP_CORNER_IDS_SAVE)
-                ALLOCATE(Q1NP_OLDNODE_IDS_SAVE(Q1NP_NMAP))
-                ALLOCATE(Q1NP_ELEM_IDS_SAVE(Q1NP_NMAP))
-                ALLOCATE(Q1NP_CORNER_IDS_SAVE(Q1NP_NMAP))
-                ALLOCATE(Q1NP_REFXYZ_SAVE(3,Q1NP_NMAP))
+                CALL MY_DEALLOC(Q1NP_OLDNODE_IDS_SAVE)
+                CALL MY_DEALLOC(Q1NP_ELEM_IDS_SAVE)
+                CALL MY_DEALLOC(Q1NP_CORNER_IDS_SAVE)
+                CALL MY_ALLOC(Q1NP_OLDNODE_IDS_SAVE, Q1NP_NMAP,
+     .            'Q1NP_OLDNODE_IDS_SAVE')
+                CALL MY_ALLOC(Q1NP_ELEM_IDS_SAVE, Q1NP_NMAP,
+     .            'Q1NP_ELEM_IDS_SAVE')
+                CALL MY_ALLOC(Q1NP_CORNER_IDS_SAVE, Q1NP_NMAP,
+     .            'Q1NP_CORNER_IDS_SAVE')
+                CALL MY_ALLOC(Q1NP_REFXYZ_SAVE, 3, Q1NP_NMAP,
+     .            'Q1NP_REFXYZ_SAVE')
                 Q1NP_II = 0
                 DO I = 1, NUMNOD
                   IF (Q1NP_NODE_TO_ELEM(I) > 0) THEN
@@ -1196,10 +1193,10 @@ C
                 END DO
               END IF
 
-              DEALLOCATE(Q1NP_NODE_TO_ELEM)
-              DEALLOCATE(Q1NP_NODE_TO_CORNER)
-              DEALLOCATE(Q1NP_NODE_TO_DIST2)
-              DEALLOCATE(Q1NP_NODE_TO_REFXYZ)
+              CALL MY_DEALLOC(Q1NP_NODE_TO_ELEM)
+              CALL MY_DEALLOC(Q1NP_NODE_TO_CORNER)
+              CALL MY_DEALLOC(Q1NP_NODE_TO_DIST2)
+              CALL MY_DEALLOC(Q1NP_NODE_TO_REFXYZ)
                   END IF
                 END IF
               END IF
@@ -1227,8 +1224,8 @@ c
 !       H3D may remap legacy Q1NP nodes for visualization. Keep that
 !       synthetic displacement out of the solver displacement array D.
         IF (ISPMD == 0 .AND. NSPMD == 1) THEN
-          IF (ALLOCATED(D_H3D)) DEALLOCATE(D_H3D)
-          ALLOCATE(D_H3D(3*NUMNOD))
+          IF (ALLOCATED(D_H3D)) CALL MY_DEALLOC(D_H3D)
+          CALL MY_ALLOC(D_H3D, 3*NUMNOD, 'D_H3D')
           D_H3D(1:3*NUMNOD) = D(1:3*NUMNOD)
         ENDIF
 
@@ -1291,8 +1288,8 @@ c
             IF (Q1NP_CACHE_ELEM /= Q1NP_IEL) THEN
               Q1NP_CACHE_ELEM = Q1NP_IEL
               Q1NP_CORNER_READY = .FALSE.
-              IF (ALLOCATED(Q1NP_U_KNOT)) DEALLOCATE(Q1NP_U_KNOT)
-              IF (ALLOCATED(Q1NP_V_KNOT)) DEALLOCATE(Q1NP_V_KNOT)
+              IF (ALLOCATED(Q1NP_U_KNOT)) CALL MY_DEALLOC(Q1NP_U_KNOT)
+              IF (ALLOCATED(Q1NP_V_KNOT)) CALL MY_DEALLOC(Q1NP_V_KNOT)
               Q1NP_NCTRL = KQ1NP_TAB(3,Q1NP_IEL)
               Q1NP_OFFCP = KQ1NP_TAB(4,Q1NP_IEL)
               Q1NP_P_CUR = KQ1NP_TAB(8,Q1NP_IEL)
@@ -1322,8 +1319,8 @@ c
               Q1NP_U_LEN = Q1NP_NX_CUR + 2*Q1NP_P_CUR + 1
               Q1NP_V_LEN = Q1NP_NY_CUR + 2*Q1NP_Q_CUR + 1
               IF (Q1NP_U_LEN <= 0 .OR. Q1NP_V_LEN <= 0) CYCLE
-              ALLOCATE(Q1NP_U_KNOT(Q1NP_U_LEN))
-              ALLOCATE(Q1NP_V_KNOT(Q1NP_V_LEN))
+              CALL MY_ALLOC(Q1NP_U_KNOT, Q1NP_U_LEN, 'Q1NP_U_KNOT')
+              CALL MY_ALLOC(Q1NP_V_KNOT, Q1NP_V_LEN, 'Q1NP_V_KNOT')
               IF (Q1NP_NKNOT_SETS_G > 0 .AND.
      .            Q1NP_KNOT_SET_ID > 0 .AND.
      .            Q1NP_KNOT_SET_ID <= Q1NP_NKNOT_SETS_G .AND.
@@ -1368,8 +1365,8 @@ c
      .            + Q1NP_NVAL(Q1NP_II) * X(3*(Q1NP_NODE_ID_TMP-1)+3)
                 END DO
               END DO
-              DEALLOCATE(Q1NP_U_KNOT)
-              DEALLOCATE(Q1NP_V_KNOT)
+              CALL MY_DEALLOC(Q1NP_U_KNOT)
+              CALL MY_DEALLOC(Q1NP_V_KNOT)
               Q1NP_CORNER_READY = .TRUE.
             END IF
             IF (.NOT. Q1NP_CORNER_READY) CYCLE
@@ -1381,8 +1378,8 @@ c
             D_H3D(3*(Q1NP_OLD_NODE_ID-1)+3) =
      .        Q1NP_TARGET_XYZ(3) - Q1NP_REFXYZ_SAVE(3,Q1NP_KK)
           END DO
-          IF (ALLOCATED(Q1NP_U_KNOT)) DEALLOCATE(Q1NP_U_KNOT)
-          IF (ALLOCATED(Q1NP_V_KNOT)) DEALLOCATE(Q1NP_V_KNOT)
+          IF (ALLOCATED(Q1NP_U_KNOT)) CALL MY_DEALLOC(Q1NP_U_KNOT)
+          IF (ALLOCATED(Q1NP_V_KNOT)) CALL MY_DEALLOC(Q1NP_V_KNOT)
         END IF
 
         !Create virtual nodes (FVMBAG polyhedra centroids)
@@ -2222,7 +2219,7 @@ c
           CALL STOPTIME(TIMERS,MACRO_TIMER_LIBH3D)
         ENDIF
 
-        IF (ALLOCATED(D_H3D)) DEALLOCATE(D_H3D)
+        IF (ALLOCATED(D_H3D)) CALL MY_DEALLOC(D_H3D)
 
         !VIRTUAL NODES
         !  FVMBAGS

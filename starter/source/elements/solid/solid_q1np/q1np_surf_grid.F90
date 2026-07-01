@@ -84,6 +84,11 @@
      &                                  nx, ny, seg_i, seg_j, &
      &                                  grid_node, grid_to_seg, ierr)
 ! ----------------------------------------------------------------------------------------------------------------------
+!                                                   Modules
+! ----------------------------------------------------------------------------------------------------------------------
+          use my_alloc_mod, only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
+! ----------------------------------------------------------------------------------------------------------------------
 !                                                   Implicit none
 ! ----------------------------------------------------------------------------------------------------------------------
           implicit none
@@ -137,11 +142,20 @@
           ierr = 0
           nx = 0
           ny = 0
-          allocate(neighbor(nseg, 4), assigned(nseg), seg_corner(4, nseg))
-          allocate(qseg(nseg), qi(nseg), qj(nseg))
+          call my_alloc(neighbor, nseg, 4, "NEIGHBOR")
+          call my_alloc(assigned, nseg, "ASSIGNED")
+          call my_alloc(seg_corner, 4, nseg, "SEG_CORNER")
+          call my_alloc(qseg, nseg, "QSEG")
+          call my_alloc(qi, nseg, "QI")
+          call my_alloc(qj, nseg, "QJ")
           allocate(grid_node_tmp(1-off:off*2+1, 1-off:off*2+1), stat=istat_tmp)
           if (istat_tmp /= 0) then
-            deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+            call my_dealloc(neighbor)
+            call my_dealloc(assigned)
+            call my_dealloc(seg_corner)
+            call my_dealloc(qseg)
+            call my_dealloc(qi)
+            call my_dealloc(qj)
             ierr = 7
             return
           end if
@@ -235,8 +249,13 @@
               dir_local = q1np_grid_dir_to_local_edge(seg_corner(1:4, iseg), d)
               if (dir_local .le. 0) then
                 ierr = 3
-                if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+                call my_dealloc(grid_node_tmp)
+                call my_dealloc(neighbor)
+                call my_dealloc(assigned)
+                call my_dealloc(seg_corner)
+                call my_dealloc(qseg)
+                call my_dealloc(qi)
+                call my_dealloc(qj)
                 return
               end if
 
@@ -270,8 +289,13 @@
 
                 if (idx .le. 0) then
                   ierr = 3
-                  if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+                  call my_dealloc(grid_node_tmp)
+                  call my_dealloc(neighbor)
+                  call my_dealloc(assigned)
+                  call my_dealloc(seg_corner)
+                  call my_dealloc(qseg)
+                  call my_dealloc(qi)
+                  call my_dealloc(qj)
                   return
                 end if
 
@@ -283,8 +307,13 @@
                 tail = tail + 1
                 if (tail .gt. nseg) then
                   ierr = 7
-                  if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+                  call my_dealloc(grid_node_tmp)
+                  call my_dealloc(neighbor)
+                  call my_dealloc(assigned)
+                  call my_dealloc(seg_corner)
+                  call my_dealloc(qseg)
+                  call my_dealloc(qi)
+                  call my_dealloc(qj)
                   return
                 end if
                 qseg(tail) = jseg
@@ -293,16 +322,26 @@
               else
                 if (seg_i(jseg) .ne. ii_new .or. seg_j(jseg) .ne. jj_new) then
                   ierr = 5
-                  if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+                  call my_dealloc(grid_node_tmp)
+                  call my_dealloc(neighbor)
+                  call my_dealloc(assigned)
+                  call my_dealloc(seg_corner)
+                  call my_dealloc(qseg)
+                  call my_dealloc(qi)
+                  call my_dealloc(qj)
                   return
                 end if
                 do k = 1, 4
                   cand(k) = base(seg_corner(k, jseg))
                   if (exist(k) .gt. 0 .and. exist(k) .ne. cand(k)) then
                     ierr = 3
-                    if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+                    call my_dealloc(grid_node_tmp)
+                    call my_dealloc(neighbor)
+                    call my_dealloc(assigned)
+                    call my_dealloc(seg_corner)
+                    call my_dealloc(qseg)
+                    call my_dealloc(qi)
+                    call my_dealloc(qj)
                     return
                   end if
                 end do
@@ -317,8 +356,13 @@
 !     --- Sanity: all segments must have been assigned (connected surface) ---
           if (nassign .ne. nseg) then
             ierr = 4
-            if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+            call my_dealloc(grid_node_tmp)
+            call my_dealloc(neighbor)
+            call my_dealloc(assigned)
+            call my_dealloc(seg_corner)
+            call my_dealloc(qseg)
+            call my_dealloc(qi)
+            call my_dealloc(qj)
             return
           end if
 
@@ -338,8 +382,13 @@
 
           if (nx*ny .ne. nseg) then
             ierr = 5
-            if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+            call my_dealloc(grid_node_tmp)
+            call my_dealloc(neighbor)
+            call my_dealloc(assigned)
+            call my_dealloc(seg_corner)
+            call my_dealloc(qseg)
+            call my_dealloc(qi)
+            call my_dealloc(qj)
             return
           end if
 
@@ -359,8 +408,13 @@
 !     --- Copy GRID_NODE_TMP into output GRID_NODE (1-based, size (NX+1)*(NY+1)) ---
           if (nx+1 .gt. nseg*4 .or. ny+1 .gt. nseg*4) then
             ierr = 7
-            if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+            call my_dealloc(grid_node_tmp)
+            call my_dealloc(neighbor)
+            call my_dealloc(assigned)
+            call my_dealloc(seg_corner)
+            call my_dealloc(qseg)
+            call my_dealloc(qi)
+            call my_dealloc(qj)
             return
           end if
 
@@ -370,8 +424,13 @@
             end do
           end do
 
-          if (allocated(grid_node_tmp)) deallocate(grid_node_tmp)
-                deallocate(neighbor, assigned, seg_corner, qseg, qi, qj)
+          call my_dealloc(grid_node_tmp)
+          call my_dealloc(neighbor)
+          call my_dealloc(assigned)
+          call my_dealloc(seg_corner)
+          call my_dealloc(qseg)
+          call my_dealloc(qi)
+          call my_dealloc(qj)
 
           return
         end subroutine q1np_build_surf_grid

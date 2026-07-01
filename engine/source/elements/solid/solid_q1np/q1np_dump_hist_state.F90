@@ -45,6 +45,8 @@
 !-----------------------------------------------------------------------
       USE Q1NP_RESTART_MOD
       USE DEBUG_MOD, ONLY: ITAB_DEBUG
+      USE MY_ALLOC_MOD, ONLY: MY_ALLOC
+      USE MY_DEALLOC_MOD, ONLY: MY_DEALLOC
 
 
       implicit none
@@ -170,10 +172,10 @@
       END DO
 
       IF (MAX_GID > SEEN_SIZE) THEN
-         IF (ALLOCATED(SEEN_CP))   DEALLOCATE(SEEN_CP)
-         IF (ALLOCATED(SEEN_BULK)) DEALLOCATE(SEEN_BULK)
-         ALLOCATE(SEEN_CP(MAX_GID))
-         ALLOCATE(SEEN_BULK(MAX_GID))
+         IF (ALLOCATED(SEEN_CP)) CALL MY_DEALLOC(SEEN_CP)
+         IF (ALLOCATED(SEEN_BULK)) CALL MY_DEALLOC(SEEN_BULK)
+         CALL MY_ALLOC(SEEN_CP,   MAX_GID, "SEEN_CP")
+         CALL MY_ALLOC(SEEN_BULK, MAX_GID, "SEEN_BULK")
          SEEN_CP   = 0
          SEEN_BULK = 0
          SEEN_SIZE = MAX_GID

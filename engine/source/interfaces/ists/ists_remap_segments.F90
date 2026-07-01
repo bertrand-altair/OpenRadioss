@@ -19,6 +19,8 @@
 !   M o d u l e s   /   I m p l i c i t   T y p e s
 !-----------------------------------------------
       use constant_mod
+      use my_alloc_mod, only : my_alloc
+      use my_dealloc_mod, only : my_dealloc
       implicit none
 !-----------------------------------------------
 !   G l o b a l   P a r a m e t e r s
@@ -115,7 +117,7 @@
 
       IF (rebuild_topology) THEN
         CALL STS_REMAP_CLEAR_TOPO_CACHE()
-        ALLOCATE(IGRSURF_S_TEMP(IGRSURF(SEC_SURF_IDX)%NSEG, 4))
+        CALL MY_ALLOC(IGRSURF_S_TEMP, IGRSURF(SEC_SURF_IDX)%NSEG, 4, "IGRSURF_S_TEMP")
         IGRSURF_S_TEMP = IGRSURF(SEC_SURF_IDX)%NODES
 
         CALL STS_REMAP_BUILD_NODE_SEG_ADJ(IGRSURF_S_TEMP, NSEG, NUMNOD, &
@@ -135,10 +137,10 @@
       ENDIF
 
       PAIR_HASH_SIZE = MAX(17, 4 * MAX_STS_SIZE_ACTUAL + 1)
-      ALLOCATE(PAIR_HASH_SEC(PAIR_HASH_SIZE))
-      ALLOCATE(PAIR_HASH_MST(PAIR_HASH_SIZE))
-      ALLOCATE(PAIR_HASH_INDEX(PAIR_HASH_SIZE))
-      ALLOCATE(NEAREST_SEC_CACHE(MAX(1, NRTM)))
+      CALL MY_ALLOC(PAIR_HASH_SEC, PAIR_HASH_SIZE, "PAIR_HASH_SEC")
+      CALL MY_ALLOC(PAIR_HASH_MST, PAIR_HASH_SIZE, "PAIR_HASH_MST")
+      CALL MY_ALLOC(PAIR_HASH_INDEX, PAIR_HASH_SIZE, "PAIR_HASH_INDEX")
+      CALL MY_ALLOC(NEAREST_SEC_CACHE, MAX(1, NRTM), "NEAREST_SEC_CACHE")
       PAIR_HASH_SEC = 0
       PAIR_HASH_MST = 0
       PAIR_HASH_INDEX = 0
@@ -159,7 +161,7 @@
           candidate = INTBUF_TAB%NSV(CAND_N_CUR(I))
           IF (candidate > 0 .AND. candidate <= NUMNOD) THEN
             CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE_PATCH( &
-     &        IGRSURF_S_TEMP, NSEG, candidate, candidateM, &
+     &        NSEG, candidate, candidateM, &
      &        SEC_NODE_SEG_COUNT, SEC_NODE_SEG_OFF, SEC_NODE_SEG_LIST, &
      &        MST_SEG_NEI_COUNT, MST_SEG_NEI_OFF, MST_SEG_NEI_LIST, &
      &        COUNT, CAND_SEC_SEG, CAND_MST_SEG, CAND_SEC_GP_MASK, &
@@ -290,13 +292,12 @@
         ! original INT7 facet edge.
         !=======================================================================
         SUBROUTINE STS_REMAP_ADD_SEC_SEGS_FOR_NODE_PATCH( &
-     &    IGRSURF_NODES, NSEG_IN, SEC_NODE_IN, MST_SEG_IN, &
+     &    NSEG_IN, SEC_NODE_IN, MST_SEG_IN, &
      &    SEC_COUNT, SEC_OFF, SEC_LIST, MST_NEI_COUNT, MST_NEI_OFF, &
      &    MST_NEI_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
      &    CAPACITY, FOUND_ANY, CAPACITY_FULL)
           INTEGER, INTENT(IN) :: NSEG_IN, SEC_NODE_IN, MST_SEG_IN
           INTEGER, INTENT(IN) :: CAPACITY
-          INTEGER, INTENT(IN) :: IGRSURF_NODES(NSEG_IN, 4)
           INTEGER, INTENT(IN) :: SEC_COUNT(:), SEC_OFF(:), SEC_LIST(:)
           INTEGER, INTENT(IN) :: MST_NEI_COUNT(:), MST_NEI_OFF(:)
           INTEGER, INTENT(IN) :: MST_NEI_LIST(:)
@@ -312,7 +313,7 @@
           CAPACITY_FULL = .FALSE.
           IF (MST_SEG_IN <= 0 .OR. MST_SEG_IN > SIZE(MST_NEI_COUNT)) RETURN
 
-          CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE(IGRSURF_NODES, &
+          CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE( &
      &      NSEG_IN, SEC_NODE_IN, MST_SEG_IN, SEC_COUNT, SEC_OFF, &
      &      SEC_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
      &      CAPACITY, FOUND_LOCAL, CAPACITY_LOCAL)
@@ -328,7 +329,7 @@
           P1 = MST_NEI_OFF(MST_SEG_IN + 1) - 1
           DO P = P0, P1
             MSEG = MST_NEI_LIST(P)
-            CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE(IGRSURF_NODES, &
+            CALL STS_REMAP_ADD_SEC_SEGS_FOR_NODE( &
      &        NSEG_IN, SEC_NODE_IN, MSEG, SEC_COUNT, SEC_OFF, &
      &        SEC_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
      &        CAPACITY, FOUND_LOCAL, CAPACITY_LOCAL)
@@ -347,13 +348,12 @@
         ! every secondary surface segment sharing it; keeping only one segment
         ! makes the integrated contact patch too sparse on curved surfaces.
         !=======================================================================
-        SUBROUTINE STS_REMAP_ADD_SEC_SEGS_FOR_NODE(IGRSURF_NODES, &
+        SUBROUTINE STS_REMAP_ADD_SEC_SEGS_FOR_NODE( &
      &    NSEG_IN, SEC_NODE_IN, MST_SEG_IN, SEC_COUNT, SEC_OFF, &
      &    SEC_LIST, COUNT_INOUT, CAND_SEC, CAND_MST, GP_MASK, &
      &    CAPACITY, FOUND_ANY, CAPACITY_FULL)
           INTEGER, INTENT(IN) :: NSEG_IN, SEC_NODE_IN, MST_SEG_IN
           INTEGER, INTENT(IN) :: CAPACITY
-          INTEGER, INTENT(IN) :: IGRSURF_NODES(NSEG_IN, 4)
           INTEGER, INTENT(IN) :: SEC_COUNT(:), SEC_OFF(:), SEC_LIST(:)
           INTEGER, INTENT(INOUT) :: COUNT_INOUT
           INTEGER, INTENT(INOUT) :: CAND_SEC(CAPACITY)
@@ -405,8 +405,8 @@
           INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_LIST(:)
           INTEGER :: SEG, C, NID, TOTAL, POS
 
-          ALLOCATE(NODE_COUNT(NUMNOD_IN))
-          ALLOCATE(NODE_OFF(NUMNOD_IN + 1))
+          CALL MY_ALLOC(NODE_COUNT, NUMNOD_IN, "NODE_COUNT")
+          CALL MY_ALLOC(NODE_OFF, NUMNOD_IN + 1, "NODE_OFF")
           NODE_COUNT = 0
 
           DO SEG = 1, NSEG_IN
@@ -422,7 +422,7 @@
             NODE_OFF(NID + 1) = NODE_OFF(NID) + NODE_COUNT(NID)
           ENDDO
           TOTAL = NODE_OFF(NUMNOD_IN + 1) - 1
-          ALLOCATE(NODE_LIST(MAX(1, TOTAL)))
+          CALL MY_ALLOC(NODE_LIST, MAX(1, TOTAL), "NODE_LIST")
 
           NODE_COUNT = 0
           DO SEG = 1, NSEG_IN
@@ -450,8 +450,8 @@
           INTEGER, ALLOCATABLE, INTENT(OUT) :: NODE_LIST(:)
           INTEGER :: SEG, C, NID, TOTAL, POS
 
-          ALLOCATE(NODE_COUNT(NUMNOD_IN))
-          ALLOCATE(NODE_OFF(NUMNOD_IN + 1))
+          CALL MY_ALLOC(NODE_COUNT, NUMNOD_IN, "NODE_COUNT")
+          CALL MY_ALLOC(NODE_OFF, NUMNOD_IN + 1, "NODE_OFF")
           NODE_COUNT = 0
 
           DO SEG = 1, NRTM_IN
@@ -467,7 +467,7 @@
             NODE_OFF(NID + 1) = NODE_OFF(NID) + NODE_COUNT(NID)
           ENDDO
           TOTAL = NODE_OFF(NUMNOD_IN + 1) - 1
-          ALLOCATE(NODE_LIST(MAX(1, TOTAL)))
+          CALL MY_ALLOC(NODE_LIST, MAX(1, TOTAL), "NODE_LIST")
 
           NODE_COUNT = 0
           DO SEG = 1, NRTM_IN
@@ -497,10 +497,10 @@
           INTEGER, ALLOCATABLE :: MARK(:), TMP(:)
           INTEGER :: SEG, C, NID, P, P0, P1, OTHER, TOTAL, NFOUND, ILOC
 
-          ALLOCATE(SEG_COUNT(NRTM_IN))
-          ALLOCATE(SEG_OFF(NRTM_IN + 1))
-          ALLOCATE(MARK(NRTM_IN))
-          ALLOCATE(TMP(MAX(1, NRTM_IN)))
+          CALL MY_ALLOC(SEG_COUNT, NRTM_IN, "SEG_COUNT")
+          CALL MY_ALLOC(SEG_OFF, NRTM_IN + 1, "SEG_OFF")
+          CALL MY_ALLOC(MARK, NRTM_IN, "MARK")
+          CALL MY_ALLOC(TMP, MAX(1, NRTM_IN), "TMP")
           SEG_COUNT = 0
           MARK = 0
 
@@ -529,7 +529,7 @@
             SEG_OFF(SEG + 1) = SEG_OFF(SEG) + SEG_COUNT(SEG)
           ENDDO
           TOTAL = SEG_OFF(NRTM_IN + 1) - 1
-          ALLOCATE(SEG_LIST(MAX(1, TOTAL)))
+          CALL MY_ALLOC(SEG_LIST, MAX(1, TOTAL), "SEG_LIST")
 
           MARK = 0
           DO SEG = 1, NRTM_IN
@@ -556,8 +556,8 @@
             ENDDO
           ENDDO
 
-          DEALLOCATE(MARK)
-          DEALLOCATE(TMP)
+          CALL MY_DEALLOC(MARK)
+          CALL MY_DEALLOC(TMP)
         END SUBROUTINE STS_REMAP_BUILD_MASTER_NEIGHBORS
 
         !=======================================================================
@@ -587,10 +587,10 @@
         ! Release per-call hash and nearest-segment work arrays.
         !=======================================================================
         SUBROUTINE STS_REMAP_DEALLOCATE_WORK()
-          IF (ALLOCATED(PAIR_HASH_SEC)) DEALLOCATE(PAIR_HASH_SEC)
-          IF (ALLOCATED(PAIR_HASH_MST)) DEALLOCATE(PAIR_HASH_MST)
-          IF (ALLOCATED(PAIR_HASH_INDEX)) DEALLOCATE(PAIR_HASH_INDEX)
-          IF (ALLOCATED(NEAREST_SEC_CACHE)) DEALLOCATE(NEAREST_SEC_CACHE)
+          IF (ALLOCATED(PAIR_HASH_SEC)) CALL MY_DEALLOC(PAIR_HASH_SEC)
+          IF (ALLOCATED(PAIR_HASH_MST)) CALL MY_DEALLOC(PAIR_HASH_MST)
+          IF (ALLOCATED(PAIR_HASH_INDEX)) CALL MY_DEALLOC(PAIR_HASH_INDEX)
+          IF (ALLOCATED(NEAREST_SEC_CACHE)) CALL MY_DEALLOC(NEAREST_SEC_CACHE)
         END SUBROUTINE STS_REMAP_DEALLOCATE_WORK
 
         !=======================================================================
@@ -599,16 +599,16 @@
         ! Release cached surface topology adjacency tables.
         !=======================================================================
         SUBROUTINE STS_REMAP_CLEAR_TOPO_CACHE()
-          IF (ALLOCATED(IGRSURF_S_TEMP)) DEALLOCATE(IGRSURF_S_TEMP)
-          IF (ALLOCATED(SEC_NODE_SEG_COUNT)) DEALLOCATE(SEC_NODE_SEG_COUNT)
-          IF (ALLOCATED(SEC_NODE_SEG_OFF)) DEALLOCATE(SEC_NODE_SEG_OFF)
-          IF (ALLOCATED(SEC_NODE_SEG_LIST)) DEALLOCATE(SEC_NODE_SEG_LIST)
-          IF (ALLOCATED(MST_NODE_SEG_COUNT)) DEALLOCATE(MST_NODE_SEG_COUNT)
-          IF (ALLOCATED(MST_NODE_SEG_OFF)) DEALLOCATE(MST_NODE_SEG_OFF)
-          IF (ALLOCATED(MST_NODE_SEG_LIST)) DEALLOCATE(MST_NODE_SEG_LIST)
-          IF (ALLOCATED(MST_SEG_NEI_COUNT)) DEALLOCATE(MST_SEG_NEI_COUNT)
-          IF (ALLOCATED(MST_SEG_NEI_OFF)) DEALLOCATE(MST_SEG_NEI_OFF)
-          IF (ALLOCATED(MST_SEG_NEI_LIST)) DEALLOCATE(MST_SEG_NEI_LIST)
+          IF (ALLOCATED(IGRSURF_S_TEMP)) CALL MY_DEALLOC(IGRSURF_S_TEMP)
+          IF (ALLOCATED(SEC_NODE_SEG_COUNT)) CALL MY_DEALLOC(SEC_NODE_SEG_COUNT)
+          IF (ALLOCATED(SEC_NODE_SEG_OFF)) CALL MY_DEALLOC(SEC_NODE_SEG_OFF)
+          IF (ALLOCATED(SEC_NODE_SEG_LIST)) CALL MY_DEALLOC(SEC_NODE_SEG_LIST)
+          IF (ALLOCATED(MST_NODE_SEG_COUNT)) CALL MY_DEALLOC(MST_NODE_SEG_COUNT)
+          IF (ALLOCATED(MST_NODE_SEG_OFF)) CALL MY_DEALLOC(MST_NODE_SEG_OFF)
+          IF (ALLOCATED(MST_NODE_SEG_LIST)) CALL MY_DEALLOC(MST_NODE_SEG_LIST)
+          IF (ALLOCATED(MST_SEG_NEI_COUNT)) CALL MY_DEALLOC(MST_SEG_NEI_COUNT)
+          IF (ALLOCATED(MST_SEG_NEI_OFF)) CALL MY_DEALLOC(MST_SEG_NEI_OFF)
+          IF (ALLOCATED(MST_SEG_NEI_LIST)) CALL MY_DEALLOC(MST_SEG_NEI_LIST)
           TOPO_CACHE_READY = .FALSE.
         END SUBROUTINE STS_REMAP_CLEAR_TOPO_CACHE
 
@@ -645,7 +645,7 @@
           XM(2) = XM(2) / NC
           XM(3) = XM(3) / NC
 
-          BEST = HUGE(1.0D0)
+          BEST = HUGE(BEST)
           DO J = 1, NSEG_IN
             XS = ZERO
             NC = 0

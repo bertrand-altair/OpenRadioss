@@ -24,7 +24,7 @@
 !
       subroutine STS_CONTACT_EVAL_PAIR(XUPD, STIF, p, IMPACT, EL_NR, node_stiff, OPTION, &
       &                   FRICC, XMU, IFPEN, &
-      &                   p_friction, EFRICT, QFRICT, node_ids, V, &
+      &                   p_friction, node_ids, V, &
       &                   CALC_FRICTION, MAX_STS_SIZE, GAP, GP_WEIGHT, &
       &                   PAIR_MAX_PENETRATION, &
       &                   ECONTT_PAIR, ECONVT_PAIR, MS, NOINT, VISC, IVIS2, &
@@ -59,8 +59,6 @@
 !     FRICC, XMU: Friction parameters
 !     IFPEN    : Penetration flag array
 !     p_friction: Output friction forces (24 components) - separate output
-!     EFRICT   : Friction energy (output)
-!     QFRICT   : Total friction energy (INTENT(INOUT))
 !     node_ids : Node IDs for velocity interpolation (8 components)
 !     CALC_FRICTION: Flag to enable/disable friction calculation
 !     MAX_STS_SIZE: Maximum size for history arrays
@@ -77,7 +75,6 @@
       real*8  node_stiff(8)
       my_real FRICC(MVSIZ), XMU(MVSIZ)
       INTEGER IFPEN(MAX_STS_SIZE)
-      my_real EFRICT, QFRICT
       INTEGER MAX_STS_SIZE  ! Maximum size for history arrays
       my_real GAP  ! Gap value from user input
       REAL*8, INTENT(IN)  :: GP_WEIGHT(4)
@@ -99,7 +96,7 @@
       INTEGER pair_fric_idx
       real*8  xi1, xi2
       real*8  penetr, PENE, GAPV, FAC
-      my_real d1, d1_fric, d1_stif
+      real*8  d1, d1_fric, d1_stif
       real*8  a(3,24), daxi1(3,24), daxi2(3,24)
       real*8  f_normal, f_visc, v_n
       real*8  daeta1(3,24), daeta2(3,24)
@@ -188,7 +185,6 @@
       ENDDO
       GAPV = GAP ! Effective scalar gap (MIN(GAPMAX,MAX(GAPMIN,GAP))).
       energy = 0.0d0
-      EFRICT = 0.d0
       IF (COMMIT_CONTACT) XMU(1) = FRICC(pair_fric_idx) ! Friction coefficient mu
       node_stiff = 0.0d0
       FAC = 1.0d0

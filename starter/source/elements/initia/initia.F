@@ -198,8 +198,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
      N                  PRELOAD_A  ,FAIL_FRACTAL  ,FAIL_BROKMANN    ,DEFAULTS       ,NDAMP_FREQ_RANGE,
      O                  DAMPR      ,IBEAM_VECTOR  ,RBEAM_VECTOR     ,IKINE          ,LSIGI     ,
      P                  LSIGSP     ,SRNOISE       ,NPRW             ,LPRW           , RWSTIF_PEN,
-     M                  SLN_PEN    ,ROOTLEN       ,ROOTNAM          ,NGUIDED_CABLE  ,TOTMAS1   ,
-     N                  STIF_STS)
+     M                  SLN_PEN    ,ROOTLEN       ,ROOTNAM          ,NGUIDED_CABLE  ,TOTMAS1  )
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------                     
@@ -245,9 +244,7 @@ C-----------------------------------------------
       use ush_init_mod , only : ush_init
       use ini_guided_cable_mod, ONLY : ini_guided_cable 
       USE Q1NP_RESTART_MOD
-      USE Q1NP_INIT_LBUF_VOL_MOD
-      USE Q1NP_MASS3_MOD
-      USE Q1NP_VOLUME_MOD
+      USE Q1NP_INIT_MOD
       use rini135_rb_mod
       use my_alloc_mod
 C-----------------------------------------------
@@ -368,7 +365,6 @@ C
       INTEGER,INTENT(IN) :: ROOTLEN
       CHARACTER (LEN=ROOTLEN), INTENT(IN) :: ROOTNAM
       INTEGER,INTENT(IN) :: NGUIDED_CABLE
-      my_real, INTENT(INOUT) :: STIF_STS
 C
       TYPE (ELBUF_STRUCT_), TARGET, DIMENSION(NGROUP) :: ELBUF_TAB
       TYPE (ELBUF_STRUCT_), TARGET, DIMENSION(NGROUP,NXEL) :: XFEM_TAB
@@ -420,9 +416,8 @@ C      INTEGER *8 I8MI(6,NUMNOD)
      .   IADUIN,IADUSM,IADUSR,IADUMV,IADURV, NUVAR,ICNOD, RBYID,
      .   ADRRPM,ALM,ASIG,NELS,NELC,NELTG,AMOD,NBNO,NME,NML,ARPM,LVSIG,
      .   IFILE,IRCS,NELT,NELP,FXBID, ANOD, IRCM, NSNI, NSN, NMANI, IMIN, IMAX,
-     .   NELEMR,CPT_ELTENS,IXFEM,ITG,ISUBSTACK,NCTRL, ITETRA10, KK,PX,PY,PZ,IPID,
-     .   IEL,IEL_HEX8,IEL_LOCAL,IEL_Q1NP,IU_Q1NP,IV_Q1NP,IT_Q1NP,
-     .   NPTR_Q1NP,NPTS_Q1NP,NPTT_Q1NP
+     .   NELEMR,CPT_ELTENS,IXFEM,ITG,ISUBSTACK,NCTRL,PX,PY,PZ
+
       INTEGER SOLMAT(0:MAXLAW), COQMAT(0:MAXLAW), TRUMAT(0:MAXLAW),
      .   POUMAT(0:MAXLAW),SPHMAT(0:MAXLAW),
      .   RESMAT(0:MAXLAW),RESPID(0:50), SPHPID(0:50),
@@ -433,8 +428,7 @@ C      INTEGER *8 I8MI(6,NUMNOD)
       my_real DT2S, B1, B2, B3, B6, B5, B9, XG, YG, ZG, XX, YY, ZZ, XY, XZ, YZ
       my_real, DIMENSION(:), ALLOCATABLE ::
      .    MBUFEL_TMP, MDEPL_TMP,PARTSAV,MCPS,MCPSX,
-     .    MS_LAYERC,ZI_LAYERC, MSZ2C,ZPLY,PARTSAV1_PON,MCPP,
-     .    RHO_HEX8,VOLU_HEX8,RHOCP_HEX8,RHOF_HEX8,FRAC_HEX8,FILL_HEX8
+     .    MS_LAYERC,ZI_LAYERC, MSZ2C,ZPLY,PARTSAV1_PON,MCPP
 
       INTEGER, DIMENSION(:), ALLOCATABLE :: IRIG_NODE, CONNEC
       my_real, DIMENSION(:), ALLOCATABLE :: PART_AREA,ELE_AREA
@@ -442,16 +436,13 @@ C      INTEGER *8 I8MI(6,NUMNOD)
       my_real ADDEDMS(NPART),MAS
       INTEGER ID,ISTOT, NF1,NNOD,NSROT,IDRAPE,ICPRE
       CHARACTER(LEN=NCHARTITLE)::TITR
-      LOGICAL :: ERROR_THROWN,HAS_GP_VOL_Q1NP
-      my_real VOL_SUM_Q1NP
+      LOGICAL :: ERROR_THROWN
       INTEGER,INTENT(IN) :: NOD2ELTG(3*NUMELTG)
       INTEGER,INTENT(IN) :: NOD2ELQ(3*NUMELQ)
       INTEGER,INTENT(IN) :: NOD2ELS(3*NUMELS)
       INTEGER,INTENT(IN) :: KNOD2ELTG(NUMNOD+1)
       INTEGER,INTENT(IN) :: KNOD2ELQ(NUMNOD+1)
       INTEGER,INTENT(IN) :: KNOD2ELS(NUMNOD+1)
-      ! ----------------
-      my_real STIF_STS_CUR
 C-----------------------------------------------
 C   D e r i v e d   T y p e   D e f i n i t i o n s
 C-----------------------------------------------
@@ -897,29 +888,6 @@ C---
       DT2S=1.E6
       CPT_ELTENS = 0
 C
-C     Create flag array for Q1Np replaced elements in module (replaced HEX8 elements by Q1Np elements)
-C     This will be used to skip SMASS3 for replaced elements
-      IF (NUMELS > 0) THEN
-        IF (ALLOCATED(IS_Q1NP_REPLACED_G)) DEALLOCATE(IS_Q1NP_REPLACED_G)
-        ALLOCATE(IS_Q1NP_REPLACED_G(NUMELS), STAT=STAT)
-        IF(STAT /= 0) THEN
-          CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,
-     .                C1='IS_Q1NP_REPLACED_G')
-        ENDIF
-        IS_Q1NP_REPLACED_G(1:NUMELS) = .FALSE.
-        IF (NUMELQ1NP_G > 0) THEN
-          DO I=1,NUMELQ1NP_G
-            IEL_HEX8 = KQ1NP_TAB(10, I)
-            IF (IEL_HEX8 > 0 .AND. IEL_HEX8 <= NUMELS) THEN
-              IS_Q1NP_REPLACED_G(IEL_HEX8) = .TRUE.
-            ENDIF
-          ENDDO
-        ENDIF
-      ELSE
-        IF (ALLOCATED(IS_Q1NP_REPLACED_G)) DEALLOCATE(IS_Q1NP_REPLACED_G)
-        ALLOCATE(IS_Q1NP_REPLACED_G(0))
-      ENDIF
-C
       DO  NG=1,NGROUP
         MTN=IPARG(1,NG)
         NEL=IPARG(2,NG)
@@ -1054,22 +1022,6 @@ C Type element
         !----------------------------------------!
         IF (ITY == 1) THEN
          GBUF => ELBUF_TAB(NG)%GBUF
-C        Calculate volume for replaced HEX8 elements by integration
-         IF (NUMELQ1NP_G > 0) THEN
-           DO I=1,NUMELQ1NP_G
-             IEL_HEX8 = KQ1NP_TAB(10, I)
-             IF (IEL_HEX8 > 0 .AND. IEL_HEX8 <= NUMELS) THEN
-               IF (IEL_HEX8 >= NFT+1 .AND. IEL_HEX8 <= NFT + NEL) THEN
-                 IEL_LOCAL = IEL_HEX8 - NFT
-                 IF (IEL_LOCAL > 0 .AND. IEL_LOCAL <= NEL) THEN
-                   IF (ASSOCIATED(GBUF%OFF)) THEN
-                     GBUF%OFF(IEL_LOCAL) = ONE
-                   ENDIF
-                 ENDIF
-               ENDIF
-             ENDIF
-           ENDDO
-         ENDIF
          IF (IUSOLYLD == 1 ) THEN
           CALL SCALEINI(
      .           ELBUF_TAB(NG), IXS      , SIGSP    ,SIGI  ,   NSIGI,
@@ -1341,10 +1293,7 @@ C Case total strain
      B              XREFS        ,NPC          ,PLD    ,MSSA       ,STRSGLOB(NF1),
      C              STRAGLOB(NF1),FAIL_INI     ,SPBUF  ,KXSP       ,IPART(I15J),
      D              NOD2SP       ,SOL2SPH      ,IRST   ,ILOADP     ,FACLOAD    ,
-     E              RNOISE       ,PERTURB      ,MAT_PARAM, GLOB_THERM, STIF_STS_CUR)      
-                IF (STIF_STS_CUR < STIF_STS) THEN
-                    STIF_STS = STIF_STS_CUR
-                END IF
+     E              RNOISE       ,PERTURB      ,MAT_PARAM,GLOB_THERM)        
             ELSE IF (JMULT > 0 .AND. MTN == 151) THEN
       !Multifluid law
                CALL MULTIFLUID_INIT3 (
@@ -1363,7 +1312,7 @@ C Case total strain
      E              MULTI_FVM, ERROR_THROWN,DETONATORS, MAT_PARAM)
             ENDIF
            
-             CALL SREFSTA3(
+            CALL SREFSTA3(
      1        ELBUF_TAB(NG),IXS        ,PM         ,GEO      ,IPARG(1,NG),  
      2        IPM          ,IGEO       ,SKEW       ,X        ,XREFS     ,
      3        NEL          ,IPART(I15A),IPART      ,BUFMAT   ,MAT_PARAM,              
@@ -1396,7 +1345,6 @@ C Case total strain: conf_ref <- XREF
             IF (NC8 == 1) NC8_OLD = 1
             IPARG(19,NG) = NC1_OLD*128+NC2_OLD*64+NC3_OLD*32+NC4_OLD*16+NC5_OLD*8+NC6_OLD*4+NC7_OLD*2+NC8
           ENDIF
-C
          ENDIF
         !----------------------------------------!
         !   ITY == 2                        QUAD !
@@ -2212,153 +2160,10 @@ C---------------------------------------------
 C     Q1Np enriched element mass calculation
 C---------------------------------------------
       IF (NUMELQ1NP_G > 0) THEN
-C       Initialize per-Gauss-point Q1NP reference volumes in ELBUF/LBUF
-        CALL Q1NP_INIT_LBUF_GP_VOL(
-     .     IPARG, ELBUF_TAB, X, NUMNOD, NUMELS,
-     .     KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB)
-
-C       Reconstruct scalar GBUF%VOL from per-Gauss Q1NP volumes.
-        IF (ASSOCIATED(Q1NP_KTAB_G) .AND.
-     .      (Q1NP_NKNOT_SETS_G > 0 .OR.
-     .       (Q1NP_NX_G > 0 .AND. Q1NP_NY_G > 0))) THEN
-          DO IEL_Q1NP = 1, NUMELQ1NP_G
-            IEL_HEX8 = KQ1NP_TAB(10, IEL_Q1NP)
-            IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS) CYCLE
-
-            DO NG = 1, NGROUP
-              IF (IPARG(5,NG) /= 1) CYCLE
-              NEL = IPARG(2,NG)
-              NFT = IPARG(3,NG)
-              IF (NEL <= 0) CYCLE
-              IF (IEL_HEX8 < NFT+1 .OR. IEL_HEX8 > NFT+NEL) CYCLE
-
-              IEL_LOCAL = IEL_HEX8 - NFT
-              GBUF => ELBUF_TAB(NG)%GBUF
-
-              NPTR_Q1NP = IPARG(56,NG)
-              NPTS_Q1NP = IPARG(57,NG)
-              NPTT_Q1NP = IPARG(58,NG)
-
-              VOL_SUM_Q1NP = ZERO
-              DO IT_Q1NP = 1, NPTT_Q1NP
-                DO IU_Q1NP = 1, NPTR_Q1NP
-                  DO IV_Q1NP = 1, NPTS_Q1NP
-                    VOL_SUM_Q1NP = VOL_SUM_Q1NP + ELBUF_TAB(NG)%BUFLY(1)%LBUF(
-     .                IU_Q1NP, IV_Q1NP, IT_Q1NP)%VOL(IEL_LOCAL)
-                  ENDDO
-                ENDDO
-              ENDDO
-
-              GBUF%VOL(IEL_LOCAL) = VOL_SUM_Q1NP
-              ! print *, 'Element ', IEL_Q1NP, ': Volume = ', GBUF%VOL(IEL_LOCAL)
-              EXIT
-            ENDDO
-          ENDDO
-        ENDIF
-
-C       Allocate temporary arrays for Q1Np mass calculation
-        ALLOCATE(RHO_HEX8(NUMELS),STAT=STAT)
-        IF(STAT /= 0) THEN
-          CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,
-     .                C1='RHO_HEX8')
-        ENDIF
-        ALLOCATE(VOLU_HEX8(NUMELS),STAT=STAT)
-        IF(STAT /= 0) THEN
-          CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,
-     .                C1='VOLU_HEX8')
-        ENDIF
-        ALLOCATE(RHOCP_HEX8(NUMNOD),STAT=STAT)
-        IF(STAT /= 0) THEN
-          CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,
-     .                C1='RHOCP_HEX8')
-        ENDIF
-        ALLOCATE(RHOF_HEX8(NUMELS),STAT=STAT)
-        IF(STAT /= 0) THEN
-          CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,
-     .                C1='RHOF_HEX8')
-        ENDIF
-        ALLOCATE(FRAC_HEX8(NUMELS),STAT=STAT)
-        IF(STAT /= 0) THEN
-          CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,
-     .                C1='FRAC_HEX8')
-        ENDIF
-        ALLOCATE(FILL_HEX8(NUMELS),STAT=STAT)
-        IF(STAT /= 0) THEN
-          CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,
-     .                C1='FILL_HEX8')
-        ENDIF
-
-C=======================================================================
-C       1.Step: Initialize arrays to zero
-C=======================================================================
-        RHO_HEX8(1:NUMELS) = ZERO
-        VOLU_HEX8(1:NUMELS) = ZERO
-        RHOCP_HEX8(1:NUMNOD) = ZERO
-        RHOF_HEX8(1:NUMELS) = ZERO
-        FRAC_HEX8(1:NUMELS) = ZERO
-        FILL_HEX8(1:NUMELS) = ZERO
-        
-C=======================================================================
-C       2.Step: Extract RHO from GBUF%RHO for all HEX8 elements
-C=======================================================================
-        DO NG=1,NGROUP
-          ITY = IPARG(5,NG)
-          IF (ITY == 1) THEN
-            NEL = IPARG(2,NG)
-            NFT = IPARG(3,NG)
-            GBUF => ELBUF_TAB(NG)%GBUF
-            IF (ASSOCIATED(GBUF%RHO)) THEN
-              DO I=1,NEL
-                IEL = NFT + I
-                IF (IEL <= NUMELS) THEN
-                  RHO_HEX8(IEL) = GBUF%RHO(I)
-                ENDIF
-              ENDDO
-            ENDIF
-            IF (ASSOCIATED(GBUF%VOL)) THEN
-              DO I=1,NEL
-                IEL = NFT + I
-                IF (IEL <= NUMELS) THEN
-                  VOLU_HEX8(IEL) = GBUF%VOL(I)
-                ENDIF
-              ENDDO
-            ENDIF
-            IF (ASSOCIATED(GBUF%FILL)) THEN
-              DO I=1,NEL
-                IEL = NFT + I
-                IF (IEL <= NUMELS) THEN
-                  FILL_HEX8(IEL) = GBUF%FILL(I)
-                ENDIF
-              ENDDO
-            ENDIF
-
-          ENDIF
-        ENDDO
-
-C=======================================================================
-C       3.Step: Call Q1Np mass calculation routine
-C=======================================================================
-        CALL Q1NP_MASS3(
-     .     RHO_HEX8, MS, MSSA, PARTSAV, X, V,
-     .     FILL_HEX8, IPARG, ELBUF_TAB, KQ1NP_TAB, IQ1NP_TAB, IQ1NP_BULK_TAB,
-     .     NUMELQ1NP_G, NPROPM, NUMMAT, PM,
-     .     NUMELS, NUMNOD, NPART, Q1NP_KTAB_G, SFILL)
-
-C=======================================================================
-C       4.Step: Deallocate temporary arrays
-C=======================================================================
-        IF(ALLOCATED(RHO_HEX8)) DEALLOCATE(RHO_HEX8)
-        IF(ALLOCATED(VOLU_HEX8)) DEALLOCATE(VOLU_HEX8)
-        IF(ALLOCATED(RHOCP_HEX8)) DEALLOCATE(RHOCP_HEX8)
-        IF(ALLOCATED(RHOF_HEX8)) DEALLOCATE(RHOF_HEX8)
-        IF(ALLOCATED(FRAC_HEX8)) DEALLOCATE(FRAC_HEX8)
-        IF(ALLOCATED(FILL_HEX8)) DEALLOCATE(FILL_HEX8)
+        CALL Q1NP_INIT(IPARG, ELBUF_TAB, X, V, MS, MSSA, PARTSAV, PM,
+     .                 NUMNOD, NUMELS, NPART, NPROPM, NUMMAT, NGROUP, NPARG,
+     .                 SFILL, IREST_MSELT)
       ENDIF
-C=======================================================================
-C       5.Step: Deallocate Q1Np replacement flag array from module
-C=======================================================================
-      IF(ALLOCATED(IS_Q1NP_REPLACED_G)) DEALLOCATE(IS_Q1NP_REPLACED_G)
-      
 C-------------------------------------
 C Mass and Inertia by parts
 C-------------------------------------
@@ -3880,3 +3685,4 @@ C----------spring w/ NG=0
 C
       RETURN
       END
+

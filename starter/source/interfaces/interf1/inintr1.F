@@ -35,7 +35,7 @@ Copyright>        commercial version may interest you: https://www.altair.com/ra
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
-      USE INTBUFDEF_MOD    
+      USE INTBUFDEF_MOD   
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -67,7 +67,6 @@ C
        NTY=IPARI(7,N)
        IF (NTY==7.OR.NTY==22)THEN
          IGSTI=IPARI(34,N)
-         !Interface stiffness definition flag
          IF(IGSTI>1)THEN
            CALL I7STSECND(
      1      IPARI(1,N),STIFINT,INTBUF_TAB(N))

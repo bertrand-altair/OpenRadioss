@@ -600,8 +600,8 @@ C-----------------------------------------------
       USE INIMAP2D_MOD
       USE FUNC2D_MOD
       USE Q1NP_RESTART_MOD
-      USE GENQ1NP_MOD
       USE Q1NP_GENERATE_MAIN_MOD
+      USE Q1NP_FIX_FRONT_MOD
       USE GROUPDEF_MOD
       USE GROUP_MOD
       USE OPTIONDEF_MOD
@@ -773,7 +773,6 @@ C-----------------------------------------------
       EXTERNAL NLOCAL
       INTEGER  SET_USRTOS
       EXTERNAL SET_USRTOS
-      EXTERNAL CONSTIT
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
@@ -855,15 +854,6 @@ C-----------------------------------------------
      *        ISOLNOD,ISOLOFF,ISHEOFF,ITRUOFF,IPOUOFF,
      *        IRESOFF,ITRIOFF,IGRNRBY,IQUAOFF
       integer, dimension(:), allocatable :: isolnod0,ishell3nod0
-C
-      INTEGER MAXQ1NPCTRL,
-     .        SQ1NPBEZ_L
-C
-      INTEGER FIRST_ZERO_NODE
-      INTEGER IEL, IEL_HEX8, OFFSET_CTRL, OFFSET_BULK, N_CTRL
-      INTEGER NODE_BULK(4), NODE_CP
-      INTEGER PROC
-      INTEGER NODE_SRC, Q1NP_FRONT_MISSING
 C
       INTEGER(KIND=8) :: KVOISPH8,NUMSPH8,SIXSP8,LIMIT8
       INTEGER :: INTEGER_LIMIT32
@@ -976,12 +966,6 @@ C
       TYPE (MAT_ELEM_) ,INTENT(INOUT) :: MAT_ELEM
       INTEGER LWAMP_L     !< Size of work array in Engine (WA)
       INTEGER LWANMP_L    !< Size of work array in Engine (WA)
-
-C NEW VARIABLES FOR NURBS
-      my_real, allocatable :: NODE_MAT(:,:)
-      my_real, allocatable :: SOLID_ELEMENT_MAT(:,:)
-      my_real, allocatable :: SHELL_ELEMENT_MAT(:,:)
-      INTEGER :: nr_nodes, nr_elements, MAX_USER_ID
 C-----------------------------------------------
       CHARACTER(LEN=4096) :: SCR_FILE_NAME
       CHARACTER(LEN=ncharline) :: RLINE
@@ -1002,7 +986,6 @@ C-----------------------------------------------
 C-----------------------------------------------
 C Model Checker Memory
       DATA IUN/1/
-      my_real STIF_STS
 C======================================================================|
 C   Allocations MA (Entiers)
 C======================================================================|
@@ -2098,29 +2081,7 @@ C
       WRITE(ISTDO,'(A)')TITRE(12)
       CALL HM_READ_NODE(X       ,ITAB    ,ITABM1 ,CMERGE ,UNITAB  ,
      .                  WIGE    ,LSUBMODEL,IS_DYNA)
-      
-      nr_nodes = SIZE(ITAB)
-      allocate(NODE_MAT(nr_nodes, 5))
-       
-      ! Fill NODE_MAT 
-      do i = 1, nr_nodes
-        NODE_MAT(i, 1) = i             ! Local Node ID
-        NODE_MAT(i, 2) = ITAB(i)       ! Global Node ID
-        NODE_MAT(i, 3:5) = X(3 * (i - 1) + 1 : 3 * (i - 1) + 3)
-      end do
-      
-      if (IDEBUG_Q1NP > 0) then
-        print *, ''
-        print *, '=============================================='
-        print *, 'INITIAL NODE VECTOR:'
-        print '(T2, A, T11, A, T20, A, T28, A, T36, A)', 'LocalID', 'GlobalID', 'X-Coord', 'Y-Coord', 'Z-Coord'
-        do i = 1, nr_nodes
-            print '(F8.0, F10.0, F8.2, F8.2, F8.2)', NODE_MAT(i, :)
-        end do
-        print *, '=============================================='
-        print *, ''
-      end if
-      
+
       CALL TRACE_OUT1()
 C--------------------------------------------
 C     PRE-READING SKEW DEFINITIONS
@@ -2421,29 +2382,7 @@ C--------------------------------------------
        CALL HM_READ_SOLID(IXS    ,PM      ,ITAB    ,ITABM1  ,
      .             IPART  ,IPARTS  ,EANI    ,IXS10   ,IXS20   ,IXS16   ,
      .             IGEO   ,LSUBMODEL,IS_DYNA,X     )
-              
-       nr_elements = NUMELS
-       allocate(SOLID_ELEMENT_MAT(nr_elements, 11))
-       
-       ! Fill SOLID_ELEMENT_MAT
-       do i = 1, nr_elements
-          SOLID_ELEMENT_MAT(i, :) = IXS((i - 1) * 11 + 1 : i * 11)
-       end do
-        
-       if (IDEBUG_Q1NP > 0) then
-         print *, ''
-         print *, '=============================================='
-         print *, 'INITIAL SOLID ELEMENT CONNECTIVITY:'
-         print '(A,2X,A,2X,A,2X,A,2X,A,2X,A)',
-     .           'ElemType','<-','Nodes(LocalID)','->','prop_ID',
-     .           'ElementID'
-         do i = 1, nr_elements
-           print '(F8.0, F8.0, F8.0, F8.0, F8.0, F8.0, F8.0, F8.0, F8.0, F8.0, F10.0)',
-     .             SOLID_ELEMENT_MAT(i, :)
-         end do   
-         print *, '=============================================='
-         print *, ''
-       end if
+
       ENDIF
       CALL TRACE_OUT1()
 C--------------------------------------------
@@ -2461,24 +2400,10 @@ C--------------------------------------------
       ITAG=0
 C
       IF(NUMELC/=0)THEN
-        WRITE(ISTDO,'(A)')TITRE(17)
-        CALL HM_READ_SHELL(IXC    ,ITAB   ,ITABM1 ,IPART  ,IPARTC ,
+       WRITE(ISTDO,'(A)')TITRE(17)
+       CALL HM_READ_SHELL(IXC    ,ITAB   ,ITABM1 ,IPART  ,IPARTC ,
      .             THKE   ,IPM     ,IGEO   ,UNITAB ,ITAG   ,SH4ANG, LSUBMODEL)
-        
-        nr_elements = NUMELC
-        allocate(SHELL_ELEMENT_MAT(nr_elements, 7))
-        ! Fill SHELL_ELEMENT_MAT
-        do i = 1, nr_elements
-          SHELL_ELEMENT_MAT(i, :) = IXC((i - 1) * 7 + 1 : i * 7)
-        end do
-        
-        print *, ''
-        print *, 'SHELL ELEMENT CONNECTIVITY:'
-        print '(T1, A, T15, A, T20, A, T39, A, T42, A, T50, A)', 'ElemType' , '<-', 'Nodes (LocalID)', '->', 'prop_ID', 'ElementID'
-        do i = 1, nr_elements
-          print '(F8.0, F8.0, F8.0, F8.0, F8.0, F8.0, F10.0)', SHELL_ELEMENT_MAT(i, :)
-        end do     
-       ENDIF
+      ENDIF
 C
 C          WARNING, SHELL ELEMENTS ARE PERMUTED
 C          TO GENERATE OPTIMIZED GROUPS
@@ -2600,12 +2525,6 @@ c
         CALL MY_ALLOC(KNOTLOCEL,0,"KNOTLOCEL")
         CALL MY_ALLOC(KNOTLOCPC,0,"KNOTLOCPC")
       ENDIF
-C--------------------------------------------
-C     Q1NP ELEMENT ALLOCATION (will be generated after surfaces are read)
-C--------------------------------------------
-      CALL RESET_Q1NP_COUNTS()
-      MAXQ1NPCTRL   = 0
-      SQ1NPBEZ_L    = 0
 C--------------------------------------------
 C     PRE-READING GRNOD/NODENS
 C--------------------------------------------
@@ -5191,32 +5110,19 @@ C---------------------------
      1    DSDOF,IXS , IXQ,  IXC , IXT,
      2    IXP  ,IXR , IXTG, KXX,
      3    IXX  ,GEO )
-      
-C     Set DOFs for new control point nodes after DSDIM0
-C     DSDIM0 only processes nodes in standard element arrays (IXS, IXQ, etc.)
-C     but Q1NP control points are stored separately, so we need to set them manually
-      IF (ALLOCATED(DSDOF) .AND. SIZE(DSDOF) >= NUMNOD) THEN
-C       Find the boundary between original nodes and new control point nodes
-C       by looking for the transition from non-zero to zero DOFs
-        FIRST_ZERO_NODE = 0
-        DO I = 1, SIZE(DSDOF)
-          IF (DSDOF(I) == 0) THEN
-            FIRST_ZERO_NODE = I
-            EXIT
-          ENDIF
-        ENDDO
-        
-C       If we found a zero DOF node and there are nodes beyond it, set DOFs for them
-C       This handles the case where new control point nodes were added
-        IF (FIRST_ZERO_NODE > 0 .AND. FIRST_ZERO_NODE <= NUMNOD) THEN
-          DO I = FIRST_ZERO_NODE, NUMNOD
-            IF (I <= SIZE(DSDOF)) THEN
-              DSDOF(I) = 3  ! 3 DOFs for solid element control points
-            ENDIF
+
+C     Set DOFs for the Q1NP control point nodes appended after DSDIM0.
+C     DSDIM0 only processes nodes in standard element arrays (IXS, IXQ, ...),
+C     but Q1NP control points are stored separately and appended at the end of
+C     the node numbering, so they are left at zero. Nothing to do for non-Q1NP models.
+      IF (NUMELQ1NP_G > 0 .AND. NUMNOD_CP_ADDED > 0) THEN
+        IF (ALLOCATED(DSDOF) .AND. SIZE(DSDOF) >= NUMNOD) THEN
+          DO I = NUMNOD_OLD + 1, NUMNOD
+            DSDOF(I) = 3  ! 3 DOFs for solid element control points
           ENDDO
         ENDIF
       ENDIF
-      
+
 C---------------------------
 C DOMAIN DECOMPOSITION ON COMPLETE MODEL
 C CEP array giving the associated processor for each element.
@@ -5879,7 +5785,6 @@ C After IDDLEVEL Finish Indexes - Fill PERMUTATION%SOLID(NUMELS+1,PERMUTATION%SO
 C
 C---- QUADS
 C
-C     NUMELQ is the number of quad elements.
       IF(NUMELQ/=0) THEN
           K1 = 9*NUMELQ
           K2 = 10*NUMELQ
@@ -7337,6 +7242,12 @@ C
      .             VIGE     ,IGRBRIC   ,MULTI_FVM,ALE_CONNECTIVITY%NALE        ,IGEO   ,
      .             INTERFACES,S_NOD2ELS,S_NOD2ELTG,FLAG_ELEM_INTER25           ,LIST_NIN25)
 C
+cc     DEALLOCATE(XFILTR)
+cc     DEALLOCATE(STFAC)
+cc     DEALLOCATE(FRIC_P)
+C      DEALLOCATE(FRIGAP)
+cc     DEALLOCATE(I2RUPT)
+cc     DEALLOCATE(AREASL)
 C----
 c      CALL ANCNTG(IDS, I, J)
        IDS =  60
@@ -8076,24 +7987,7 @@ C
 C-------------------------------------------------------
 C
       IF(IDDLEVEL == 0) THEN
-C       MSSA(NUMELS): filled when IREST_MSELT/=0 (solid mass restart path).
-C       Q1NP_MASS3 writes MSSA(iel_hex8), iel_hex8 in 1..NUMELS, when NUMELQ1NP_G>0.
-C        IF(IREST_MSELT/=0 .OR. NUMELQ1NP_G > 0)THEN
-C          ALLOCATE(MSSA(NUMELS)     ,STAT=stat)
-C          IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
-C     .                             MSGTYPE=MSGERROR,
-C     .                         C1='MSSA')
-C        ELSE
-C          ALLOCATE(MSSA(0)          ,STAT=stat)
-C        ENDIF
-C        IF(IREST_MSELT/=0)THEN
-C          ALLOCATE(MSRT(NUMELR)     ,STAT=stat)
-C          IF(STAT /= 0) CALL ANCMSG(MSGID=268,ANMODE=ANINFO,
-C     .                             MSGTYPE=MSGERROR,
-C     .                         C1='MSRT')
-          
-          ! REVIEW HERE IF Q1NP IS NOT WORKING
-          IF(IREST_MSELT/=0)THEN
+        IF(IREST_MSELT/=0)THEN
           CALL MY_ALLOC(MSSA,NUMELS,"MSSA")
           CALL MY_ALLOC(MSRT,NUMELR,"MSRT")
         ELSE
@@ -8515,7 +8409,7 @@ C
       IF(NUMEL   > 0) DTELEM = ZERO
 C
       CALL STARTIME(14,1)
-      STIF_STS = 1E30 ! initial value for stiffness status TEMP HARDCODED, TODO
+        
       CALL INITIA(IPARG      , ELBUF          , MS               , IN                 , V        ,
      &            X          , IXS            , IXQ              , IXC                , IXT      ,
      &            IXP        , IXR            , DETONATORS       , GEO                , PM       ,
@@ -8577,7 +8471,7 @@ C
      &            NDAMP_FREQ_RANGE,DAMPR      , IBEAM_VECTOR     , RBEAM_VECTOR       ,D         ,
      &            LSIGI      ,LSIGSP          , SRNOISE2         ,NPRW               ,LPRW       ,
      &            RWSTIF_PEN ,SLN_PEN         ,ROOTLEN           ,ROOTNAM          ,NGUIDED_CABLE,
-     &            TOTMAS1, STIF_STS)
+     &            TOTMAS1   )
 
 
       IF(NINTER>0.AND.NUMELIG3D>0) THEN
@@ -9088,7 +8982,7 @@ C     Interf.Type 7 and 21: Assignment of rigidites on the second side
 C----------------------------------
       ERR_MSG='INTERFACES STIFFNESS'
       ERR_CATEGORY='INTERFACES'
-      CALL TRACE_IN1(ERR_MSG,LEN_TRIM(ERR_MSG))     
+      CALL TRACE_IN1(ERR_MSG,LEN_TRIM(ERR_MSG))
       IF(NINTER>0)THEN
         IF (I7STIFS/=0) THEN
           CALL STIFINT_ICONTROL(
@@ -10552,7 +10446,7 @@ C--------FRICTION OROTHTROPIC DIRECTIONS dealloc now after qa print -----
       ENDIF
 C
 C----------------------------------------------
-      CALL TRACE_OUT1()   
+      CALL TRACE_OUT1()
       ERR_MSG='RESTART FILE(S) WRITING'
       ERR_CATEGORY='RESTART FILE(S) WRITING'
       CALL TRACE_IN1(ERR_MSG,LEN_TRIM(ERR_MSG))
@@ -10713,51 +10607,15 @@ c         start CPU timer for ddsplit
           CALL STARTIME(3,1)
 !       compute the size of TAG_SCRATCH and check if /INTER/24 or /25 is used
           CALL GET_SIZE_INTER24(I24MAXNSNE2,NINTER,NPARI,IPARI,FLAG_24_25)
+!          
 !       Q1NP promoted control points are appended after DOMDEC and therefore do
 !       not appear in the standard element connectivities used to build IFRONT.
 !       Before computing NUMNOD_L for restart splitting, propagate the parent
 !       solid/front ownership to those promoted nodes.
           IF (NUMELQ1NP_G > 0 .AND. NUMNOD_CP_ADDED > 0) THEN
-            DO IEL = 1, NUMELQ1NP_G
-              N_CTRL = KQ1NP_TAB(3,IEL)
-              OFFSET_CTRL = KQ1NP_TAB(4,IEL)
-              OFFSET_BULK = KQ1NP_TAB(14,IEL)
-              IEL_HEX8 = KQ1NP_TAB(10,IEL)
-              DO I = 1, N_CTRL
-                NODE_CP = IQ1NP_TAB(OFFSET_CTRL + I - 1)
-                IF (NODE_CP <= NUMNOD_OLD .OR. NODE_CP > NUMNOD) CYCLE
-                IF (IEL_HEX8 > 0 .AND. IEL_HEX8 <= NUMELS) THEN
-                  DO J = 1, 8
-                    NODE_SRC = IXS(NIXS*(IEL_HEX8-1) + J + 1)
-                    IF (NODE_SRC <= 0) CYCLE
-                    DO PROC = 1, NSPMD
-                      IF (NLOCAL(NODE_SRC,PROC) == 1) THEN
-                        CALL IFRONTPLUS(NODE_CP,PROC)
-                      ENDIF
-                    ENDDO
-                  ENDDO
-                ELSEIF (OFFSET_BULK > 0) THEN
-                  DO J = 1, 4
-                    NODE_SRC = IQ1NP_BULK_TAB(OFFSET_BULK + J - 1)
-                    IF (NODE_SRC <= 0) CYCLE
-                    DO PROC = 1, NSPMD
-                      IF (NLOCAL(NODE_SRC,PROC) == 1) THEN
-                        CALL IFRONTPLUS(NODE_CP,PROC)
-                      ENDIF
-                    ENDDO
-                  ENDDO
-                ENDIF
-              ENDDO
-            ENDDO
-            Q1NP_FRONT_MISSING = 0
-            DO NODE_CP = NUMNOD_OLD + 1, NUMNOD
-              IF (IFRONT%IENTRY(NODE_CP) == -1) THEN
-                Q1NP_FRONT_MISSING = Q1NP_FRONT_MISSING + 1
-              ENDIF
-            ENDDO
-            WRITE(IOUT,'(A,3I10)') ' Q1NP FRONT FIX: promoted, total, missing =',
-     .        NUMNOD_CP_ADDED, NUMNOD, Q1NP_FRONT_MISSING
+            CALL Q1NP_FIX_FRONT(IXS, NIXS, NUMELS, NUMNOD, NSPMD, IOUT)
           ENDIF
+
 !       compute the local number of element
           CALL GET_SIZE_NUMNOD_LOCAL(NUMNOD,NUMNOD_L)
 
@@ -10843,7 +10701,6 @@ C----- create TAG_SKINS6 for /H3D/STRESS/TENS/OUTER
           IF(.NOT. ALLOCATED(CEL_PXFEM)) ALLOCATE(CEL_PXFEM(0))
           IF(.NOT. ALLOCATED(MSZ2)) ALLOCATE(MSZ2(0))
           IF(.NOT. ALLOCATED(XFEM_PHANTOM)) ALLOCATE(XFEM_PHANTOM(0))
-          CALL SUBSET_INI(SUBSETS)
 !$OMP PARALLEL PRIVATE(ITASK,P,pMEMFLOW,INDX_NM,NINDX_NM,TAG_NM)
 !$OMP+ PRIVATE(NINDX_SCRT,INDX_SCRT,TAG_SCRATCH)
           NINDX_NM = 0
@@ -10878,7 +10735,7 @@ c
           IF(P > NSPMD) GOTO 221
           !Sending clean addresses for unallocated arrays in case P=0
           NULLIFY(pMEMFLOW) ; IF(NSPMD  > 0)  pMEMFLOW => MEMFLOW(1,P)    !MEMFLOW(2,1:NSPMD)   ; NSPMD =0 => MEMFLOW(1,0) is undefined
-          
+
 
           CALL DDSPLIT(
      1         P            ,CEP         ,CEL            ,IGEO        ,MAT_ELEM   ,
@@ -11330,154 +11187,17 @@ C
       IF(ALLOCATED(FAIL_TAG)) DEALLOCATE(FAIL_TAG)
       call report_alloc()
 
-      IF(ALLOCATED(DPL0CLD)) DEALLOCATE(DPL0CLD)
-      IF(ALLOCATED(VEL0CLD)) DEALLOCATE(VEL0CLD)
-      IF(ALLOCATED(EBCS_TAG_CELL_SPMD)) DEALLOCATE(EBCS_TAG_CELL_SPMD)
-
 C----------------------------------------------
-C     Q1NP debug: print arrays and element info after generation
-C     Node coordinates (full X and MS) can be very large -> only when IDEBUG_Q1NP>=1
-C----------------------------------------------
-      IF (IDEBUG_Q1NP >= 1 .AND. NUMELQ1NP_G > 0) THEN
-         PRINT *, ''
-         PRINT *, '=============================================='
-         PRINT *, 'Nodes and Nodal Masses after Q1NP generation:'
-         PRINT *, '=============================================='
-         PRINT *, 'NUMNOD =', NUMNOD, '  NUMELQ1NP_G =', NUMELQ1NP_G
-
-         PRINT *, '--- Node coordinates and mass ---'
-         DO I = 1, NUMNOD
-            PRINT '(A,I5,A,3F8.2,A,1PE12.4)', ' Node', I, ': X =',
-     .               X(3*(I-1)+1), X(3*(I-1)+2), X(3*(I-1)+3),
-     .             '  MS =', MS(I)
-         ENDDO
-         PRINT *, ' '
-
-         PRINT *, '--- Q1NP element connectivity ---'
-         DO IEL = 1, NUMELQ1NP_G 
-            IEL_HEX8 = KQ1NP_TAB(10, IEL)
-            IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS) CYCLE 
-            N_CTRL      = KQ1NP_TAB(3, IEL)
-            OFFSET_CTRL = KQ1NP_TAB(4, IEL)
-            OFFSET_BULK = KQ1NP_TAB(14, IEL) 
-            PRINT *, '   Bulk nodes (IQ1NP_BULK_TAB):'
-            DO I = 1, 4
-               NODE_BULK(I) = IQ1NP_BULK_TAB(OFFSET_BULK + I - 1)
-               PRINT *, '    BULK', I, ' node =', NODE_BULK(I)
-            ENDDO 
-
-            IF (IDEBUG_Q1NP >= 2 .AND. N_CTRL > 0) THEN
-               PRINT *, '   Control point nodes (IQ1NP_TAB):'
-               DO I = 1, N_CTRL
-                  NODE_CP = IQ1NP_TAB(OFFSET_CTRL + I - 1)
-                  PRINT *, '    CP', I, ' node =', NODE_CP
-               ENDDO
-            ENDIF
-
-C           Print complete connectivity matrix for element
-            PRINT '(A,I4,A,13(I5))', 
-     .           '   Element', IEL, ' connectivity:',
-     .           (NODE_BULK(I), I=1,4),
-     .           (IQ1NP_TAB(OFFSET_CTRL + I - 1), I=1, N_CTRL)
-            PRINT '(A,I4)', 
-     .           '     Total nodes:', 4 + N_CTRL
-            PRINT *, '=============================================='
-            PRINT *, ' '
-         ENDDO
-      ENDIF
-C----------------------------------------------
-C     Q1NP debug: deallocate arrays
+C     Q1NP: deallocate arrays
 C----------------------------------------------
 
-      IF (ALLOCATED(Q1NP_CPTAB)) THEN
-         DEALLOCATE(Q1NP_CPTAB, STAT=stat)
-      ENDIF
-      IF (ALLOCATED(Q1NP_WTAB)) THEN
-         DEALLOCATE(Q1NP_WTAB, STAT=stat)
-      ENDIF
-      IF (ALLOCATED(Q1NP_KTAB)) THEN
-         DEALLOCATE(Q1NP_KTAB, STAT=stat)
-      ENDIF
+      IF (ALLOCATED(Q1NP_CPTAB)) CALL MY_DEALLOC(Q1NP_CPTAB)
+      IF (ALLOCATED(Q1NP_WTAB)) CALL MY_DEALLOC(Q1NP_WTAB)
+      IF (ALLOCATED(Q1NP_KTAB)) CALL MY_DEALLOC(Q1NP_KTAB)
 
-      IF(ALLOCATED(IQ1NP_TAB)) DEALLOCATE(IQ1NP_TAB)
-      IF(ALLOCATED(IQ1NP_BULK_TAB)) DEALLOCATE(IQ1NP_BULK_TAB)
-      IF(ALLOCATED(KQ1NP_TAB)) DEALLOCATE(KQ1NP_TAB)
-C----------------------------------------------
-C     Q1NP debug: print arrays and element info before deallocation
-      IF (IDEBUG_Q1NP > 0 .AND. NUMELQ1NP_G > 0) THEN
-        print *, ''
-        print *, '=============================================='
-        print *, 'New Nodes and Elements after Q1NP generation:'
-        print *, '=============================================='
-        PRINT *, 'NUMNOD =', NUMNOD, '  NUMELQ1NP_G =', NUMELQ1NP_G
-
-C       Node coordinates (full X and MS) can be very large -> only when IDEBUG_Q1NP>=2
-        IF (IDEBUG_Q1NP >= 2) THEN
-          PRINT *, '--- Node coordinates and mass (all nodes) ---'
-          DO I = 1, NUMNOD
-            PRINT '(A,I5,A,3F8.2,A,1PE12.4)', ' Node', I, ': X =',
-     .               X(3*(I-1)+1), X(3*(I-1)+2), X(3*(I-1)+3),
-     .             '  MS =', MS(I)
-          ENDDO
-          print *, ' '
-        ENDIF
-        
-        IF (ALLOCATED(KQ1NP_TAB) .AND.
-     .      ALLOCATED(IQ1NP_TAB) .AND.
-     .      ALLOCATED(IQ1NP_BULK_TAB)) THEN
-          PRINT *, '--- Q1NP element connectivity ---'
-          DO IEL = 1, NUMELQ1NP_G
-
-            IEL_HEX8 = KQ1NP_TAB(10, IEL)
-            IF (IEL_HEX8 <= 0 .OR. IEL_HEX8 > NUMELS) CYCLE
-
-            N_CTRL      = KQ1NP_TAB(3, IEL)
-            OFFSET_CTRL = KQ1NP_TAB(4, IEL)
-            OFFSET_BULK = KQ1NP_TAB(14, IEL)
-
-!            PRINT *, ' Q1NP element', IEL,
-!    .        ': IEL_HEX8 =', IEL_HEX8
-
-            PRINT *, '   Bulk nodes (IQ1NP_BULK_TAB):'
-            DO I = 1, 4
-              NODE_BULK(I) = IQ1NP_BULK_TAB(OFFSET_BULK + I - 1)
-              PRINT *, '    BULK', I, ' node =', NODE_BULK(I)
-            ENDDO
-
-            IF (IDEBUG_Q1NP >= 2 .AND. N_CTRL > 0) THEN
-              PRINT *, '   Control point nodes (IQ1NP_TAB):'
-              DO I = 1, N_CTRL
-                NODE_CP = IQ1NP_TAB(OFFSET_CTRL + I - 1)
-                PRINT *, '    CP', I, ' node =', NODE_CP
-              ENDDO
-            ENDIF
-            
-C           Print complete connectivity matrix for element
-            PRINT '(A,I4,A,13(I5))', 
-     .        '   Element', IEL, ' connectivity:',
-     .        (NODE_BULK(I), I=1,4),
-     .        (IQ1NP_TAB(OFFSET_CTRL + I - 1), I=1, N_CTRL)
-            PRINT '(A,I4)', 
-     .        '     Total nodes:', 4 + N_CTRL
-            print *, '=============================================='
-            print *, ' '
-          ENDDO
-        ENDIF
-      ENDIF
-
-      IF (ALLOCATED(Q1NP_CPTAB)) THEN
-         DEALLOCATE(Q1NP_CPTAB, STAT=stat)
-      ENDIF
-      IF (ALLOCATED(Q1NP_WTAB)) THEN
-         DEALLOCATE(Q1NP_WTAB, STAT=stat)
-      ENDIF
-      IF (ALLOCATED(Q1NP_KTAB)) THEN
-         DEALLOCATE(Q1NP_KTAB, STAT=stat)
-      ENDIF
-
-      IF(ALLOCATED(IQ1NP_TAB)) DEALLOCATE(IQ1NP_TAB)
-      IF(ALLOCATED(IQ1NP_BULK_TAB)) DEALLOCATE(IQ1NP_BULK_TAB)
-      IF(ALLOCATED(KQ1NP_TAB)) DEALLOCATE(KQ1NP_TAB)
+      IF (ALLOCATED(IQ1NP_TAB)) CALL MY_DEALLOC(IQ1NP_TAB)
+      IF (ALLOCATED(IQ1NP_BULK_TAB)) CALL MY_DEALLOC(IQ1NP_BULK_TAB)
+      IF (ALLOCATED(KQ1NP_TAB)) CALL MY_DEALLOC(KQ1NP_TAB)
 C----------------------------------------------
 
       RETURN

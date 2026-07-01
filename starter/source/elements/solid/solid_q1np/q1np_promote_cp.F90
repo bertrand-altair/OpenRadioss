@@ -29,6 +29,11 @@
      &      numelq1np_in, numnod_cp_added, &
      &      sx, sv, sd, sms, sin, svr, sdr, iout)
 !-----------------------------------------------------------------------
+!     Modules
+!-----------------------------------------------------------------------
+          use my_alloc_mod,   only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
+!-----------------------------------------------------------------------
 !     Arguments
 !-----------------------------------------------------------------------
           implicit none
@@ -114,12 +119,7 @@
             numnod_cp_added = 0
             return
           end if
-          allocate(cp_to_node_map(max_cp_id), stat=i)
-          if (i /= 0) then
-            call ancmsg(MSGID=268, ANMODE=ANINFO, MSGTYPE=MSGERROR, &
-     &        C1='CP_TO_NODE_MAP')
-            return
-          end if
+          call my_alloc(cp_to_node_map, max_cp_id, "CP_TO_NODE_MAP")
           cp_to_node_map = 0
 !=======================================================================
 !   Step 2: Assign new node IDs to each control point
@@ -184,7 +184,7 @@
             write(iout,'(A,I10)') &
      &        'Q1NP DEBUG: New NUMNOD = ', numnod_out
           end if
-          if (allocated(cp_to_node_map)) deallocate(cp_to_node_map)
+          call my_dealloc(cp_to_node_map)
           return
         end subroutine q1np_promote_cp_to_nodes
 !

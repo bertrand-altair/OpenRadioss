@@ -102,6 +102,7 @@ C-----------------------------------------------
       USE INTERFACES_MOD
       USE ARRAY_MOD 
       USE INT18_LAW151_NSV_SHIFT_MOD , ONLY : INT18_LAW151_NSV_SHIFT      
+      USE ISTS_MAINF_MOD, ONLY : ISTS_MAINF
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -114,7 +115,9 @@ C   C o m m o n   B l o c k s
 C-----------------------------------------------
 #include      "com01_c.inc"
 #include      "com04_c.inc"
+#include      "com06_c.inc"
 #include      "com08_c.inc"
+#include      "scr11_c.inc"
 #include      "task_c.inc"
 #include      "param_c.inc"
 #include      "warn_c.inc"
@@ -123,6 +126,8 @@ C-----------------------------------------------
 #include      "impl1_c.inc"
 #include      "timeri_c.inc"
 #include      "tabsiz_c.inc"
+#include      "scr14_c.inc"
+#include      "scr16_c.inc"
 C-----------------------------------------------
 C   D u m m y   A r g u m e n t s
 C-----------------------------------------------     
@@ -201,7 +206,7 @@ c      INTEGER, ALLOCATABLE, DIMENSION(:) :: ISENSINT
       SAVE XE,VE,MSE
       INTEGER :: NTY
 C-----------------------------------------------
-      BID = ZERO    
+      BID = ZERO
 C-----------------------------------------------
 C
 C Interface Statistics
@@ -311,7 +316,14 @@ C
      4                      TEMP          ,NPC            ,TF             ,
      5                      INTERFACES%INTBUF_TAB(N)      ,IXS            ,
      6                      H3D_DATA      ,INTERFACES%INTBUF_FRIC_TAB,IGRSURF,
-     7                      PTR_MS        ,DT2T           ,NELTST         ,ITYPTST)
+     7                      PTR_MS        ,DT2T           ,NELTST         ,ITYPTST        ,
+     8                      IPARIT        ,LSKYI          ,NFSKYI         ,FSKYI          ,
+     9                      ISKY          ,NISKY          ,SNPC           ,STF            ,
+     A                      NCYCLE        ,NSURF          ,NINTER         ,NINTERFRIC     ,
+     B                      NUMNOD        ,NUMELS         ,ECONTV         ,ECONT          ,
+     C                      DEBUG         ,MX_DEBUG       ,IMON           ,INCONV         ,
+     D                      ANIM_V        ,MX_ANI         ,OUTP_V         ,
+     E                      MX_OUTP)
 C
             ELSE  
 C                      
@@ -364,7 +376,6 @@ C
      L  S_LOADPINTER,INTEREFRIC   ,XCELL_REMOTE(N)%SIZE_MY_REAL_ARRAY_1D,XCELL_REMOTE(N)%MY_REAL_ARRAY_1D)
            IAD=IAD+NUM_IMP(N)
           END IF
-C          
           IF(NTY == 17 .AND. IPARI(33,N) == 0)THEN            ! ILAGM == 0
             IGN   =IPARI(36,N)
             IGE   =IPARI(34,N)

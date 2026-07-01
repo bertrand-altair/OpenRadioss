@@ -21,8 +21,10 @@
      &      rho, ms, mssa, partsav, x, v, &
      &      fill, iparg, elbuf_tab, kq1np_tab, iq1np_tab, iq1np_bulk_tab, &
      &      numelq1np_in, npropm, nummat, pm, &
-     &      numels, numnod, npart, q1np_ktab_g,sfill)
+     &      numels, numnod, npart, q1np_ktab_g,sfill,irest_mselt)
 !-----------------------------------------------------------------------
+          use my_alloc_mod,   only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
           implicit none
 !-----------------------------------------------------------------------
 !     Dummy arguments
@@ -35,6 +37,7 @@
           integer, intent(in) :: iq1np_tab(siq1np_g)
           integer, intent(in) :: iq1np_bulk_tab(sq1npbulk_g)
           integer, intent(in) :: sfill
+          integer, intent(in) :: irest_mselt
           real(kind=WP), intent(in)    :: rho(:) 
           real(kind=WP), intent(in)    :: pm(npropm, nummat)
           real(kind=WP), intent(in)    :: q1np_ktab_g(:)
@@ -111,10 +114,10 @@
               nknot_u = nx + 2*p + 1
               nknot_v = ny + 2*q_deg + 1
 
-              if (allocated(u_knot)) deallocate(u_knot)
-              if (allocated(v_knot)) deallocate(v_knot)
-              allocate(u_knot(nknot_u))
-              allocate(v_knot(nknot_v))
+              call my_dealloc(u_knot)
+              call my_dealloc(v_knot)
+              call my_alloc(u_knot, nknot_u, "U_KNOT")
+              call my_alloc(v_knot, nknot_v, "V_KNOT")
 
               ! Copy knots from the global concatenated knot-vector pool.
               u_knot(:) = q1np_ktab_g(q1np_ktab_off_g(igrp) : q1np_ktab_off_g(igrp)+nknot_u-1)
@@ -127,10 +130,10 @@
               nknot_u = nx + 2*p + 1
               nknot_v = ny + 2*q_deg + 1
 
-              if (allocated(u_knot)) deallocate(u_knot)
-              if (allocated(v_knot)) deallocate(v_knot)
-              allocate(u_knot(nknot_u))
-              allocate(v_knot(nknot_v))
+              call my_dealloc(u_knot)
+              call my_dealloc(v_knot)
+              call my_alloc(u_knot, nknot_u, "U_KNOT")
+              call my_alloc(v_knot, nknot_v, "V_KNOT")
 
               call q1np_get_knot_vectors(nx, ny, p, q_deg, q1np_ktab_g, u_knot, v_knot)
             end if
@@ -160,10 +163,10 @@
 !-----------------------------------------------------------------------
 !     Build node list: NCTRL control points, then 4 bulk nodes
 !-----------------------------------------------------------------------
-            allocate(node_ids(n_total))
-            allocate(nval(n_total))
-            allocate(dn_local(n_total, 3))
-            allocate(mass_node(n_total))
+            call my_alloc(node_ids, n_total, "NODE_IDS")
+            call my_alloc(nval, n_total, "NVAL")
+            call my_alloc(dn_local, n_total, 3, "DN_LOCAL")
+            call my_alloc(mass_node, n_total, "MASS_NODE")
 !
             do i = 1, nctrl
               node_ids(i) = iq1np_tab(offset_ctrl + i - 1)
@@ -187,8 +190,12 @@
               write(*,'(A,I8)') ' Q1NP ERROR: missing ELBUF group for Q1NP element ', iel
               call ancmsg(msgid=364, msgtype=msgerror, anmode=aninfo, &
      &          c1='Q1NP_MASS3 cannot map element to ELBUF group')
-              deallocate(node_ids, nval, dn_local, mass_node)
-              deallocate(u_knot, v_knot)
+              call my_dealloc(node_ids)
+              call my_dealloc(nval)
+              call my_dealloc(dn_local)
+              call my_dealloc(mass_node)
+              call my_dealloc(u_knot)
+              call my_dealloc(v_knot)
               return
             end if
 !-----------------------------------------------------------------------
@@ -213,8 +220,12 @@
      &                  ng, iu, iv, it
                     call ancmsg(msgid=364, msgtype=msgerror, anmode=aninfo, &
      &                c1='Q1NP_MASS3 missing LBUF volume pointer')
-                    deallocate(node_ids, nval, dn_local, mass_node)
-                    deallocate(u_knot, v_knot)
+                    call my_dealloc(node_ids)
+                    call my_dealloc(nval)
+                    call my_dealloc(dn_local)
+                    call my_dealloc(mass_node)
+                    call my_dealloc(u_knot)
+                    call my_dealloc(v_knot)
                     return
                   end if
                   if (iel_local <= 0 .or. iel_local > size(elbuf_tab(ng)%bufly(1)%lbuf(iu,iv,it)%vol)) then
@@ -222,8 +233,12 @@
      &                  iel_local, ng
                     call ancmsg(msgid=364, msgtype=msgerror, anmode=aninfo, &
      &                c1='Q1NP_MASS3 invalid LBUF volume index')
-                    deallocate(node_ids, nval, dn_local, mass_node)
-                    deallocate(u_knot, v_knot)
+                    call my_dealloc(node_ids)
+                    call my_dealloc(nval)
+                    call my_dealloc(dn_local)
+                    call my_dealloc(mass_node)
+                    call my_dealloc(u_knot)
+                    call my_dealloc(v_knot)
                     return
                   end if
                   vol_gp = elbuf_tab(ng)%bufly(1)%lbuf(iu,iv,it)%vol(iel_local)
@@ -254,8 +269,10 @@
             do k = 1, n_total
               mass_total_el = mass_total_el + mass_node(k)
             end do
-            if (iel_hex8 > 0 .and. iel_hex8 <= numels) then
-              mssa(iel_hex8) = mass_total_el
+            if (irest_mselt /= 0) then
+              if (iel_hex8 > 0 .and. iel_hex8 <= numels) then
+                mssa(iel_hex8) = mass_total_el
+              end if
             end if
             partsav(1,ip) = partsav(1,ip) + mass_total_el
 !
@@ -304,10 +321,14 @@
               end if
             end do
 !
-            deallocate(node_ids, nval, dn_local, mass_node)
+            call my_dealloc(node_ids)
+            call my_dealloc(nval)
+            call my_dealloc(dn_local)
+            call my_dealloc(mass_node)
           end do
 !
-          deallocate(u_knot, v_knot)
+          call my_dealloc(u_knot)
+          call my_dealloc(v_knot)
           return
         end subroutine q1np_mass3
 !

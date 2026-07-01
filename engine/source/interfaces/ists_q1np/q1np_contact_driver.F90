@@ -1,15 +1,15 @@
 !||====================================================================
-!||    q1np_contact_driver               ../engine/source/interfaces/int26/q1np_contact_driver.F90
+!||    q1np_contact_driver               ../engine/source/interfaces/ists_q1np/q1np_contact_driver.F90
 !||--- called by ------------------------------------------------------
 !||    i7mainf                           ../engine/source/interfaces/int07/i7mainf.F
 !||--- calls      -----------------------------------------------------
-!||    q1np_contact_broad_phase          ../engine/source/interfaces/int26/q1np_contact_algorithms.F90
-!||    q1np_contact_narrow_phase         ../engine/source/interfaces/int26/q1np_contact_algorithms.F90
-!||    q1np_contact_force_assembly       ../engine/source/interfaces/int26/q1np_contact_algorithms.F90
+!||    q1np_contact_broad_phase          ../engine/source/interfaces/ists_q1np/q1np_contact_algorithms.F90
+!||    q1np_contact_narrow_phase         ../engine/source/interfaces/ists_q1np/q1np_contact_algorithms.F90
+!||    q1np_contact_force_assembly       ../engine/source/interfaces/ists_q1np/q1np_contact_algorithms.F90
 !||--- uses       -----------------------------------------------------
 !||    q1np_restart_mod                  ../common_source/modules/q1np_restart_mod.F90
 !||    restmod                           ../engine/share/modules/restart_mod.F
-!||    q1np_contact_algorithms_mod       ../engine/source/interfaces/int26/q1np_contact_algorithms.F90
+!||    q1np_contact_algorithms_mod       ../engine/source/interfaces/ists_q1np/q1np_contact_algorithms.F90
 !||====================================================================
       MODULE Q1NP_CONTACT_DRIVER_MOD
         USE PRECISION_MOD, ONLY : WP

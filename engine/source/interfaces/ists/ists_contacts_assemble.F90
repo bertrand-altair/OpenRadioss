@@ -12,7 +12,7 @@
       SUBROUTINE STS_CONTACTS_ASSEMBLE(CONT_ELEMENT, COUNT, OPTION, STS_INTERFACE_ID, NCYCLE_IN, &
      & CAND_MST_SEG_ID, CAND_SEC_SEG_ID, CAND_SEC_GP_MASK, &
      & load_arr, node_id_load, L_out, IMPACT_glob, STIF, &
-     & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, QFRICT, GAP, V, MS, &
+     & MAX_STS_SIZE_ACTUAL, FRICC, XMU, IFPEN, GAP, V, MS, &
      & VISC, IVIS2, VISCFFRIC, DT2T, NELTST, ITYPTST, &
      & ECONTT_TOT, ECONVT_TOT, FN_TOT, FT_TOT)
 !-----------------------------------------------
@@ -22,6 +22,8 @@
       use sts_gp_state_mod
       use ists_sts_pair_activity_mod, only : &
      &  STS_PAIR_ACTIVITY_SHOULD_SKIP, STS_PAIR_ACTIVITY_UPDATE
+      use my_alloc_mod, only : my_alloc
+      use my_dealloc_mod, only : my_dealloc
       implicit none
 !-----------------------------------------------
 !   G l o b a l   P a r a m e t e r s
@@ -43,7 +45,6 @@
       my_real FRICC(MVSIZ)
       my_real XMU(MVSIZ)
       INTEGER IFPEN(MAX_STS_SIZE_ACTUAL)     
-      my_real QFRICT
       my_real GAP  ! Gap value from user input
       my_real V(3,*), MS(*), VISC, VISCFFRIC(MVSIZ), DT2T
       INTEGER IVIS2, NELTST, ITYPTST
@@ -70,8 +71,7 @@
       REAL*8 min_pene_gauss, min_pene_lobatto
       REAL*8 econt_pair, econtv_pair
       REAL*8 econt_probe, econtv_probe
-      my_real EFRICT_LOC
-      my_real QFRICT_PROBE, DT2T_PROBE
+      my_real DT2T_PROBE
       INTEGER node_ids(8)  ! Node IDs for velocity interpolation
       REAL*8 gap_abs, lobatto_margin
       REAL*8, ALLOCATABLE, SAVE :: lobatto_gp_weight(:,:)
@@ -101,8 +101,8 @@
 
       IF (.NOT. ALLOCATED(lobatto_gp_weight) .OR. &
      &    SIZE(lobatto_gp_weight, 2) < COUNT) THEN
-        IF (ALLOCATED(lobatto_gp_weight)) DEALLOCATE(lobatto_gp_weight)
-        ALLOCATE(lobatto_gp_weight(4, COUNT))
+        IF (ALLOCATED(lobatto_gp_weight)) CALL MY_DEALLOC(lobatto_gp_weight)
+        CALL MY_ALLOC(lobatto_gp_weight, 4, COUNT, "LOBATTO_GP_WEIGHT")
       ENDIF
       lobatto_gp_weight(1:4, 1:COUNT) = 1.0D0
       IF (OPTION == 1 .OR. OPTION == 2) THEN
@@ -147,12 +147,11 @@
           DT2T_PROBE = DT2T
           NELTST_PROBE = NELTST
           ITYPTST_PROBE = ITYPTST
-          QFRICT_PROBE = 0.d0
 
           CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF(I), p_probe, &
      &                      impact_gauss, I, node_stiff_probe, 0, &
      &                      FRICC, XMU, IFPEN, &
-     &                      p_friction_probe, EFRICT_LOC, QFRICT_PROBE, &
+     &                      p_friction_probe, &
      &                      node_ids, V, .FALSE., MAX_STS_SIZE_ACTUAL, &
      &                      GAP, unit_gp_weight, probe_pen_gauss, &
      &                      econt_probe, &
@@ -164,12 +163,11 @@
           DT2T_PROBE = DT2T
           NELTST_PROBE = NELTST
           ITYPTST_PROBE = ITYPTST
-          QFRICT_PROBE = 0.d0
 
           CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF(I), p_probe, &
      &                      impact_lobatto, I, node_stiff_probe, 1, &
      &                      FRICC, XMU, IFPEN, &
-     &                      p_friction_probe, EFRICT_LOC, QFRICT_PROBE, &
+     &                      p_friction_probe, &
      &                      node_ids, V, .FALSE., MAX_STS_SIZE_ACTUAL, &
      &                      GAP, lobatto_gp_weight(1:4,I), &
      &                      probe_pen_lobatto, &
@@ -243,7 +241,7 @@
         CALL STS_CONTACT_EVAL_PAIR(XUPD, STIF(I), p_load_new, IMPACT, I, &
      &                    node_stiff, selected_option, &
      &                    FRICC, XMU, IFPEN, &
-     &                    p_friction, EFRICT_LOC, QFRICT, node_ids, V, &
+     &                    p_friction, node_ids, V, &
      &                    .TRUE., MAX_STS_SIZE_ACTUAL, GAP, &
      &                    lobatto_gp_weight(1:4,I), &
      &                    pair_max_penetration, econt_pair, econtv_pair, &
@@ -368,6 +366,8 @@
 !=======================================================================
       SUBROUTINE STS_BUILD_LOBATTO_GP_WEIGHTS(COUNT_IN, CAPACITY, &
      & CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK, WEIGHT)
+      use my_alloc_mod, only : my_alloc
+      use my_dealloc_mod, only : my_dealloc
       IMPLICIT NONE
       INTEGER, INTENT(IN) :: COUNT_IN, CAPACITY
       INTEGER, INTENT(IN) :: CAND_SEC_SEG_ID(CAPACITY,5)
@@ -382,8 +382,9 @@
 
       IF (COUNT_IN <= 0) RETURN
       HASH_SIZE = MAX(17, 8*COUNT_IN + 1)
-      ALLOCATE(HASH_SEC_SEG(HASH_SIZE), HASH_CORNER(HASH_SIZE))
-      ALLOCATE(HASH_COUNT(HASH_SIZE))
+      CALL MY_ALLOC(HASH_SEC_SEG, HASH_SIZE, "HASH_SEC_SEG")
+      CALL MY_ALLOC(HASH_CORNER, HASH_SIZE, "HASH_CORNER")
+      CALL MY_ALLOC(HASH_COUNT, HASH_SIZE, "HASH_COUNT")
       HASH_SEC_SEG = 0
       HASH_CORNER = 0
       HASH_COUNT = 0
@@ -443,5 +444,7 @@
         ENDDO
       ENDDO
 
-      DEALLOCATE(HASH_SEC_SEG, HASH_CORNER, HASH_COUNT)
+      CALL MY_DEALLOC(HASH_SEC_SEG)
+      CALL MY_DEALLOC(HASH_CORNER)
+      CALL MY_DEALLOC(HASH_COUNT)
       END SUBROUTINE STS_BUILD_LOBATTO_GP_WEIGHTS

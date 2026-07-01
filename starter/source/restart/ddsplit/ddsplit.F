@@ -2823,7 +2823,8 @@ C--------------------------------------
 
       IF (NUMELQ1NP_G  > 0) THEN
         CALL W_Q1NP_INT(NUMELQ1NP_G ,NKQ1NP,KQ1NP_TAB,
-     .                  IQ1NP_TAB,IQ1NP_BULK_TAB,NODLOCAL,CEL,LEN_IA)
+     .                  IQ1NP_TAB,IQ1NP_BULK_TAB,NODLOCAL,CEL,
+     .                  CEP,P-1,NUMELS,NUMELS_L,LEN_IA)
       ENDIF
 C--------------------------------------
 C TAG_SKINS6 : used for /H3D/STRESS/TENS/OUTER
@@ -2843,11 +2844,6 @@ C--------------------------------------
       LEN_AM = 0
       CALL WRITE_DB(TABVREA, LVARREA)
       LEN_AM = LEN_AM + LVARREA
-
-      IF (NUMELQ1NP_G  > 0) THEN
-C Q1Np real restart payloads (weights, knots, control pts)
-        CALL W_Q1NP_REAL(Q1NP_WTAB,Q1NP_KTAB,Q1NP_CPTAB,LEN_AM)
-      ENDIF
 
 C--------------------------------------------
 C X, D, V, VR, DR
@@ -3739,6 +3735,13 @@ C PLY_INFO ( need for animation file )
 C--------------------------------------------
       IF (NUMPLY>0)
      .  CALL W_PLY_INFO(PLY_INFO,NUMPLY)
+C
+C--------------------------------------------
+C Q1Np real restart
+C--------------------------------------------
+      IF (NUMELQ1NP_G  > 0) THEN
+        CALL W_Q1NP_REAL(Q1NP_WTAB,Q1NP_KTAB,Q1NP_CPTAB,LEN_AM)
+      ENDIF
 C
 C--------------------------------------------
 C Pressure & concentrated loads --> DISP & VEL saved

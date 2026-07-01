@@ -123,7 +123,7 @@ C-----------------------------------------------
 C-----------------------------------------------
 C   L O C A L   V A R I A B L E S
 C-----------------------------------------------
-      INTEGER  
+      INTEGER 
      .   NGR1, MLN, NG, ISSN, ISSN_, N, MID, PID, II,ILOC,IL,NEL, NE1,IREP,IINT,
      .   P, NEL_PREC, IGT, JHBE, I, IKSNOD0,NB,IEOS,NLAY,
      .   MODE, WORK(70000), NN, J, NPTR,NPTS,NPTT,NPG,
@@ -162,7 +162,7 @@ C
       ENDIF
 C
       IF (NUMELQ1NP_G > 0) THEN
-        CALL MY_ALLOC(INUM_Q1NP,NUMELS)
+        CALL MY_ALLOC(INUM_Q1NP,NUMELS,"INUM_Q1NP")
         INUM_Q1NP(1:NUMELS) = 0
       ENDIF
 C
@@ -478,10 +478,8 @@ C
         IF (NEL>0) THEN
          NEL_PREC = DD_IAD(P,NSPGROUP+N)-DD_IAD(1,NSPGROUP+N)
          NGP(P)=NGROUP
-         NG  = 0
-  215    CONTINUE
-         IF (NFT >= NEL + NEL_PREC) GOTO 220
-         NG = NG + 1
+         NG  = (NEL-1)/NVSIZ + 1
+         DO 220 I=1,NG
 C ngroup global
           NGROUP=NGROUP+1
           CALL ZEROIN(1,NPARG,IPARG(1,NGROUP))
@@ -1427,32 +1425,6 @@ C-------for the case where we use ISRAT=0 law in Part define and ISRAT=1 laws in
 
 C-------
         NE1 = MIN( NVSIZ, NEL + NEL_PREC - NFT) ! Nb of elements in the group
-C-------
-C       Split mixed HEX8 runs so Q1NP elements get their own groups.
-        I_Q1NP_GROUP = 0
-        IF (IKSNOD0 == 8 .AND. NUMELQ1NP_G > 0 .AND.
-     .      ALLOCATED(KQ1NP_TAB_INV)) THEN
-          II = EADD(N) + NFT
-          IF (II > 0 .AND. II <= SIZE(KQ1NP_TAB_INV) .AND.
-     .        KQ1NP_TAB_INV(II) > 0) THEN
-            I_Q1NP_GROUP = 1
-          ENDIF
-          DO J = 2, NE1
-            II = EADD(N) + NFT + J - 1
-            IF (II <= 0 .OR. II > SIZE(KQ1NP_TAB_INV)) EXIT
-            IF (I_Q1NP_GROUP == 1) THEN
-              IF (KQ1NP_TAB_INV(II) <= 0) THEN
-                NE1 = J - 1
-                EXIT
-              ENDIF
-            ELSE
-              IF (KQ1NP_TAB_INV(II) > 0) THEN
-                NE1 = J - 1
-                EXIT
-              ENDIF
-            ENDIF
-          ENDDO
-        ENDIF
         IF(ISSN > 4 .AND. IBOLTP /= 0)THEN
 C
           ISSN_ = ISSN
@@ -1517,20 +1489,11 @@ C-------
      .                      C1=TITR)
         ENDIF
 C-------------------------------------------------
-C Q1NP element group detection (all elements in group).
+C Q1NP element group detection
 C-------------------------------------------------
           I_Q1NP_GROUP = 0
-          IF (IKSNOD0 == 8 .AND. NUMELQ1NP_G > 0 .AND.
-     .        ALLOCATED(KQ1NP_TAB_INV)) THEN
-            I_Q1NP_GROUP = 1
-            DO J = 1, NE1
-              II = EADD(N) + NFT + J - 1
-              IF (II <= 0 .OR. II > SIZE(KQ1NP_TAB_INV) .OR.
-     .            KQ1NP_TAB_INV(II) <= 0) THEN
-                I_Q1NP_GROUP = 0
-                EXIT
-              ENDIF
-            ENDDO
+          IF (NUMELQ1NP_G > 0) THEN
+            IF (KQ1NP_TAB_INV(EADD(N)+NFT) > 0) I_Q1NP_GROUP = 1
           ENDIF
 C
 C-------------------------------------------------
@@ -1636,7 +1599,6 @@ C------------------------------------------------------
           IF (NPG == 1 .AND. JHBE == 15) NPG = NPG + 1
 C
           NFT = NFT + NE1
-          GOTO 215
   220    CONTINUE
          NGP(P)=NGROUP-NGP(P)
         ENDIF
@@ -1762,7 +1724,7 @@ C-----------
 c-----
       CALL MY_DEALLOC(INDEXS2)
       IF (ALLOCATED(XNUM_RNOISE)) CALL MY_DEALLOC(XNUM_RNOISE)
-      IF (ALLOCATED(INUM_Q1NP)) DEALLOCATE(INUM_Q1NP) 
+      IF (ALLOCATED(INUM_Q1NP)) CALL MY_DEALLOC(INUM_Q1NP)
 c------------------------------------------------------------
  1010 FORMAT(//,
      + 7X,'8-NODE ELEMENT GROUPS'/

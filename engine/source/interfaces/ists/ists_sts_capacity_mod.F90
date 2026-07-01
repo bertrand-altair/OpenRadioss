@@ -44,6 +44,8 @@
      &    CONT_ELEMENT, load_arr, STS_STIF, &
      &    CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK, &
      &    node_id_load, STS_IFPEN)
+          use my_alloc_mod, only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
           INTEGER, INTENT(IN) :: CAPACITY
           INTEGER, INTENT(INOUT) :: WB_CAPACITY
           my_real, ALLOCATABLE, INTENT(INOUT) :: CONT_ELEMENT(:,:,:)
@@ -59,19 +61,23 @@
      &        .NOT. ALLOCATED(STS_IFPEN) .OR. &
      &        WB_CAPACITY < CAPACITY) THEN
             IF (ALLOCATED(CONT_ELEMENT)) THEN
-              DEALLOCATE(CONT_ELEMENT, load_arr, STS_STIF, &
-     &          CAND_SEC_SEG_ID, CAND_MST_SEG_ID, CAND_SEC_GP_MASK, &
-     &          node_id_load)
+              CALL MY_DEALLOC(CONT_ELEMENT)
+              CALL MY_DEALLOC(load_arr)
+              CALL MY_DEALLOC(STS_STIF)
+              CALL MY_DEALLOC(CAND_SEC_SEG_ID)
+              CALL MY_DEALLOC(CAND_MST_SEG_ID)
+              CALL MY_DEALLOC(CAND_SEC_GP_MASK)
+              CALL MY_DEALLOC(node_id_load)
             ENDIF
-            IF (ALLOCATED(STS_IFPEN)) DEALLOCATE(STS_IFPEN)
-            ALLOCATE(CONT_ELEMENT(CAPACITY,3,8))
-            ALLOCATE(load_arr(CAPACITY,8,4))
-            ALLOCATE(STS_STIF(CAPACITY))
-            ALLOCATE(CAND_SEC_SEG_ID(CAPACITY,5))
-            ALLOCATE(CAND_MST_SEG_ID(CAPACITY,5))
-            ALLOCATE(CAND_SEC_GP_MASK(CAPACITY,4))
-            ALLOCATE(node_id_load(CAPACITY*8))
-            ALLOCATE(STS_IFPEN(CAPACITY))
+            IF (ALLOCATED(STS_IFPEN)) CALL MY_DEALLOC(STS_IFPEN)
+            CALL MY_ALLOC(CONT_ELEMENT, CAPACITY, 3, 8, "CONT_ELEMENT")
+            CALL MY_ALLOC(load_arr, CAPACITY, 8, 4, "LOAD_ARR")
+            CALL MY_ALLOC(STS_STIF, CAPACITY, "STS_STIF")
+            CALL MY_ALLOC(CAND_SEC_SEG_ID, CAPACITY, 5, "CAND_SEC_SEG_ID")
+            CALL MY_ALLOC(CAND_MST_SEG_ID, CAPACITY, 5, "CAND_MST_SEG_ID")
+            CALL MY_ALLOC(CAND_SEC_GP_MASK, CAPACITY, 4, "CAND_SEC_GP_MASK")
+            CALL MY_ALLOC(node_id_load, CAPACITY*8, "NODE_ID_LOAD")
+            CALL MY_ALLOC(STS_IFPEN, CAPACITY, "STS_IFPEN")
             WB_CAPACITY = CAPACITY
           ENDIF
         END SUBROUTINE ISTS_STS_ENSURE_BUFFERS

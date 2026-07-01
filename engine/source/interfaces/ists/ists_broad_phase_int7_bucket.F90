@@ -48,6 +48,8 @@
         USE CONSTANT_MOD,  ONLY : ZERO
         USE ISTS_STS_BP_PERSIST_MOD, ONLY : ISTS_STS_BP_PERSIST_SAVE, &
      &    ISTS_STS_BP_PERSIST_TRY_RESTORE
+        USE MY_ALLOC_MOD, ONLY : MY_ALLOC
+        USE MY_DEALLOC_MOD, ONLY : MY_DEALLOC
         IMPLICIT NONE
         PRIVATE
         PUBLIC :: STS_INT7_BUCKET_BROAD_PHASE
@@ -154,7 +156,8 @@
 !         Positive bucket slots are broad candidates only; remapping them
 !         directly to STS segment pairs over-couples curved contact patches.
           N_VALID = 0
-          ALLOCATE(CAND_N_COMPACT(I_STOK), CAND_E_COMPACT(I_STOK))
+          CALL MY_ALLOC(CAND_N_COMPACT, I_STOK, "CAND_N_COMPACT")
+          CALL MY_ALLOC(CAND_E_COMPACT, I_STOK, "CAND_E_COMPACT")
           DO I = 1, I_STOK
             IF (INTBUF_TAB%CAND_E(I) <= 0 .OR. &
      &          INTBUF_TAB%CAND_E(I) > NRTM) CYCLE
@@ -170,8 +173,8 @@
             CAND_E_COMPACT(N_VALID) = INTBUF_TAB%CAND_E(I)
           END DO
           IF (N_VALID <= 0) THEN
-            DEALLOCATE(CAND_N_COMPACT)
-            DEALLOCATE(CAND_E_COMPACT)
+            CALL MY_DEALLOC(CAND_N_COMPACT)
+            CALL MY_DEALLOC(CAND_E_COMPACT)
 !           Reuse the last successful STS patch when INT7 produced no
 !           active node/segment candidates.
             CALL ISTS_STS_BP_PERSIST_TRY_RESTORE( &
@@ -185,7 +188,7 @@
             RETURN
           ENDIF
 !
-          ALLOCATE(CAND_SEC_SEG(MAX_STS_SIZE_ACTUAL))
+          CALL MY_ALLOC(CAND_SEC_SEG, MAX_STS_SIZE_ACTUAL, "CAND_SEC_SEG")
 !
           CALL STS_REMAP_SEGMENTS( &
      &        INTBUF_TAB, X, NUMNOD, NRTM, NSN, CAND_SEC_SEG, &
@@ -197,10 +200,10 @@
 
           COUNT_FRESH = COUNT
           IF (COUNT_FRESH > 0) THEN
-            ALLOCATE(PERSIST_SEC_ID(MAX_STS_SIZE_ACTUAL, 5))
-            ALLOCATE(PERSIST_MST_ID(MAX_STS_SIZE_ACTUAL, 5))
-            ALLOCATE(PERSIST_GP_MASK(MAX_STS_SIZE_ACTUAL, 4))
-            ALLOCATE(PERSIST_CONT_ELEMENT(MAX_STS_SIZE_ACTUAL, 3, 8))
+            CALL MY_ALLOC(PERSIST_SEC_ID, MAX_STS_SIZE_ACTUAL, 5, "PERSIST_SEC_ID")
+            CALL MY_ALLOC(PERSIST_MST_ID, MAX_STS_SIZE_ACTUAL, 5, "PERSIST_MST_ID")
+            CALL MY_ALLOC(PERSIST_GP_MASK, MAX_STS_SIZE_ACTUAL, 4, "PERSIST_GP_MASK")
+            CALL MY_ALLOC(PERSIST_CONT_ELEMENT, MAX_STS_SIZE_ACTUAL, 3, 8, "PERSIST_CONT_ELEMENT")
             CALL ISTS_STS_BP_PERSIST_TRY_RESTORE( &
      &        NIN, X, NUMNOD, MAX_STS_SIZE_ACTUAL, &
      &        COUNT_PERSIST, PERSIST_SEC_ID, PERSIST_MST_ID, &
@@ -213,9 +216,9 @@
 !           growth during impact.
             IF (PERSIST_RESTORED .AND. COUNT_PERSIST > 0) THEN
               FRESH_HASH_SIZE = MAX(17, 4 * COUNT_FRESH + 1)
-              ALLOCATE(FRESH_HASH_SEC(FRESH_HASH_SIZE))
-              ALLOCATE(FRESH_HASH_MST(FRESH_HASH_SIZE))
-              ALLOCATE(FRESH_HASH_INDEX(FRESH_HASH_SIZE))
+              CALL MY_ALLOC(FRESH_HASH_SEC, FRESH_HASH_SIZE, "FRESH_HASH_SEC")
+              CALL MY_ALLOC(FRESH_HASH_MST, FRESH_HASH_SIZE, "FRESH_HASH_MST")
+              CALL MY_ALLOC(FRESH_HASH_INDEX, FRESH_HASH_SIZE, "FRESH_HASH_INDEX")
               FRESH_HASH_SEC = 0
               FRESH_HASH_MST = 0
               FRESH_HASH_INDEX = 0
@@ -242,10 +245,10 @@
 
               PERSIST_STABILIZE = MISSING_COUNT > 0
               IF (PERSIST_STABILIZE .AND. OVERLAP_COUNT > 0) THEN
-                ALLOCATE(FRESH_SEC_ID(COUNT_FRESH, 5))
-                ALLOCATE(FRESH_MST_ID(COUNT_FRESH, 5))
-                ALLOCATE(FRESH_GP_MASK(COUNT_FRESH, 4))
-                ALLOCATE(FRESH_CONT_ELEMENT(COUNT_FRESH, 3, 8))
+                CALL MY_ALLOC(FRESH_SEC_ID, COUNT_FRESH, 5, "FRESH_SEC_ID")
+                CALL MY_ALLOC(FRESH_MST_ID, COUNT_FRESH, 5, "FRESH_MST_ID")
+                CALL MY_ALLOC(FRESH_GP_MASK, COUNT_FRESH, 4, "FRESH_GP_MASK")
+                CALL MY_ALLOC(FRESH_CONT_ELEMENT, COUNT_FRESH, 3, 8, "FRESH_CONT_ELEMENT")
 
                 FRESH_SEC_ID(1:COUNT_FRESH, 1:5) = &
      &            CAND_SEC_SEG_ID(1:COUNT_FRESH, 1:5)
@@ -259,9 +262,9 @@
                 COUNT = 0
                 FINAL_LIMIT = MAX_STS_SIZE_ACTUAL
                 OUT_HASH_SIZE = MAX(17, 4 * FINAL_LIMIT + 1)
-                ALLOCATE(OUT_HASH_SEC(OUT_HASH_SIZE))
-                ALLOCATE(OUT_HASH_MST(OUT_HASH_SIZE))
-                ALLOCATE(OUT_HASH_INDEX(OUT_HASH_SIZE))
+                CALL MY_ALLOC(OUT_HASH_SEC, OUT_HASH_SIZE, "OUT_HASH_SEC")
+                CALL MY_ALLOC(OUT_HASH_MST, OUT_HASH_SIZE, "OUT_HASH_MST")
+                CALL MY_ALLOC(OUT_HASH_INDEX, OUT_HASH_SIZE, "OUT_HASH_INDEX")
                 OUT_HASH_SEC = 0
                 OUT_HASH_MST = 0
                 OUT_HASH_INDEX = 0
@@ -309,27 +312,27 @@
      &              HASH_INDEX)
                 ENDDO
 
-                DEALLOCATE(OUT_HASH_SEC)
-                DEALLOCATE(OUT_HASH_MST)
-                DEALLOCATE(OUT_HASH_INDEX)
-                DEALLOCATE(FRESH_SEC_ID)
-                DEALLOCATE(FRESH_MST_ID)
-                DEALLOCATE(FRESH_GP_MASK)
-                DEALLOCATE(FRESH_CONT_ELEMENT)
+                CALL MY_DEALLOC(OUT_HASH_SEC)
+                CALL MY_DEALLOC(OUT_HASH_MST)
+                CALL MY_DEALLOC(OUT_HASH_INDEX)
+                CALL MY_DEALLOC(FRESH_SEC_ID)
+                CALL MY_DEALLOC(FRESH_MST_ID)
+                CALL MY_DEALLOC(FRESH_GP_MASK)
+                CALL MY_DEALLOC(FRESH_CONT_ELEMENT)
               ENDIF
-              DEALLOCATE(FRESH_HASH_SEC)
-              DEALLOCATE(FRESH_HASH_MST)
-              DEALLOCATE(FRESH_HASH_INDEX)
+              CALL MY_DEALLOC(FRESH_HASH_SEC)
+              CALL MY_DEALLOC(FRESH_HASH_MST)
+              CALL MY_DEALLOC(FRESH_HASH_INDEX)
             ENDIF
 
-            DEALLOCATE(PERSIST_SEC_ID)
-            DEALLOCATE(PERSIST_MST_ID)
-            DEALLOCATE(PERSIST_GP_MASK)
-            DEALLOCATE(PERSIST_CONT_ELEMENT)
+            CALL MY_DEALLOC(PERSIST_SEC_ID)
+            CALL MY_DEALLOC(PERSIST_MST_ID)
+            CALL MY_DEALLOC(PERSIST_GP_MASK)
+            CALL MY_DEALLOC(PERSIST_CONT_ELEMENT)
           ENDIF
 !
-          DEALLOCATE(CAND_N_COMPACT)
-          DEALLOCATE(CAND_E_COMPACT)
+          CALL MY_DEALLOC(CAND_N_COMPACT)
+          CALL MY_DEALLOC(CAND_E_COMPACT)
 !
 !         Saturated storage: signal the caller to grow capacity and retry.
           IF (COUNT >= MAX_STS_SIZE_ACTUAL) OVERFLOW = .TRUE.
@@ -346,12 +349,12 @@
      &          CAND_SEC_GP_MASK, CONT_ELEMENT, PERSIST_RESTORED)
             IF (PERSIST_RESTORED) THEN
               IF (COUNT >= MAX_STS_SIZE_ACTUAL) OVERFLOW = .TRUE.
-              DEALLOCATE(CAND_SEC_SEG)
+              CALL MY_DEALLOC(CAND_SEC_SEG)
               RETURN
             END IF
           END IF
 !
-          DEALLOCATE(CAND_SEC_SEG)
+          CALL MY_DEALLOC(CAND_SEC_SEG)
         END SUBROUTINE STS_INT7_BUCKET_BROAD_PHASE
 
 !=======================================================================

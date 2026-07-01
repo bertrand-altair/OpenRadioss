@@ -174,6 +174,8 @@
      &                                         kq1np_tab, iq1np_bulk_tab, x, &
      &                                         surface_id)
 ! ----------------------------------------------------------------------------------------------------------------------
+          use my_alloc_mod, only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
           implicit none
 ! ----------------------------------------------------------------------------------------------------------------------
           integer, intent(in) :: numelq1np_out, numnod
@@ -188,7 +190,7 @@
           character(len=32) :: tmp
           character(len=160) :: file_bn
 
-          allocate(mark(numnod))
+          call my_alloc(mark, numnod, "MARK")
           mark = 0
 
 !--- Mark all bulk nodes that are used
@@ -212,7 +214,7 @@
           open(unit=unit_bn, file=file_bn, &
      &         status='UNKNOWN', form='FORMATTED', iostat=ios)
           if (ios .ne. 0) then
-            deallocate(mark)
+            call my_dealloc(mark)
             return
           end if
 
@@ -225,7 +227,7 @@
           end do
           close(unit_bn)
 
-          deallocate(mark)
+          call my_dealloc(mark)
           return
         end subroutine q1np_export_bulk_nodes_csv
 
@@ -320,6 +322,8 @@
      &                                  numelq1np_in, kq1np_tab, nkq1np, &
      &                                  surface_id_opt)
 ! ----------------------------------------------------------------------------------------------------------------------
+          use my_alloc_mod, only : my_alloc
+          use my_dealloc_mod, only : my_dealloc
           implicit none
 ! ----------------------------------------------------------------------------------------------------------------------
           integer, intent(in) :: numels, nixs, numnod
@@ -336,7 +340,7 @@
           character(len=64) :: file_el, file_nd
           character(len=32) :: suffix
 ! ----------------------------------------------------------------------------------------------------------------------
-          allocate(skip_q1np_under(numels))
+          call my_alloc(skip_q1np_under, numels, "SKIP_Q1NP_UNDER")
           skip_q1np_under = .false.
           if (numelq1np_in > 0) then
             do iq = 1, numelq1np_in
@@ -368,7 +372,7 @@
           open(unit=unit_el, file=file_el, &
      &         status='UNKNOWN', form='FORMATTED', iostat=ios)
           if (ios .ne. 0) then
-            deallocate(skip_q1np_under)
+            call my_dealloc(skip_q1np_under)
             return
           end if
 
@@ -402,11 +406,11 @@
               write(unit_nd, '(A)') 'node_id,x,y,z'
               close(unit_nd)
             end if
-            deallocate(skip_q1np_under)
+            call my_dealloc(skip_q1np_under)
             return
           end if
 
-          allocate(mark(maxnode))
+          call my_alloc(mark, maxnode, "MARK")
           mark = 0
           do iel = 1, numels
             if (skip_q1np_under(iel)) cycle
@@ -428,8 +432,8 @@
           open(unit=unit_nd, file=file_nd, &
      &         status='UNKNOWN', form='FORMATTED', iostat=ios)
           if (ios .ne. 0) then
-            deallocate(mark)
-            deallocate(skip_q1np_under)
+            call my_dealloc(mark)
+            call my_dealloc(skip_q1np_under)
             return
           end if
 
@@ -443,8 +447,8 @@
           end do
           close(unit_nd)
 
-          deallocate(mark)
-          deallocate(skip_q1np_under)
+          call my_dealloc(mark)
+          call my_dealloc(skip_q1np_under)
           return
         end subroutine q1np_export_hex8_csv
 

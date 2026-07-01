@@ -264,57 +264,66 @@ C Q1Np element arrays
      .        ' not divisible by NUMELQ1NP=', NUMELQ1NP_G
           ENDIF
           NKQ1NP_G = NKQ1NP_LOC
-          ALLOCATE (KQ1NP_TAB(NKQ1NP_G,NUMELQ1NP_G),STAT=IERR)
+          CALL MY_ALLOC(KQ1NP_TAB, NKQ1NP_G, NUMELQ1NP_G, 'KQ1NP_TAB', STAT=IERR)
           IF (IERR/=0) GOTO 1000
           KQ1NP_TAB = 0
           
           IF (SIQ1NP_G > 0) THEN
-            ALLOCATE (IQ1NP_TAB(SIQ1NP_G),STAT=IERR)
+            CALL MY_ALLOC(IQ1NP_TAB, SIQ1NP_G, 'IQ1NP_TAB', STAT=IERR)
             IF (IERR/=0) GOTO 1000
             IQ1NP_TAB = 0
           ELSE
-            ALLOCATE (IQ1NP_TAB(0),STAT=IERR)
+            CALL MY_ALLOC(IQ1NP_TAB, 0, 'IQ1NP_TAB', STAT=IERR)
           ENDIF
           
           IF (SQ1NPBULK_G > 0) THEN
-            ALLOCATE (IQ1NP_BULK_TAB(SQ1NPBULK_G),STAT=IERR)
+            CALL MY_ALLOC(IQ1NP_BULK_TAB, SQ1NPBULK_G, 'IQ1NP_BULK_TAB', STAT=IERR)
             IF (IERR/=0) GOTO 1000
             IQ1NP_BULK_TAB = 0
           ELSE
-            ALLOCATE (IQ1NP_BULK_TAB(0),STAT=IERR)
+            CALL MY_ALLOC(IQ1NP_BULK_TAB, 0, 'IQ1NP_BULK_TAB', STAT=IERR)
           ENDIF
           
           IF (SQ1NPWEIGHT_L_G > 0) THEN
-            ALLOCATE (Q1NP_WTAB(SQ1NPWEIGHT_L_G),STAT=IERR)
+            CALL MY_ALLOC(Q1NP_WTAB, SQ1NPWEIGHT_L_G, 'Q1NP_WTAB', STAT=IERR)
             IF (IERR/=0) GOTO 1000
             Q1NP_WTAB = ZERO
           ELSE
-            ALLOCATE (Q1NP_WTAB(0),STAT=IERR)
+            CALL MY_ALLOC(Q1NP_WTAB, 0, 'Q1NP_WTAB', STAT=IERR)
           ENDIF
           
           IF (SQ1NPKNOT_L_G > 0) THEN
-            ALLOCATE (Q1NP_KTAB(SQ1NPKNOT_L_G),STAT=IERR)
+            CALL MY_ALLOC(Q1NP_KTAB, SQ1NPKNOT_L_G, 'Q1NP_KTAB', STAT=IERR)
             IF (IERR/=0) GOTO 1000
             Q1NP_KTAB = ZERO
           ELSE
-            ALLOCATE (Q1NP_KTAB(0),STAT=IERR)
+            CALL MY_ALLOC(Q1NP_KTAB, 0, 'Q1NP_KTAB', STAT=IERR)
           ENDIF
           
           IF (SQ1NPCTRL_SHARED_G > 0) THEN
-            ALLOCATE (Q1NP_CPTAB(3,SQ1NPCTRL_SHARED_G),STAT=IERR)
+            CALL MY_ALLOC(Q1NP_CPTAB, 3, SQ1NPCTRL_SHARED_G, 'Q1NP_CPTAB', STAT=IERR)
             IF (IERR/=0) GOTO 1000
             Q1NP_CPTAB = ZERO
           ELSE
-            ALLOCATE (Q1NP_CPTAB(3,0),STAT=IERR)
+            CALL MY_ALLOC(Q1NP_CPTAB, 3, 0, 'Q1NP_CPTAB', STAT=IERR)
+          ENDIF
+C         Q1NP inverse connectivity (local solid element -> Q1NP element)
+          IF (NUMELS > 0) THEN
+            ALLOCATE (KQ1NP_TAB_INV(NUMELS),STAT=IERR)
+            IF (IERR/=0) GOTO 1000
+            KQ1NP_TAB_INV = 0
+          ELSE
+            ALLOCATE (KQ1NP_TAB_INV(0),STAT=IERR)
           ENDIF
         ELSE
           NKQ1NP_G = 0
-          ALLOCATE (KQ1NP_TAB(0,0),STAT=IERR)
-          ALLOCATE (IQ1NP_TAB(0),STAT=IERR)
-          ALLOCATE (IQ1NP_BULK_TAB(0),STAT=IERR)
-          ALLOCATE (Q1NP_WTAB(0),STAT=IERR)
-          ALLOCATE (Q1NP_KTAB(0),STAT=IERR)
-          ALLOCATE (Q1NP_CPTAB(3,0),STAT=IERR)
+          CALL MY_ALLOC(KQ1NP_TAB, 0, 0, 'KQ1NP_TAB', STAT=IERR)
+          CALL MY_ALLOC(IQ1NP_TAB, 0, 'IQ1NP_TAB', STAT=IERR)
+          CALL MY_ALLOC(IQ1NP_BULK_TAB, 0, 'IQ1NP_BULK_TAB', STAT=IERR)
+          CALL MY_ALLOC(Q1NP_WTAB, 0, 'Q1NP_WTAB', STAT=IERR)
+          CALL MY_ALLOC(Q1NP_KTAB, 0, 'Q1NP_KTAB', STAT=IERR)
+          CALL MY_ALLOC(Q1NP_CPTAB, 3, 0, 'Q1NP_CPTAB', STAT=IERR)
+          ALLOCATE (KQ1NP_TAB_INV(0),STAT=IERR)
         ENDIF
 
 C       ALLOCATE (ITAB(SITAB),STAT=IERR)

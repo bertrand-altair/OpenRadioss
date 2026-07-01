@@ -59,6 +59,8 @@ contains
     use precision_mod , only : wp
     use submodel_mod, only: nsubmod, submodel_data
     use hm_option_read_mod
+    use my_alloc_mod, only : my_alloc
+    use my_dealloc_mod, only : my_dealloc
 ! ----------------------------------------------------------------------------------------------------------------------
 !                                                   IMPLICIT NONE
 ! ----------------------------------------------------------------------------------------------------------------------
@@ -165,6 +167,8 @@ contains
 !                                                   BODY
 ! ----------------------------------------------------------------------------------------------------------------------
 
+!     Reset Q1NP module counts/arrays (will be generated after surfaces are read).
+      call reset_q1np_counts()
 !
 !     Preading of interfaces to detect ists flag
       is_ists2 = .false.
@@ -219,13 +223,14 @@ contains
             nx_est = 0
             ny_est = 0
             ierr_q1np_grid = 0
-            allocate(q1np_seg_i_tmp(nseg_surf), q1np_seg_j_tmp(nseg_surf), &
-                     stat=stat)
+            call my_alloc(q1np_seg_i_tmp, nseg_surf, "Q1NP_SEG_I_TMP", stat=stat)
+            if (stat == 0) &
+              call my_alloc(q1np_seg_j_tmp, nseg_surf, "Q1NP_SEG_J_TMP", stat=stat)
             if (stat == 0) then
-              allocate(q1np_grid_to_seg_tmp(nseg_surf, nseg_surf), stat=stat)
+              call my_alloc(q1np_grid_to_seg_tmp, nseg_surf, nseg_surf, "Q1NP_GRID_TO_SEG_TMP", stat=stat)
             endif
             if (stat == 0) then
-              allocate(q1np_grid_node_tmp(nseg_surf*4, nseg_surf*4), stat=stat)
+              call my_alloc(q1np_grid_node_tmp, nseg_surf*4, nseg_surf*4, "Q1NP_GRID_NODE_TMP", stat=stat)
             endif
             if (stat == 0) then
               call q1np_build_surf_grid(igrsurf(isurf_id_a), nseg_surf, &
@@ -235,10 +240,10 @@ contains
             else
               ierr_q1np_grid = 7
             endif
-            if (allocated(q1np_seg_i_tmp)) deallocate(q1np_seg_i_tmp)
-            if (allocated(q1np_seg_j_tmp)) deallocate(q1np_seg_j_tmp)
-            if (allocated(q1np_grid_node_tmp)) deallocate(q1np_grid_node_tmp)
-            if (allocated(q1np_grid_to_seg_tmp)) deallocate(q1np_grid_to_seg_tmp)
+            call my_dealloc(q1np_seg_i_tmp)
+            call my_dealloc(q1np_seg_j_tmp)
+            call my_dealloc(q1np_grid_node_tmp)
+            call my_dealloc(q1np_grid_to_seg_tmp)
 
             if (ierr_q1np_grid /= 0 .or. nx_est <= 0 .or. ny_est <= 0) then
 !             Conservative fallback to avoid underallocation if the topology
@@ -254,13 +259,14 @@ contains
             nx_est_b = 0
             ny_est_b = 0
             ierr_q1np_grid_b = 0
-            allocate(q1np_seg_i_tmp(nseg_surf_b), q1np_seg_j_tmp(nseg_surf_b), &
-                     stat=stat)
+            call my_alloc(q1np_seg_i_tmp, nseg_surf_b, "Q1NP_SEG_I_TMP", stat=stat)
+            if (stat == 0) &
+              call my_alloc(q1np_seg_j_tmp, nseg_surf_b, "Q1NP_SEG_J_TMP", stat=stat)
             if (stat == 0) then
-              allocate(q1np_grid_to_seg_tmp(nseg_surf_b, nseg_surf_b), stat=stat)
+              call my_alloc(q1np_grid_to_seg_tmp, nseg_surf_b, nseg_surf_b, "Q1NP_GRID_TO_SEG_TMP", stat=stat)
             endif
             if (stat == 0) then
-              allocate(q1np_grid_node_tmp(nseg_surf_b*4, nseg_surf_b*4), stat=stat)
+              call my_alloc(q1np_grid_node_tmp, nseg_surf_b*4, nseg_surf_b*4, "Q1NP_GRID_NODE_TMP", stat=stat)
             endif
             if (stat == 0) then
               call q1np_build_surf_grid(igrsurf(isurf_id_b), nseg_surf_b, &
@@ -270,10 +276,10 @@ contains
             else
               ierr_q1np_grid_b = 7
             endif
-            if (allocated(q1np_seg_i_tmp)) deallocate(q1np_seg_i_tmp)
-            if (allocated(q1np_seg_j_tmp)) deallocate(q1np_seg_j_tmp)
-            if (allocated(q1np_grid_node_tmp)) deallocate(q1np_grid_node_tmp)
-            if (allocated(q1np_grid_to_seg_tmp)) deallocate(q1np_grid_to_seg_tmp)
+            call my_dealloc(q1np_seg_i_tmp)
+            call my_dealloc(q1np_seg_j_tmp)
+            call my_dealloc(q1np_grid_node_tmp)
+            call my_dealloc(q1np_grid_to_seg_tmp)
 
             if (ierr_q1np_grid_b /= 0 .or. nx_est_b <= 0 .or. ny_est_b <= 0) then
 !             Conservative fallback to avoid underallocation if the topology
@@ -334,31 +340,13 @@ contains
             iq1np_bulk_base_b = sq1npbulk_a
             q1np_ktab_base_b = sq1npknot_l_a
 
-            allocate(kq1np_tab(nkq1np,numelq1np_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='KQ1NP_TAB')
-            allocate(iq1np_tab(siq1np_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='IQ1NP_TAB')
-            allocate(iq1np_bulk_tab(sq1npbulk_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='IQ1NP_BULK_TAB')
-            allocate(q1np_wtab(sq1npweight_l_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='Q1NP_WTAB')
-            allocate(q1np_ktab(sq1npknot_l_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='Q1NP_KTAB')
+            call my_alloc(kq1np_tab, nkq1np, numelq1np_g, "KQ1NP_TAB")
+            call my_alloc(iq1np_tab, siq1np_g, "IQ1NP_TAB")
+            call my_alloc(iq1np_bulk_tab, sq1npbulk_g, "IQ1NP_BULK_TAB")
+            call my_alloc(q1np_wtab, sq1npweight_l_g, "Q1NP_WTAB")
+            call my_alloc(q1np_ktab, sq1npknot_l_g, "Q1NP_KTAB")
             if(sq1npctrl_shared_g > 0) then
-              allocate(q1np_cptab(3,sq1npctrl_shared_g) ,stat=stat)
-              if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                        msgtype=msgerror, &
-                                        c1='Q1NP_CPTAB')
+              call my_alloc(q1np_cptab, 3, sq1npctrl_shared_g, "Q1NP_CPTAB")
             endif
 
 !           Initialize arrays to zero.
@@ -458,13 +446,14 @@ contains
             nx_est = 0
             ny_est = 0
             ierr_q1np_grid = 0
-            allocate(q1np_seg_i_tmp(nseg_surf), q1np_seg_j_tmp(nseg_surf), &
-                     stat=stat)
+            call my_alloc(q1np_seg_i_tmp, nseg_surf, "Q1NP_SEG_I_TMP", stat=stat)
+            if (stat == 0) &
+              call my_alloc(q1np_seg_j_tmp, nseg_surf, "Q1NP_SEG_J_TMP", stat=stat)
             if (stat == 0) then
-              allocate(q1np_grid_to_seg_tmp(nseg_surf, nseg_surf), stat=stat)
+              call my_alloc(q1np_grid_to_seg_tmp, nseg_surf, nseg_surf, "Q1NP_GRID_TO_SEG_TMP", stat=stat)
             endif
             if (stat == 0) then
-              allocate(q1np_grid_node_tmp(nseg_surf*4, nseg_surf*4), stat=stat)
+              call my_alloc(q1np_grid_node_tmp, nseg_surf*4, nseg_surf*4, "Q1NP_GRID_NODE_TMP", stat=stat)
             endif
             if (stat == 0) then
               call q1np_build_surf_grid(igrsurf(isurf_id_a), nseg_surf, &
@@ -474,10 +463,10 @@ contains
             else
               ierr_q1np_grid = 7
             endif
-            if (allocated(q1np_seg_i_tmp)) deallocate(q1np_seg_i_tmp)
-            if (allocated(q1np_seg_j_tmp)) deallocate(q1np_seg_j_tmp)
-            if (allocated(q1np_grid_node_tmp)) deallocate(q1np_grid_node_tmp)
-            if (allocated(q1np_grid_to_seg_tmp)) deallocate(q1np_grid_to_seg_tmp)
+            call my_dealloc(q1np_seg_i_tmp)
+            call my_dealloc(q1np_seg_j_tmp)
+            call my_dealloc(q1np_grid_node_tmp)
+            call my_dealloc(q1np_grid_to_seg_tmp)
 
             if (ierr_q1np_grid /= 0 .or. nx_est <= 0 .or. ny_est <= 0) then
               nx_est = nseg_surf
@@ -506,31 +495,13 @@ contains
 
             skq1np_g = nkq1np * numelq1np_g
 
-            allocate(kq1np_tab(nkq1np,numelq1np_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='KQ1NP_TAB')
-            allocate(iq1np_tab(siq1np_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='IQ1NP_TAB')
-            allocate(iq1np_bulk_tab(sq1npbulk_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='IQ1NP_BULK_TAB')
-            allocate(q1np_wtab(sq1npweight_l_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='Q1NP_WTAB')
-            allocate(q1np_ktab(sq1npknot_l_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='Q1NP_KTAB')
+            call my_alloc(kq1np_tab, nkq1np, numelq1np_g, "KQ1NP_TAB")
+            call my_alloc(iq1np_tab, siq1np_g, "IQ1NP_TAB")
+            call my_alloc(iq1np_bulk_tab, sq1npbulk_g, "IQ1NP_BULK_TAB")
+            call my_alloc(q1np_wtab, sq1npweight_l_g, "Q1NP_WTAB")
+            call my_alloc(q1np_ktab, sq1npknot_l_g, "Q1NP_KTAB")
             if(sq1npctrl_shared_g > 0) then
-              allocate(q1np_cptab(3,sq1npctrl_shared_g) ,stat=stat)
-              if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                        msgtype=msgerror, &
-                                        c1='Q1NP_CPTAB')
+              call my_alloc(q1np_cptab, 3, sq1npctrl_shared_g, "Q1NP_CPTAB")
             endif
 
             kq1np_tab(:,:) = 0
@@ -582,13 +553,14 @@ contains
             nx_est_b = 0
             ny_est_b = 0
             ierr_q1np_grid_b = 0
-            allocate(q1np_seg_i_tmp(nseg_surf_b), q1np_seg_j_tmp(nseg_surf_b), &
-                     stat=stat)
+            call my_alloc(q1np_seg_i_tmp, nseg_surf_b, "Q1NP_SEG_I_TMP", stat=stat)
+            if (stat == 0) &
+              call my_alloc(q1np_seg_j_tmp, nseg_surf_b, "Q1NP_SEG_J_TMP", stat=stat)
             if (stat == 0) then
-              allocate(q1np_grid_to_seg_tmp(nseg_surf_b, nseg_surf_b), stat=stat)
+              call my_alloc(q1np_grid_to_seg_tmp, nseg_surf_b, nseg_surf_b, "Q1NP_GRID_TO_SEG_TMP", stat=stat)
             endif
             if (stat == 0) then
-              allocate(q1np_grid_node_tmp(nseg_surf_b*4, nseg_surf_b*4), stat=stat)
+              call my_alloc(q1np_grid_node_tmp, nseg_surf_b*4, nseg_surf_b*4, "Q1NP_GRID_NODE_TMP", stat=stat)
             endif
             if (stat == 0) then
               call q1np_build_surf_grid(igrsurf(isurf_id_b), nseg_surf_b, &
@@ -598,10 +570,10 @@ contains
             else
               ierr_q1np_grid_b = 7
             endif
-            if (allocated(q1np_seg_i_tmp)) deallocate(q1np_seg_i_tmp)
-            if (allocated(q1np_seg_j_tmp)) deallocate(q1np_seg_j_tmp)
-            if (allocated(q1np_grid_node_tmp)) deallocate(q1np_grid_node_tmp)
-            if (allocated(q1np_grid_to_seg_tmp)) deallocate(q1np_grid_to_seg_tmp)
+            call my_dealloc(q1np_seg_i_tmp)
+            call my_dealloc(q1np_seg_j_tmp)
+            call my_dealloc(q1np_grid_node_tmp)
+            call my_dealloc(q1np_grid_to_seg_tmp)
 
             if (ierr_q1np_grid_b /= 0 .or. nx_est_b <= 0 .or. ny_est_b <= 0) then
               nx_est_b = nseg_surf_b
@@ -629,31 +601,13 @@ contains
             sq1npknot_l_g = nknot_u_est_b + nknot_v_est_b
 
             skq1np_g = nkq1np * numelq1np_g
-            allocate(kq1np_tab(nkq1np,numelq1np_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='KQ1NP_TAB')
-            allocate(iq1np_tab(siq1np_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='IQ1NP_TAB')
-            allocate(iq1np_bulk_tab(sq1npbulk_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='IQ1NP_BULK_TAB')
-            allocate(q1np_wtab(sq1npweight_l_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='Q1NP_WTAB')
-            allocate(q1np_ktab(sq1npknot_l_g) ,stat=stat)
-            if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                      msgtype=msgerror, &
-                                      c1='Q1NP_KTAB')
+            call my_alloc(kq1np_tab, nkq1np, numelq1np_g, "KQ1NP_TAB")
+            call my_alloc(iq1np_tab, siq1np_g, "IQ1NP_TAB")
+            call my_alloc(iq1np_bulk_tab, sq1npbulk_g, "IQ1NP_BULK_TAB")
+            call my_alloc(q1np_wtab, sq1npweight_l_g, "Q1NP_WTAB")
+            call my_alloc(q1np_ktab, sq1npknot_l_g, "Q1NP_KTAB")
             if(sq1npctrl_shared_g > 0) then
-              allocate(q1np_cptab(3,sq1npctrl_shared_g) ,stat=stat)
-              if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
-                                        msgtype=msgerror, &
-                                        c1='Q1NP_CPTAB')
+              call my_alloc(q1np_cptab, 3, sq1npctrl_shared_g, "Q1NP_CPTAB")
             endif
 
             kq1np_tab(:,:) = 0
@@ -714,7 +668,7 @@ contains
       if (numelq1np_g > 0) then
 !        
 !         Store inverse connectivity of KQ1NP_TAB  
-          allocate(kq1np_tab_inv(numels) ,stat=stat)
+          call my_alloc(kq1np_tab_inv, numels, "KQ1NP_TAB_INV", stat=stat)
           if(stat /= 0) call ancmsg(msgid=268,anmode=anstop, &
                                     msgtype=msgerror, &
                                     c1='KQ1NP_TAB_INV')     
@@ -792,50 +746,50 @@ contains
 !=======================================================================
 !           Step 1: Save old data to temporary arrays
 !=======================================================================
-              allocate(x_save(sx_old), stat=stat)
+              call my_alloc(x_save, sx_old, "X_SAVE", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='X_SAVE')
               x_save(1:sx_old) = x(1:sx_old)
               
-              allocate(v_save(sv_old), stat=stat)
+              call my_alloc(v_save, sv_old, "V_SAVE", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='V_SAVE')
               v_save(1:sv_old) = v(1:sv_old)
               
-              allocate(ms_save(sms_old), stat=stat)
+              call my_alloc(ms_save, sms_old, "MS_SAVE", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='MS_SAVE')
               ms_save(1:sms_old) = ms(1:sms_old)
               
               if(sd_old > 0) then
-                allocate(d_save(sd_old), stat=stat)
+                call my_alloc(d_save, sd_old, "D_SAVE", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='D_SAVE')
                 d_save(1:sd_old) = d(1:sd_old)
               endif
               
               if(sin_old > 0) then
-                allocate(in_save(sin_old), stat=stat)
+                call my_alloc(in_save, sin_old, "IN_SAVE", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='IN_SAVE')
                 in_save(1:sin_old) = in(1:sin_old)
               endif
               
               if(svr_old > 0) then
-                allocate(vr_save(svr_old), stat=stat)
+                call my_alloc(vr_save, svr_old, "VR_SAVE", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='VR_SAVE')
                 vr_save(1:svr_old) = vr(1:svr_old)
               endif
               
               if(sdr_old > 0) then
-                allocate(dr_save(sdr_old), stat=stat)
+                call my_alloc(dr_save, sdr_old, "DR_SAVE", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='DR_SAVE')
                 dr_save(1:sdr_old) = dr(1:sdr_old)
               endif
               
-              allocate(xyzref_save(sx_old), stat=stat)
+              call my_alloc(xyzref_save, sx_old, "XYZREF_SAVE", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='XYZREF_SAVE')
               xyzref_save(1:sx_old) = xyzref(1:sx_old)
@@ -843,51 +797,51 @@ contains
 !=======================================================================
 !           Step 2: Reallocate arrays to new size
 !=======================================================================
-              deallocate(x)
-              allocate(x(sx_new), stat=stat)
+              call my_dealloc(x)
+              call my_alloc(x, sx_new, "X", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='X')
               
-              deallocate(v)
-              allocate(v(sv_new), stat=stat)
+              call my_dealloc(v)
+              call my_alloc(v, sv_new, "V", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='V')
               
               if(sd_new > 0) then
-                deallocate(d)
-                allocate(d(sd_new), stat=stat)
+                call my_dealloc(d)
+                call my_alloc(d, sd_new, "D", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='D')
               endif
               
-              deallocate(ms)
-              allocate(ms(sms_new), stat=stat)
+              call my_dealloc(ms)
+              call my_alloc(ms, sms_new, "MS", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='MS')
               
               if(sin_new > 0) then
-                deallocate(in)
-                allocate(in(sin_new), stat=stat)
+                call my_dealloc(in)
+                call my_alloc(in, sin_new, "IN", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='IN')
               endif
               
               if(svr_new > 0) then
-                deallocate(vr)
-                allocate(vr(svr_new), stat=stat)
+                call my_dealloc(vr)
+                call my_alloc(vr, svr_new, "VR", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='VR')
               endif
               
               if(sdr_new > 0) then
-                deallocate(dr)
-                allocate(dr(sdr_new), stat=stat)
+                call my_dealloc(dr)
+                call my_alloc(dr, sdr_new, "DR", stat=stat)
                 if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                           msgtype=msgerror, c1='DR')
               endif
               
-              deallocate(xyzref)
-              allocate(xyzref(sx_new), stat=stat)
+              call my_dealloc(xyzref)
+              call my_alloc(xyzref, sx_new, "XYZREF", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='XYZREF')
 
@@ -945,14 +899,14 @@ contains
 !=======================================================================
 !           Step 4: Deallocate temporary save arrays
 !=======================================================================
-              deallocate(x_save)
-              deallocate(v_save)
-              deallocate(ms_save)
-              if(allocated(d_save)) deallocate(d_save)
-              if(allocated(in_save)) deallocate(in_save)
-              if(allocated(vr_save)) deallocate(vr_save)
-              if(allocated(dr_save)) deallocate(dr_save)
-              deallocate(xyzref_save)
+              call my_dealloc(x_save)
+              call my_dealloc(v_save)
+              call my_dealloc(ms_save)
+              call my_dealloc(d_save)
+              call my_dealloc(in_save)
+              call my_dealloc(vr_save)
+              call my_dealloc(dr_save)
+              call my_dealloc(xyzref_save)
 
               sx  = sx_new
               sv  = sv_new
@@ -966,28 +920,28 @@ contains
 !           Step 5: Reallocate kinematic arrays after control point promotion
 !=======================================================================
 !           Reallocate kinematic arrays after control point promotion
-              allocate(iwcont_tmp(5*numnod_est), stat=stat)
+              call my_alloc(iwcont_tmp, 5*numnod_est, "IWCONT_TMP", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='IWCONT_TMP')
               iwcont_tmp(1:5*numnod_old) = iwcont(1:5*numnod_old)
               iwcont_tmp(5*numnod_old+1:5*numnod_est) = 0
-              deallocate(iwcont)
+              call my_dealloc(iwcont)
               call move_alloc(iwcont_tmp, iwcont)
               
-              allocate(iwcin2_tmp(2*numnod_est), stat=stat)
+              call my_alloc(iwcin2_tmp, 2*numnod_est, "IWCIN2_TMP", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='IWCIN2_TMP')
               iwcin2_tmp(1:2*numnod_old) = iwcin2(1:2*numnod_old)
               iwcin2_tmp(2*numnod_old+1:2*numnod_est) = 0
-              deallocate(iwcin2)
+              call my_dealloc(iwcin2)
               call move_alloc(iwcin2_tmp, iwcin2)
               
-              allocate(ikine1lag_tmp(3*numnod_est), stat=stat)
+              call my_alloc(ikine1lag_tmp, 3*numnod_est, "IKINE1LAG_TMP", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='IKINE1LAG_TMP')
               ikine1lag_tmp(1:3*numnod_old) = ikine1lag(1:3*numnod_old)
               ikine1lag_tmp(3*numnod_old+1:3*numnod_est) = 0
-              deallocate(ikine1lag)
+              call my_dealloc(ikine1lag)
               call move_alloc(ikine1lag_tmp, ikine1lag)
 !
             call q1np_promote_cp_to_nodes( &
@@ -1004,20 +958,20 @@ contains
             if (numnod_cp_added > 0) then
               if (allocated(dsdof)) then
                 if (size(dsdof) < numnod) then
-                  allocate(dsdof_new(numnod), stat=stat)
+                  call my_alloc(dsdof_new, numnod, "DSDOF_NEW", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='DSDOF_NEW')
                   else
                   dsdof_new(1:size(dsdof)) = dsdof(1:size(dsdof))
                   dsdof_new(size(dsdof)+1:numnod) = 0
-                  deallocate(dsdof, stat=stat)
+                  call my_dealloc(dsdof)
                     call move_alloc(dsdof_new, dsdof)
                   endif
                 endif
               else
 !                 DSDOF was not allocated, allocate it now
-                allocate(dsdof(numnod), stat=stat)
+                call my_alloc(dsdof, numnod, "DSDOF", stat=stat)
                 if(stat /= 0) then
                   call ancmsg(msgid=268,anmode=aninfo, &
                               msgtype=msgerror, c1='DSDOF')
@@ -1033,13 +987,13 @@ contains
 !           Reallocate if Q1NP promotion increased NUMNOD.
 !-----------------------------------------------------------------------
             if (numnod > numnod_old) then
-              if (allocated(addcne)) deallocate(addcne, stat=stat)
-              allocate(addcne(0:numnod+1), stat=stat)
+              call my_dealloc(addcne)
+              call my_alloc(addcne, numnod+2, "ADDCNE", stat=stat, lower_bound=0)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                    msgtype=msgerror, c1='ADDCNE')
               addcne(0:numnod+1) = 0
-              if (allocated(addcne_pxfem)) deallocate(addcne_pxfem, stat=stat)
-              allocate(addcne_pxfem(0:numnod+1), stat=stat)
+              call my_dealloc(addcne_pxfem)
+              call my_alloc(addcne_pxfem, numnod+2, "ADDCNE_PXFEM", stat=stat, lower_bound=0)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                    msgtype=msgerror, c1='ADDCNE_PXFEM')
               addcne_pxfem(0:numnod+1) = 0
@@ -1054,19 +1008,19 @@ contains
 
               if (allocated(icode)) then
                 if (size(icode) < numnod) then
-                  allocate(icode_new(numnod), stat=stat)
+                  call my_alloc(icode_new, numnod, "ICODE_NEW", stat=stat)
                   if (stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='ICODE_NEW')
                   else
                     icode_new(1:size(icode)) = icode(1:size(icode))
                     icode_new(size(icode)+1:numnod) = 0
-                    deallocate(icode, stat=stat)
+                    call my_dealloc(icode)
                     call move_alloc(icode_new, icode)
                   endif
                 endif
               else
-                allocate(icode(numnod), stat=stat)
+                call my_alloc(icode, numnod, "ICODE", stat=stat)
                 if (stat /= 0) then
                   call ancmsg(msgid=268,anmode=aninfo, &
                               msgtype=msgerror, c1='ICODE')
@@ -1077,19 +1031,19 @@ contains
 
               if (allocated(iskew)) then
                 if (size(iskew) < numnod) then
-                  allocate(iskew_new(numnod), stat=stat)
+                  call my_alloc(iskew_new, numnod, "ISKEW_NEW", stat=stat)
                   if (stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='ISKEW_NEW')
                   else
                     iskew_new(1:size(iskew)) = iskew(1:size(iskew))
                     iskew_new(size(iskew)+1:numnod) = 0
-                    deallocate(iskew, stat=stat)
+                    call my_dealloc(iskew)
                     call move_alloc(iskew_new, iskew)
                   endif
                 endif
               else
-                allocate(iskew(numnod), stat=stat)
+                call my_alloc(iskew, numnod, "ISKEW", stat=stat)
                 if (stat /= 0) then
                   call ancmsg(msgid=268,anmode=aninfo, &
                               msgtype=msgerror, c1='ISKEW')
@@ -1104,7 +1058,7 @@ contains
 !=======================================================================
             if (numnod_cp_added > 0) then
 !             Reallocate ITAB to include new nodes
-              allocate(itab_new(numnod), stat=stat)
+              call my_alloc(itab_new, numnod, "ITAB_NEW", stat=stat)
               if(stat /= 0) then
                 call ancmsg(msgid=268,anmode=aninfo, &
                             msgtype=msgerror, c1='ITAB_NEW')
@@ -1117,15 +1071,15 @@ contains
               enddo
               
 !               Replace ITAB with new array
-                if (allocated(itab)) deallocate(itab, stat=stat)
-                  allocate(itab(numnod), stat=stat)
+                call my_dealloc(itab)
+                  call my_alloc(itab, numnod, "ITAB", stat=stat)
                 if(stat /= 0) then
                   call ancmsg(msgid=268,anmode=aninfo, &
                               msgtype=msgerror, c1='ITAB')
-                  deallocate(itab_new, stat=stat)
+                  call my_dealloc(itab_new)
                 else
                   itab(1:numnod) = itab_new(1:numnod)
-                    deallocate(itab_new, stat=stat)
+                    call my_dealloc(itab_new)
                   
 !=======================================================================
 !                 Step 7: Rebuild ITABM1 - resize if needed, then rebuild
@@ -1133,8 +1087,8 @@ contains
                   sitabm1 = 2*numnod
                   
                   if (.not. allocated(itabm1) .or. size(itabm1) < sitabm1) then
-                    if (allocated(itabm1)) deallocate(itabm1, stat=stat)
-                    allocate(itabm1(sitabm1), stat=stat)
+                    call my_dealloc(itabm1)
+                    call my_alloc(itabm1, sitabm1, "ITABM1", stat=stat)
                     if(stat /= 0) then
                       call ancmsg(msgid=268,anmode=aninfo, &
                                   msgtype=msgerror, c1='ITABM1')
@@ -1166,7 +1120,7 @@ contains
                                   extra_per_el*numelq1np_g
                 endif
                 if (s_nod2els_new > s_nod2els) then
-                  allocate(nod2els_new(s_nod2els_new),stat=stat)
+                  call my_alloc(nod2els_new, s_nod2els_new, "NOD2ELS_NEW", stat=stat)
                   if (stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                  msgtype=msgerror, &
@@ -1178,7 +1132,7 @@ contains
                     if (s_nod2els_new > s_nod2els) then
                       nod2els_new(s_nod2els+1:s_nod2els_new) = 0
                     endif
-                    deallocate(nod2els,stat=stat)
+                    call my_dealloc(nod2els)
                     call move_alloc(nod2els_new,nod2els)
                     s_nod2els = s_nod2els_new
                   endif
@@ -1197,12 +1151,12 @@ contains
               allocate(ifront%p(2,sifront), stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='IFRONT%P')
-              if(allocated(ientry2)) deallocate(ientry2)
-              allocate(ientry2(numnod), stat=stat)
+              call my_dealloc(ientry2)
+              call my_alloc(ientry2, numnod, "IENTRY2", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='IENTRY2')
-              if(allocated(flagkin)) deallocate(flagkin)
-              allocate(flagkin(numnod), stat=stat)
+              call my_dealloc(flagkin)
+              call my_alloc(flagkin, numnod, "FLAGKIN", stat=stat)
               if(stat /= 0) call ancmsg(msgid=268,anmode=aninfo, &
                                         msgtype=msgerror, c1='FLAGKIN')
               call ini_ifront()
@@ -1219,7 +1173,7 @@ contains
                 size_old = size(icode)
                 if (size_old < numnod) then
                   sicode = numnod
-                  allocate(iresize_tmp(numnod), stat=stat)
+                  call my_alloc(iresize_tmp, numnod, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='ICODE_TMP')
@@ -1235,7 +1189,7 @@ contains
                 size_old = size(iskew)
                 if (size_old < numnod) then
                   siskew = numnod
-                  allocate(iresize_tmp(numnod), stat=stat)
+                  call my_alloc(iresize_tmp, numnod, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='ISKEW_TMP')
@@ -1250,7 +1204,7 @@ contains
               if (allocated(addcne)) then
                 size_old = size(addcne)
                 if (size_old < numnod+2) then
-                  allocate(iresize_tmp(0:numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+2, "IRESIZE_TMP", stat=stat, lower_bound=0)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='ADDCNE_TMP')
@@ -1265,7 +1219,7 @@ contains
               if (allocated(addcne_pxfem)) then
                 size_old = size(addcne_pxfem)
                 if (size_old < numnod+2) then
-                  allocate(iresize_tmp(0:numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+2, "IRESIZE_TMP", stat=stat, lower_bound=0)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='ADDCNE_PXFEM_TMP')
@@ -1280,7 +1234,7 @@ contains
               if (allocated(fxbtag)) then
                 size_old = size(fxbtag)
                 if (size_old < numnod) then
-                  allocate(iresize_tmp(numnod), stat=stat)
+                  call my_alloc(iresize_tmp, numnod, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='FXBTAG_TMP')
@@ -1295,7 +1249,7 @@ contains
               if (allocated(itag)) then
                 size_old = size(itag)
                 if (size_old < numnod) then
-                  allocate(iresize_tmp(numnod), stat=stat)
+                  call my_alloc(iresize_tmp, numnod, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='ITAG_TMP')
@@ -1311,7 +1265,7 @@ contains
                 size_old = size(nod2sp)
                 if (size_old < numnod) then
                   snod2sp = numnod
-                  allocate(iresize_tmp(numnod), stat=stat)
+                  call my_alloc(iresize_tmp, numnod, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='NOD2SP_TMP')
@@ -1326,7 +1280,7 @@ contains
               if (allocated(knod2els)) then
                 size_old = size(knod2els)
                 if (size_old < numnod+1) then
-                  allocate(iresize_tmp(numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+1, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='KNOD2ELS_TMP')
@@ -1341,7 +1295,7 @@ contains
               if (allocated(knod2elc)) then
                 size_old = size(knod2elc)
                 if (size_old < numnod+1) then
-                  allocate(iresize_tmp(numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+1, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='KNOD2ELC_TMP')
@@ -1356,7 +1310,7 @@ contains
               if (allocated(knod2eltg)) then
                 size_old = size(knod2eltg)
                 if (size_old < numnod+1) then
-                  allocate(iresize_tmp(numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+1, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='KNOD2ELTG_TMP')
@@ -1371,7 +1325,7 @@ contains
               if (allocated(knod2el1d)) then
                 size_old = size(knod2el1d)
                 if (size_old < numnod+1) then
-                  allocate(iresize_tmp(numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+1, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='KNOD2EL1D_TMP')
@@ -1386,7 +1340,7 @@ contains
               if (allocated(knod2elq)) then
                 size_old = size(knod2elq)
                 if (size_old < numnod+1) then
-                  allocate(iresize_tmp(numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+1, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='KNOD2ELQ_TMP')
@@ -1401,7 +1355,7 @@ contains
               if (allocated(knod2elig3d)) then
                 size_old = size(knod2elig3d)
                 if (size_old < numnod+1) then
-                  allocate(iresize_tmp(numnod+1), stat=stat)
+                  call my_alloc(iresize_tmp, numnod+1, "IRESIZE_TMP", stat=stat)
                   if(stat /= 0) then
                     call ancmsg(msgid=268,anmode=aninfo, &
                                 msgtype=msgerror, c1='KNOD2ELIG3D_TMP')

@@ -731,7 +731,6 @@ C-----------------------------------------------
 C   C o m m o n   B l o c k s
 C-----------------------------------------------
 #include      "scr18_c.inc"
-#include      "com08_c.inc"
 C-----------------------------------------------
 C   D u m m y   A r g u m e n t s
 C-----------------------------------------------
@@ -747,14 +746,14 @@ C-----------------------------------------------
      .    FXI(MVSIZ),FYI(MVSIZ),FZI(MVSIZ),
      .    A(3,*),  STIFN(*),PHI(*), FTHE(*),
      .    PHI1(*), PHI2(*), PHI3(*), PHI4(*),
-     .    CONDN(*),CONDINT(*), SUM, SUMSTIF
+     .    CONDN(*),CONDINT(*)
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
       INTEGER I, J1, IG, ISHIFT, NODFI
 C
       !---REACTION FORCE AGAINST LAGRANGIAN FACE
-      !ASSEMBLED PRIMARY FORCES PER INTERNAL NODE ID
+      !
       IF(INTTH == 0) THEN
         DO I=1,JLT
           J1=IX1(I)
@@ -911,72 +910,7 @@ C
           ENDDO
         ENDIF
       ENDIF
-C                
-      RETURN
-      END
-
-!|====================================================================
-! NEW STS FORCE ASSEMBLY FOR OPTION /PARITH/OFF
-!|====================================================================
-      SUBROUTINE I7ASS0_STS(A ,STIFN, load_arr, node_arr, count,
-     &  MAX_STS_SIZE_ACTUAL, FCONT, H3D_DATA)
-C-----------------------------------------------
-C   M o d u l e s
-C-----------------------------------------------
-      USE TRI7BOX
-      USE H3D_MOD
-C-----------------------------------------------
-C   I m p l i c i t   T y p e s
-C-----------------------------------------------
-#include      "implicit_f.inc"
-C-----------------------------------------------
-C   C o m m o n   B l o c k s
-C-----------------------------------------------
-#include      "com04_c.inc"
-#include      "scr14_c.inc"
-#include      "scr16_c.inc"
-#include      "impl1_c.inc"
-C-----------------------------------------------
-C   D u m m y   A r g u m e n t s
-C-----------------------------------------------
-      my_real A(3,*),  STIFN(*), FCONT(3,*)
-      my_real load_arr(MAX_STS_SIZE_ACTUAL,8,4) !(ELEMENT, 8 NODES, FORCE/STIFF)
-      INTEGER node_arr(MAX_STS_SIZE_ACTUAL*8) !node id array
-      INTEGER count, MAX_STS_SIZE_ACTUAL
-      TYPE(H3D_DATABASE) :: H3D_DATA
-C-----------------------------------------------
-C   L o c a l   V a r i a b l e s
-C-----------------------------------------------
-      INTEGER I, J1, J
-      INTEGER N_CONTACTS
-      LOGICAL :: DO_FCONT
-!--------------------------------------------------         
-      DO_FCONT = INCONV == 1 .AND.
-     &  ANIM_V(4)+OUTP_V(4)+H3D_DATA%N_VECT_CONT > 0
-!--------------------------------------------------      
-      N_CONTACTS = MAX(0, COUNT-1)
 C
-
-      DO I = 1, N_CONTACTS
-          IF (node_arr((I-1)*8 + 1) <= 0) EXIT  ! Check for valid element
-
-            DO J = 1, 8
-              J1 = node_arr((I-1)*8 + J)
-              IF (J1 <= 0) CYCLE
-
-              A(1, J1) = A(1, J1) + load_arr(I, J, 1)
-              A(2, J1) = A(2, J1) + load_arr(I, J, 2)
-              A(3, J1) = A(3, J1) + load_arr(I, J, 3)
-              STIFN(J1) = STIFN(J1) + load_arr(I, J, 4)
-              IF (DO_FCONT .AND. J1 <= NUMNOD) THEN
-                FCONT(1, J1) = FCONT(1, J1) + load_arr(I, J, 1)
-                FCONT(2, J1) = FCONT(2, J1) + load_arr(I, J, 2)
-                FCONT(3, J1) = FCONT(3, J1) + load_arr(I, J, 3)
-              ENDIF
-
-            END DO
-      END DO
-
       RETURN
       END
 C
@@ -1515,103 +1449,6 @@ C
 !      enddo
 !#include "lockoff.inc"
 C
-      RETURN
-      END
-
-      SUBROUTINE I7ASS2_STS(JLT   ,IX1   ,IX2  ,IX3  ,IX4   ,
-     2                  NSVG  ,H1    ,H2   ,H3   ,H4    ,STIF   ,
-     3                  FX1   ,FY1   ,FZ1  ,FX2  ,FY2   ,FZ2    ,
-     4                  FX3   ,FY3   ,FZ3  ,FX4  ,FY4   ,FZ4    ,
-     5                  FXI   ,FYI   ,FZI  ,FSKYI,ISKY  ,NISKYFI,
-     6                  NIN   ,NOINT ,INTTH,PHI  ,FTHESKYI,PHI1,
-     7                  PHI2  ,PHI3 , PHI4 ,CONDNSKYI,CONDINT,
-     A                  IFORM , load_arr, node_arr, count, MAX_STS_SIZE_ACTUAL)
-C-----------------------------------------------
-C   M o d u l e s
-C-----------------------------------------------
-      USE TRI7BOX
-      USE MESSAGE_MOD
-C-----------------------------------------------
-C   I m p l i c i t   T y p e s
-C-----------------------------------------------
-#include      "implicit_f.inc"
-#include      "comlock.inc"
-C-----------------------------------------------
-C   G l o b a l   P a r a m e t e r s
-C-----------------------------------------------
-#include      "mvsiz_p.inc"
-C-----------------------------------------------
-C   C o m m o n   B l o c k s
-C-----------------------------------------------
-#include      "parit_c.inc"
-#include      "scr18_c.inc"
-C-----------------------------------------------
-C   D u m m y   A r g u m e n t s
-C-----------------------------------------------
-      INTEGER JLT,NISKYFI,NIN,NOINT,INTTH,IFORM,
-     .        ISKY(*),
-     .        IX1(MVSIZ),IX2(MVSIZ),IX3(MVSIZ),IX4(MVSIZ),NSVG(MVSIZ)
-      my_real
-     .    H1(MVSIZ),H2(MVSIZ),H3(MVSIZ),H4(MVSIZ),STIF(MVSIZ),
-     .    FX1(MVSIZ),FY1(MVSIZ),FZ1(MVSIZ),
-     .    FX2(MVSIZ),FY2(MVSIZ),FZ2(MVSIZ),
-     .    FX3(MVSIZ),FY3(MVSIZ),FZ3(MVSIZ),
-     .    FX4(MVSIZ),FY4(MVSIZ),FZ4(MVSIZ),
-     .    FXI(MVSIZ),FYI(MVSIZ),FZI(MVSIZ),
-     .    FSKYI(LSKYI,NFSKYI),FTHESKYI(LSKYI),PHI(MVSIZ),CONDINT(MVSIZ),
-     .    PHI1(*),PHI2(*)  ,PHI3(*) ,PHI4(*),CONDNSKYI(LSKYI), SUM, SUMSTIF
-      
-      my_real load_arr(MAX_STS_SIZE_ACTUAL,8,4) !(ELEMENT, 8 NODES, FORCE/STIFF)
-      integer COUNT
-      integer node_arr(MAX_STS_SIZE_ACTUAL*8) !node id array
-      INTEGER MAX_STS_SIZE_ACTUAL
-C-----------------------------------------------
-C   L o c a l   V a r i a b l e s
-C-----------------------------------------------    
-      INTEGER I, J, IG, NISKYL1, NISKYL,IGP,IGM,IDR,NISKYFIL
-      INTEGER N_CONTACTS
-C-----------------------------------------------
-C   S o u r c e   L i n e s
-C-----------------------------------------------      
-      N_CONTACTS = MAX(0, COUNT - 1)
-      IF (N_CONTACTS <= 0) THEN
-        RETURN
-      ENDIF
-
-C     Safety check: validate array bounds
-      IF (N_CONTACTS > MAX_STS_SIZE_ACTUAL) THEN
-        WRITE(*,*) "I7ASS2_STS: ERROR - Array bounds exceeded"
-        WRITE(*,*) "  N_CONTACTS = ", N_CONTACTS,
-     &             " > MAX_STS_SIZE_ACTUAL = ", MAX_STS_SIZE_ACTUAL
-        RETURN
-      ENDIF
-
-C     Calculate required skyline size and check bounds
-      NISKYL1 = N_CONTACTS * 8
-
-#include "lockon.inc"
-      IF (NISKY + NISKYL1 > LSKYI) THEN
-        CALL ANCMSG(MSGID=26,ANMODE=ANINFO)
-        CALL ARRET(2)
-      ENDIF
-      NISKYL = NISKY
-      NISKY = NISKY + NISKYL1
-#include "lockoff.inc"
-
-C     Assemble forces from load_arr into FSKYI
-      DO I = 1, N_CONTACTS
-          DO J = 1, 8
-              NISKYL = NISKYL + 1
-
-C             Store force and stiffness in skyline array
-              FSKYI(NISKYL, 1) = load_arr(I, J, 1)  ! X component
-              FSKYI(NISKYL, 2) = load_arr(I, J, 2)  ! Y component
-              FSKYI(NISKYL, 3) = load_arr(I, J, 3)  ! Z component
-              FSKYI(NISKYL, 4) = load_arr(I, J, 4)  ! Stiffness
-              ISKY(NISKYL)     = node_arr((I-1)*8 + J)
-          END DO
-      END DO
-
       RETURN
       END
 C

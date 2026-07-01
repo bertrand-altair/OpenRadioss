@@ -67,6 +67,8 @@
      &      q1np_wtab, q1np_ktab, q1np_cptab, nweight_max, csv_surf_id_in, &
      &      numelq1np_out, kq1np_ielem0)
         use q1np_geom_mod, only : q1np_get_knot_vectors
+        use my_alloc_mod,   only : my_alloc
+        use my_dealloc_mod, only : my_dealloc
   !C-----------------------------------------------
   !C   D u m m y   A r g u m e n t s
   !C-----------------------------------------------
@@ -211,24 +213,33 @@
   !C=======================================================================
   !C     Allocate work arrays for surface grid: segment indices (SEG_I, SEG_J),
   !C     grid-to-segment map (GRID_TO_SEG), and grid node connectivity (GRID_NODE).
-      ALLOCATE(SEG_I(NSEG), SEG_J(NSEG), STAT=IEL)
+      CALL MY_ALLOC(SEG_I, NSEG, "SEG_I", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='SEG_I')
         NUMELQ1NP_OUT = 0
         RETURN
       ENDIF
-      ALLOCATE(GRID_TO_SEG(NSEG, NSEG), STAT=IEL)
+      CALL MY_ALLOC(SEG_J, NSEG, "SEG_J", stat=IEL)
       IF (IEL .NE. 0) THEN
-        DEALLOCATE(SEG_I, SEG_J)
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='SEG_J')
+        NUMELQ1NP_OUT = 0
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(GRID_TO_SEG, NSEG, NSEG, "GRID_TO_SEG", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        IF (ALLOCATED(SEG_I)) CALL MY_DEALLOC(SEG_I)
+        IF (ALLOCATED(SEG_J)) CALL MY_DEALLOC(SEG_J)
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='GRID_TO_SEG')
         NUMELQ1NP_OUT = 0
         RETURN
       ENDIF
   !C     GRID_NODE: leading dimension NSEG*4 so (NX+1,NY+1) always fits (NX*NY=NSEG).
-      ALLOCATE(GRID_NODE(NSEG*4, NSEG*4), STAT=IEL)
+      CALL MY_ALLOC(GRID_NODE, NSEG*4, NSEG*4, "GRID_NODE", stat=IEL)
       GRID_NODE(1:NSEG*4,1:NSEG*4) = 0
       IF (IEL .NE. 0) THEN
-        DEALLOCATE(SEG_I, SEG_J, GRID_TO_SEG)
+        IF (ALLOCATED(SEG_I)) CALL MY_DEALLOC(SEG_I)
+        IF (ALLOCATED(SEG_J)) CALL MY_DEALLOC(SEG_J)
+        IF (ALLOCATED(GRID_TO_SEG)) CALL MY_DEALLOC(GRID_TO_SEG)
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='GRID_NODE')
         NUMELQ1NP_OUT = 0
         RETURN
@@ -241,10 +252,10 @@
      &      GRID_NODE, GRID_TO_SEG, IERR_GRID)
 
       IF (IERR_GRID .NE. 0) THEN
-        IF (ALLOCATED(SEG_I)) DEALLOCATE(SEG_I)
-        IF (ALLOCATED(SEG_J)) DEALLOCATE(SEG_J)
-        IF (ALLOCATED(GRID_NODE)) DEALLOCATE(GRID_NODE)
-        IF (ALLOCATED(GRID_TO_SEG)) DEALLOCATE(GRID_TO_SEG)
+        IF (ALLOCATED(SEG_I)) CALL MY_DEALLOC(SEG_I)
+        IF (ALLOCATED(SEG_J)) CALL MY_DEALLOC(SEG_J)
+        IF (ALLOCATED(GRID_NODE)) CALL MY_DEALLOC(GRID_NODE)
+        IF (ALLOCATED(GRID_TO_SEG)) CALL MY_DEALLOC(GRID_TO_SEG)
         WRITE(IOUT,'(A,I8,A,I8)') &
      &      ' Q1NP ERROR: surface grid build failed: surface=', &
      &      ISURF_ID, ' ierr=', IERR_GRID
@@ -376,7 +387,7 @@
   !C     Used for element connectivity (which CPs belong to each Q1Np element).
       MAX_CP_U = NCP_U
       MAX_CP_V = NCP_V
-      ALLOCATE(CP_MAP(MAX_CP_U,MAX_CP_V), STAT=IEL)
+      CALL MY_ALLOC(CP_MAP, MAX_CP_U, MAX_CP_V, "CP_MAP", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='CP_MAP')
         NUMELQ1NP_OUT = 0
@@ -416,7 +427,13 @@
   !C=======================================================================
   !C   Step 6: Generate Q1Np elements from fitted NURBS surface and HEX8 bulk mesh
   !C=======================================================================
-      ALLOCATE(U_KNOT_GEN(NX + 2*P + 1), V_KNOT_GEN(NY + 2*Q + 1), STAT=IEL)
+      CALL MY_ALLOC(U_KNOT_GEN, NX + 2*P + 1, "U_KNOT_GEN", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='Q1NP gen knot vectors')
+        NUMELQ1NP_OUT = 0
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(V_KNOT_GEN, NY + 2*Q + 1, "V_KNOT_GEN", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='Q1NP gen knot vectors')
         NUMELQ1NP_OUT = 0
@@ -677,13 +694,13 @@
   !C=======================================================================
   !C   Cleanup: deallocate grid and CP map work arrays
   !C=======================================================================
-      IF (ALLOCATED(CP_MAP)) DEALLOCATE(CP_MAP)
-      IF (ALLOCATED(SEG_I)) DEALLOCATE(SEG_I)
-      IF (ALLOCATED(SEG_J)) DEALLOCATE(SEG_J)
-      IF (ALLOCATED(GRID_NODE)) DEALLOCATE(GRID_NODE)
-      IF (ALLOCATED(GRID_TO_SEG)) DEALLOCATE(GRID_TO_SEG)
-      IF (ALLOCATED(U_KNOT_GEN)) DEALLOCATE(U_KNOT_GEN)
-      IF (ALLOCATED(V_KNOT_GEN)) DEALLOCATE(V_KNOT_GEN)
+      IF (ALLOCATED(CP_MAP)) CALL MY_DEALLOC(CP_MAP)
+      IF (ALLOCATED(SEG_I)) CALL MY_DEALLOC(SEG_I)
+      IF (ALLOCATED(SEG_J)) CALL MY_DEALLOC(SEG_J)
+      IF (ALLOCATED(GRID_NODE)) CALL MY_DEALLOC(GRID_NODE)
+      IF (ALLOCATED(GRID_TO_SEG)) CALL MY_DEALLOC(GRID_TO_SEG)
+      IF (ALLOCATED(U_KNOT_GEN)) CALL MY_DEALLOC(U_KNOT_GEN)
+      IF (ALLOCATED(V_KNOT_GEN)) CALL MY_DEALLOC(V_KNOT_GEN)
       RETURN
         end subroutine genq1np
 !C
@@ -700,6 +717,8 @@
         USE constant_mod,    ONLY : ZERO, ONE, HALF, TWO
         USE q1np_cholesky_mod, ONLY : cholesky_solve_q1np
         USE q1np_export_csv_mod
+        USE my_alloc_mod,   ONLY : my_alloc
+        USE my_dealloc_mod, ONLY : my_dealloc
         IMPLICIT NONE
 
         INTEGER, INTENT(IN) :: NX, NY, P, Q
@@ -746,38 +765,118 @@
       ! U_KNOT: knot vector for u
       ! V_KNOT: knot vector for v
 
-      ALLOCATE(X_GRID(3,NX+1,NY+1), STAT=IEL)
+      CALL MY_ALLOC(X_GRID, 3, NX+1, NY+1, "X_GRID", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='X_GRID')
         RETURN
       ENDIF
 
-      ALLOCATE(GRID_NODE_RES((NX+1)*(NY+1)), STAT=IEL)
+      CALL MY_ALLOC(GRID_NODE_RES, (NX+1)*(NY+1), "GRID_NODE_RES", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='GRID_NODE_RES')
-        DEALLOCATE(X_GRID)
+        CALL MY_DEALLOC(X_GRID)
         RETURN
       ENDIF
 
-      ALLOCATE(DATA_PT(3,NDATA),U_PARAM(NDATA),V_PARAM(NDATA), STAT=IEL)
+      CALL MY_ALLOC(DATA_PT, 3, NDATA, "DATA_PT", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='DATA_PT/U_PARAM/V_PARAM')
-        DEALLOCATE(X_GRID,GRID_NODE_RES)
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(U_PARAM, NDATA, "U_PARAM", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='DATA_PT/U_PARAM/V_PARAM')
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(V_PARAM, NDATA, "V_PARAM", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='DATA_PT/U_PARAM/V_PARAM')
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        CALL MY_DEALLOC(U_PARAM)
         RETURN
       ENDIF
 
-      ALLOCATE(ATA(NCP,NCP),ATD(NCP,3),A_ROW(NCP),C_CP(NCP,3), STAT=IEL)
+      CALL MY_ALLOC(ATA, NCP, NCP, "ATA", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='ATA/ATD/A_ROW/C_CP')
-        DEALLOCATE(X_GRID,GRID_NODE_RES,DATA_PT,U_PARAM,V_PARAM)
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        CALL MY_DEALLOC(U_PARAM)
+        CALL MY_DEALLOC(V_PARAM)
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(ATD, NCP, 3, "ATD", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='ATA/ATD/A_ROW/C_CP')
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        CALL MY_DEALLOC(U_PARAM)
+        CALL MY_DEALLOC(V_PARAM)
+        CALL MY_DEALLOC(ATA)
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(A_ROW, NCP, "A_ROW", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='ATA/ATD/A_ROW/C_CP')
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        CALL MY_DEALLOC(U_PARAM)
+        CALL MY_DEALLOC(V_PARAM)
+        CALL MY_DEALLOC(ATA)
+        CALL MY_DEALLOC(ATD)
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(C_CP, NCP, 3, "C_CP", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='ATA/ATD/A_ROW/C_CP')
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        CALL MY_DEALLOC(U_PARAM)
+        CALL MY_DEALLOC(V_PARAM)
+        CALL MY_DEALLOC(ATA)
+        CALL MY_DEALLOC(ATD)
+        CALL MY_DEALLOC(A_ROW)
         RETURN
       ENDIF
 
-      ALLOCATE(U_KNOT(NKNOT_U),V_KNOT(NKNOT_V), STAT=IEL)
+      CALL MY_ALLOC(U_KNOT, NKNOT_U, "U_KNOT", stat=IEL)
       IF (IEL .NE. 0) THEN
         CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='U_KNOT/V_KNOT')
-        DEALLOCATE(X_GRID,GRID_NODE_RES,DATA_PT,U_PARAM,V_PARAM)
-        DEALLOCATE(ATA,ATD,A_ROW,C_CP)
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        CALL MY_DEALLOC(U_PARAM)
+        CALL MY_DEALLOC(V_PARAM)
+        CALL MY_DEALLOC(ATA)
+        CALL MY_DEALLOC(ATD)
+        CALL MY_DEALLOC(A_ROW)
+        CALL MY_DEALLOC(C_CP)
+        RETURN
+      ENDIF
+      CALL MY_ALLOC(V_KNOT, NKNOT_V, "V_KNOT", stat=IEL)
+      IF (IEL .NE. 0) THEN
+        CALL ANCMSG(MSGID=268,ANMODE=ANINFO,MSGTYPE=MSGERROR,C1='U_KNOT/V_KNOT')
+        CALL MY_DEALLOC(X_GRID)
+        CALL MY_DEALLOC(GRID_NODE_RES)
+        CALL MY_DEALLOC(DATA_PT)
+        CALL MY_DEALLOC(U_PARAM)
+        CALL MY_DEALLOC(V_PARAM)
+        CALL MY_DEALLOC(ATA)
+        CALL MY_DEALLOC(ATD)
+        CALL MY_DEALLOC(A_ROW)
+        CALL MY_DEALLOC(C_CP)
+        CALL MY_DEALLOC(U_KNOT)
         RETURN
       ENDIF
 
@@ -958,8 +1057,11 @@
        ELSE IF (ICP_METHOD_IN  .EQ. 1) THEN
 
   !C       Allocate regularization arrays: L_REG (second-diff), LTL = L^T*L, ATA_REG, C_CP_BEST, TMPVEC
-        ALLOCATE(L_REG(NCP,NCP),LTL(NCP,NCP),ATA_REG(NCP,NCP), &
-     &      C_CP_BEST(NCP,3),TMPVEC(NCP))
+        CALL MY_ALLOC(L_REG, NCP, NCP, "L_REG")
+        CALL MY_ALLOC(LTL, NCP, NCP, "LTL")
+        CALL MY_ALLOC(ATA_REG, NCP, NCP, "ATA_REG")
+        CALL MY_ALLOC(C_CP_BEST, NCP, 3, "C_CP_BEST")
+        CALL MY_ALLOC(TMPVEC, NCP, "TMPVEC")
 
   !C       Build normal equations ATA, ATD and data norm DTD (NDATA = (NX+1)*(NY+1) for method 1)
         DO COL1=1,NCP
@@ -1094,12 +1196,25 @@
           Q1NP_CPTAB(2,CP_COUNTER) = C_CP_BEST(CP_COUNTER,2)
           Q1NP_CPTAB(3,CP_COUNTER) = C_CP_BEST(CP_COUNTER,3)
         ENDDO
-        DEALLOCATE(L_REG,LTL,ATA_REG,C_CP_BEST,TMPVEC)
+        CALL MY_DEALLOC(L_REG)
+        CALL MY_DEALLOC(LTL)
+        CALL MY_DEALLOC(ATA_REG)
+        CALL MY_DEALLOC(C_CP_BEST)
+        CALL MY_DEALLOC(TMPVEC)
       ENDIF
 
   !C     Deallocate fit and working arrays
-      DEALLOCATE(X_GRID, GRID_NODE_RES, DATA_PT, U_PARAM, V_PARAM)
-      DEALLOCATE(ATA, ATD, A_ROW, C_CP, U_KNOT, V_KNOT)
+      CALL MY_DEALLOC(X_GRID)
+      CALL MY_DEALLOC(GRID_NODE_RES)
+      CALL MY_DEALLOC(DATA_PT)
+      CALL MY_DEALLOC(U_PARAM)
+      CALL MY_DEALLOC(V_PARAM)
+      CALL MY_DEALLOC(ATA)
+      CALL MY_DEALLOC(ATD)
+      CALL MY_DEALLOC(A_ROW)
+      CALL MY_DEALLOC(C_CP)
+      CALL MY_DEALLOC(U_KNOT)
+      CALL MY_DEALLOC(V_KNOT)
       END SUBROUTINE Q1NP_FIT_CONTROL_POINTS
 !C
 !C=======================================================================
@@ -1115,6 +1230,8 @@
         USE precision_mod, ONLY : WP
         USE constant_mod,  ONLY : ZERO, ONE
         USE q1np_geom_mod, ONLY : q1np_get_knot_vectors, q1np_basis_row_at_uv
+        USE my_alloc_mod,  ONLY : my_alloc
+        USE my_dealloc_mod, ONLY : my_dealloc
         IMPLICIT NONE
   !C-----------------------------------------------
   !C   D u m m y   A r g u m e n t s
@@ -1134,7 +1251,9 @@
 
         NKNOT_U = NX + 2*P + 1
         NKNOT_V = NY + 2*Q + 1
-        ALLOCATE(U_KNOT(NKNOT_U), V_KNOT(NKNOT_V), A_ROW(NCP))
+        CALL MY_ALLOC(U_KNOT, NKNOT_U, "U_KNOT")
+        CALL MY_ALLOC(V_KNOT, NKNOT_V, "V_KNOT")
+        CALL MY_ALLOC(A_ROW, NCP, "A_ROW")
 
         CALL Q1NP_GET_KNOT_VECTORS(NX, NY, P, Q, Q1NP_KTAB, U_KNOT, V_KNOT)
 
@@ -1195,7 +1314,9 @@
 
         WRITE(IOUT, 306) ERR_RMS, ERR_MAX, NODE_MAX, I_MAX, J_MAX
 
-        DEALLOCATE(U_KNOT, V_KNOT, A_ROW)
+        CALL MY_DEALLOC(U_KNOT)
+        CALL MY_DEALLOC(V_KNOT)
+        CALL MY_DEALLOC(A_ROW)
         RETURN
   306    FORMAT(' Q1NP top-surface fit error: RMS=',1PE12.5, &
      &         ' MAX=',1PE12.5,' at node ',I10,' grid(',I4,',',I4,')')
@@ -1397,6 +1518,8 @@
         USE precision_mod, ONLY : WP
         USE constant_mod, ONLY : ZERO, ONE
         USE q1np_geom_mod, ONLY : q1np_get_knot_vectors
+        USE my_alloc_mod,  ONLY : my_alloc
+        USE my_dealloc_mod, ONLY : my_dealloc
         IMPLICIT NONE
   !C-----------------------------------------------
   !C   D u m m y   A r g u m e n t s
@@ -1428,7 +1551,8 @@
         BEST_COS_SUM = -HUGE(ONE)
         NKNOT_U = NX + 2*P + 1
         NKNOT_V = NY + 2*Q + 1
-        ALLOCATE(U_KNOT(NKNOT_U), V_KNOT(NKNOT_V))
+        CALL MY_ALLOC(U_KNOT, NKNOT_U, "U_KNOT")
+        CALL MY_ALLOC(V_KNOT, NKNOT_V, "V_KNOT")
         CALL Q1NP_GET_KNOT_VECTORS(NX, NY, P, Q, Q1NP_KTAB, U_KNOT, V_KNOT)
 
         DO IFLIP = 0, 3
@@ -1521,11 +1645,12 @@
         ENDDO
 
         IF (.NOT. FOUND_VALID .OR. BEST_FLIP == 0) THEN
-          DEALLOCATE(U_KNOT, V_KNOT)
+          CALL MY_DEALLOC(U_KNOT)
+          CALL MY_DEALLOC(V_KNOT)
           RETURN
         ENDIF
 
-        ALLOCATE(CP_MAP_TMP(SIZE(CP_MAP,1), SIZE(CP_MAP,2)))
+        CALL MY_ALLOC(CP_MAP_TMP, SIZE(CP_MAP,1), SIZE(CP_MAP,2), "CP_MAP_TMP")
         CP_MAP_TMP(:,:) = CP_MAP(:,:)
 
         DO J = 1, NCP_V
@@ -1535,7 +1660,7 @@
         ENDDO
 
         CP_MAP(1:NCP_U,1:NCP_V) = CP_MAP_TMP(1:NCP_U,1:NCP_V)
-        DEALLOCATE(CP_MAP_TMP)
+        CALL MY_DEALLOC(CP_MAP_TMP)
 
         SELECT CASE (BEST_FLIP)
         CASE (1)
@@ -1548,7 +1673,8 @@
           WRITE(IOUT,'(A)') '  ** Q1NP: flipped global NURBS orientation in U and V.'
           WRITE(*,'(A)')    '  ** Q1NP: flipped global NURBS orientation in U and V.'
         END SELECT
-        DEALLOCATE(U_KNOT, V_KNOT)
+        CALL MY_DEALLOC(U_KNOT)
+        CALL MY_DEALLOC(V_KNOT)
       END SUBROUTINE Q1NP_SELECT_GLOBAL_CP_ORIENTATION
 !C
 !C=======================================================================
