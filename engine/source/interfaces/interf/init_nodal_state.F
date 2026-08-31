@@ -31,6 +31,7 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
 !||    get_hashtable_for_neighbour_segment        ../engine/source/interfaces/interf/get_hashtable_for_neighbour_segment.F90
 !||    init_hashtable_for_neighbour_segment       ../engine/source/interfaces/interf/init_hashtable_for_neighbour_segment.F90
 !||    myqsort_int                                ../common_source/tools/sort/myqsort_int.F
+!||    sph_dormant_contact_init                   ../engine/source/interfaces/interf/sph_dormant_contact_init.F90
 !||--- uses       -----------------------------------------------------
 !||    array_mod                                  ../common_source/modules/array_mod.F
 !||    element_mod                                ../common_source/modules/elements/element_mod.F90
@@ -47,7 +48,7 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
      .                               IXS,IXC,IXT,IXP,IXR,IXTG,
      .                               SIZE_ADDCNEL,SIZE_CNEL,
      .                               numelsg,numelqg,numelcg,numeltrg,numelpg,
-     .                               numelrg,numeltgg,ixs10 )
+     .                               numelrg,numeltgg,ixs10,NOD2SP,KXSP )
 !$COMMENT
 !       INIT_NODAL_STATE description
 !           initialization of structures for the new shooting node algo    
@@ -73,6 +74,7 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
         use get_hashtable_for_neighbour_segment_mod , only : get_hashtable_for_neighbour_segment
         use element_mod , only : nixs,nixc,nixq,nixt,nixp,nixr,nixtg
        use my_alloc_mod
+       use precision_mod , only : WP
 
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
@@ -91,6 +93,7 @@ C-----------------------------------------------
 #include      "param_c.inc"
 #include      "tabsiz_c.inc"
 #include      "com01_c.inc"
+#include      "sphcom.inc"
 C-----------------------------------------------
 C   D u m m y   A r g u m e n t s
 C-----------------------------------------------
@@ -119,6 +122,8 @@ C-----------------------------------------------
         INTEGER, DIMENSION(NIXR,NUMELR),TARGET, INTENT(in) :: IXR !< spring array
         INTEGER, DIMENSION(NIXTG,NUMELTG),TARGET, INTENT(in) :: IXTG !<triangle array
         INTEGER, DIMENSION(6,NUMELS10), INTENT(in) :: IXS10!< tetra10 data
+        INTEGER, DIMENSION(NUMNOD), INTENT(in) :: NOD2SP !< node --> SPH particle map (0 if the node is not a SPH particle)
+        INTEGER, DIMENSION(NISP,NUMSPH), INTENT(in) :: KXSP !< SPH connectivity (KXSP(2,NP)<0 => particle NP is dormant)
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
@@ -155,6 +160,10 @@ C-----------------------------------------------
 
         integer :: erosion_state
 
+        INTEGER :: K,NB_OLD,NB_NEW,NUMNOD_OLD_SPH
+        LOGICAL :: HAVE_OLD_SPH_STATE
+        INTEGER, DIMENSION(:), ALLOCATABLE :: OLD_SHIFT_S_NODE,OLD_SPH_DORMANT
+        real(kind=WP), DIMENSION(:), ALLOCATABLE :: OLD_SPH_STFNS_SAV
 C-----------------------------------------------
         ! --------------------------------
         ! Upper & lower bound, only used by the erosion of solid element + /TYPE25
@@ -200,6 +209,20 @@ C-----------------------------------------------
 
         !   SHIFT_S_NODE(i) = index to INTER_SEC_NODE/SEC_NODE_ID for node_id = i
         !   SHIFT_S_NODE(i+1) - SHIFT_S_NODE(i) = number of interface per node
+        ! preserve the SOL2SPH dormant-contact state (SPH_STFNS_SAV/SPH_DORMANT) across a rebuild of the reverse map
+        ! (INIT_NODAL_STATE is re-called after node splitting): the memberships of an already-existing node keep the
+        ! same interface order, so the state can be copied back node-by-node once the new map is built.
+        HAVE_OLD_SPH_STATE = .FALSE.
+        IF(NSPHSOL/=0) THEN
+          IF(ALLOCATED(SHOOT_STRUCT%SPH_DORMANT).AND.ALLOCATED(SHOOT_STRUCT%SHIFT_S_NODE)) THEN
+            HAVE_OLD_SPH_STATE = .TRUE.
+            NUMNOD_OLD_SPH = SIZE(SHOOT_STRUCT%SHIFT_S_NODE) - 1
+            call my_alloc(OLD_SHIFT_S_NODE, NUMNOD_OLD_SPH+1, "OLD_SHIFT_S_NODE")
+            OLD_SHIFT_S_NODE(1:NUMNOD_OLD_SPH+1) = SHOOT_STRUCT%SHIFT_S_NODE(1:NUMNOD_OLD_SPH+1)
+            call move_alloc(SHOOT_STRUCT%SPH_STFNS_SAV, OLD_SPH_STFNS_SAV)
+            call move_alloc(SHOOT_STRUCT%SPH_DORMANT, OLD_SPH_DORMANT)
+          ENDIF
+        ENDIF
         IF(ALLOCATED(SHOOT_STRUCT%SHIFT_S_NODE) ) call my_dealloc(SHOOT_STRUCT%SHIFT_S_NODE)
         call my_alloc(SHOOT_STRUCT%SHIFT_S_NODE, NUMNOD+1, "SHOOT_STRUCT%SHIFT_S_NODE")
         SHOOT_STRUCT%SHIFT_S_NODE(1:NUMNOD+1) = 0
@@ -208,13 +231,27 @@ C-----------------------------------------------
           NSN = IPARI(5,NIN)  ! number of secondary nodes
           IDEL = IPARI(17,NIN)! idel option
           IDELKEEP = IPARI(61,NIN)
-          IF((ITY==7.OR.ITY==10.OR.ITY==22.OR.ITY==24.OR.ITY==25).AND.IDEL>=1.AND.IDELKEEP/=1) THEN
-            ! loop over the S nodes
-            DO I=1,NSN
-              NODE_ID = INTBUF_TAB(NIN)%NSV(I)
-              ! need to check the node_id value: for type24 + e2e NODE_ID can be greater than NUMNOD 
-              IF(NODE_ID<=NUMNOD) SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID+1) = SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID+1) + 1
-            ENDDO
+          IF(ITY==7.OR.ITY==10.OR.ITY==22.OR.ITY==24.OR.ITY==25) THEN
+            ! keep the node either for erosion-deletion (IDEL) or for SOL2SPH dormant-contact management (NOD2SP>0)
+            IF(IDEL>=1.AND.IDELKEEP/=1) THEN
+              ! loop over the S nodes
+              DO I=1,NSN
+                NODE_ID = INTBUF_TAB(NIN)%NSV(I)
+                ! need to check the node_id value: for type24 + e2e NODE_ID can be greater than NUMNOD 
+                IF(NODE_ID<=NUMNOD) SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID+1) = SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID+1) + 1
+              ENDDO
+            ELSEIF(NSPHSOL>0) THEN
+              ! loop over the S nodes
+              DO I=1,NSN
+                NODE_ID = INTBUF_TAB(NIN)%NSV(I)
+                ! need to check the node_id value: for type24 + e2e NODE_ID can be greater than NUMNOD 
+                IF(NODE_ID<=NUMNOD) THEN
+                  IF(NOD2SP(NODE_ID)>0) THEN
+                    SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID+1) = SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID+1) + 1
+                  ENDIF
+                ENDIF
+              ENDDO
+            ENDIF
           ENDIF
         ENDDO
 
@@ -239,22 +276,67 @@ C-----------------------------------------------
           NSN = IPARI(5,NIN)
           IDEL = IPARI(17,NIN)! idel option
           IDELKEEP = IPARI(61,NIN)
-          IF((ITY==7.OR.ITY==10.OR.ITY==22.OR.ITY==24.OR.ITY==25).AND.IDEL>=1.AND.IDELKEEP/=1) THEN
-            DO I=1,NSN
-              NODE_ID = INTBUF_TAB(NIN)%NSV(I)    ! node id
-              IF(NODE_ID<=NUMNOD) THEN
-                WORK_ARRAY(NODE_ID) = WORK_ARRAY(NODE_ID) + 1 
-                SHIFT = WORK_ARRAY(NODE_ID) + SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID) ! index for %inter_sec_node
-                SHOOT_STRUCT%INTER_SEC_NODE( SHIFT ) = NIN  ! save the interface
-                SHOOT_STRUCT%SEC_NODE_ID( SHIFT ) = I       ! save the NSV id
-              ENDIF
-            ENDDO
+          IF(ITY==7.OR.ITY==10.OR.ITY==22.OR.ITY==24.OR.ITY==25) THEN
+            ! keep the node either for erosion-deletion (IDEL) or for SOL2SPH dormant-contact management (NOD2SP>0)
+            IF(IDEL>=1.AND.IDELKEEP/=1) THEN
+              DO I=1,NSN
+                NODE_ID = INTBUF_TAB(NIN)%NSV(I)    ! node id
+                IF(NODE_ID<=NUMNOD) THEN
+                  WORK_ARRAY(NODE_ID) = WORK_ARRAY(NODE_ID) + 1 
+                  SHIFT = WORK_ARRAY(NODE_ID) + SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID) ! index for %inter_sec_node
+                  SHOOT_STRUCT%INTER_SEC_NODE( SHIFT ) = NIN  ! save the interface
+                  SHOOT_STRUCT%SEC_NODE_ID( SHIFT ) = I       ! save the NSV id
+                ENDIF
+              ENDDO
+            ELSEIF(NSPHSOL>0) THEN
+              DO I=1,NSN
+                NODE_ID = INTBUF_TAB(NIN)%NSV(I)    ! node id
+                IF(NODE_ID<=NUMNOD) THEN
+                  IF(NOD2SP(NODE_ID)>0) THEN
+                    WORK_ARRAY(NODE_ID) = WORK_ARRAY(NODE_ID) + 1 
+                    SHIFT = WORK_ARRAY(NODE_ID) + SHOOT_STRUCT%SHIFT_S_NODE(NODE_ID) ! index for %inter_sec_node
+                    SHOOT_STRUCT%INTER_SEC_NODE( SHIFT ) = NIN  ! save the interface
+                    SHOOT_STRUCT%SEC_NODE_ID( SHIFT ) = I       ! save the NSV id
+                  ENDIF
+                ENDIF
+              ENDDO
+            ENDIF
           ENDIF
         ENDDO
 
         call my_dealloc(WORK_ARRAY)
-        ! --------------------------------
 
+        ! SOL2SPH dormant-contact state (parallel to INTER_SEC_NODE/SEC_NODE_ID, indexed by SHIFT_S_NODE)
+        IF(NSPHSOL/=0) THEN
+          IF(ALLOCATED(SHOOT_STRUCT%SPH_STFNS_SAV) ) call my_dealloc(SHOOT_STRUCT%SPH_STFNS_SAV)
+          call my_alloc(SHOOT_STRUCT%SPH_STFNS_SAV, SHOOT_STRUCT%SIZE_SEC_NODE, "SHOOT_STRUCT%SPH_STFNS_SAV")
+          IF(ALLOCATED(SHOOT_STRUCT%SPH_DORMANT) ) call my_dealloc(SHOOT_STRUCT%SPH_DORMANT)
+          call my_alloc(SHOOT_STRUCT%SPH_DORMANT, SHOOT_STRUCT%SIZE_SEC_NODE, "SHOOT_STRUCT%SPH_DORMANT")
+          IF(SHOOT_STRUCT%SIZE_SEC_NODE>0) THEN
+            SHOOT_STRUCT%SPH_STFNS_SAV(1:SHOOT_STRUCT%SIZE_SEC_NODE) = 0.0_WP
+            SHOOT_STRUCT%SPH_DORMANT(1:SHOOT_STRUCT%SIZE_SEC_NODE) = 0
+          ENDIF
+        ! carry over the previous dormant state (existing nodes keep the same per-node interface membership order)
+          IF(HAVE_OLD_SPH_STATE) THEN
+            DO K=1,MIN(NUMNOD_OLD_SPH,NUMNOD)
+              NB_OLD = OLD_SHIFT_S_NODE(K+1) - OLD_SHIFT_S_NODE(K)
+              NB_NEW = SHOOT_STRUCT%SHIFT_S_NODE(K+1) - SHOOT_STRUCT%SHIFT_S_NODE(K)
+              DO J=1,MIN(NB_OLD,NB_NEW)
+                SHOOT_STRUCT%SPH_STFNS_SAV(SHOOT_STRUCT%SHIFT_S_NODE(K)+J) = OLD_SPH_STFNS_SAV(OLD_SHIFT_S_NODE(K)+J)
+                SHOOT_STRUCT%SPH_DORMANT(SHOOT_STRUCT%SHIFT_S_NODE(K)+J)   = OLD_SPH_DORMANT(OLD_SHIFT_S_NODE(K)+J)
+              ENDDO
+            ENDDO
+            call my_dealloc(OLD_SHIFT_S_NODE)
+            call my_dealloc(OLD_SPH_STFNS_SAV)
+            call my_dealloc(OLD_SPH_DORMANT)
+          ENDIF
+        ! Initial deactivation of secondary dormant particles
+          CALL SPH_DORMANT_CONTACT_INIT(NINTER,NUMNOD,NISP,KXSP,NOD2SP,
+     .                                SHOOT_STRUCT%SIZE_SEC_NODE,SHOOT_STRUCT%SHIFT_S_NODE,
+     .                                SHOOT_STRUCT%INTER_SEC_NODE,SHOOT_STRUCT%SEC_NODE_ID,
+     .                                SHOOT_STRUCT%SPH_STFNS_SAV,SHOOT_STRUCT%SPH_DORMANT,
+     .                                INTBUF_TAB)
+        ENDIF
 
         ! --------------------------------
         ! MAIN NODES

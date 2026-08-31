@@ -27,12 +27,15 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
 !||    sphprep        ../engine/source/elements/sph/sphprep.F
 !||--- calls      -----------------------------------------------------
 !||    my_barrier     ../engine/source/system/machine.F
+!||    sph_dormant_contact_wakeup   ../engine/source/interfaces/interf/sph_dormant_contact_wakeup.F90
 !||    startimeg      ../engine/source/system/timer.F
 !||    stoptimeg      ../engine/source/system/timer.F
 !||--- uses       -----------------------------------------------------
 !||    elbufdef_mod   ../common_source/modules/mat_elem/elbufdef_mod.F90
 !||    element_mod    ../common_source/modules/elements/element_mod.F90
+!||    intbufdef_mod   ../common_source/modules/interfaces/intbufdef_mod.F90
 !||    message_mod    ../engine/share/message_module/message_mod.F
+!||    shooting_node_mod   ../engine/share/modules/shooting_node_mod.F90
 !||    sphbox         ../engine/share/modules/sphbox.F
 !||====================================================================
       SUBROUTINE SOLTOSPH_ON1(
@@ -40,7 +43,7 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
      .   IPARG  ,NGROUNC ,IGROUNC ,ELBUF_TAB,ITASK   ,
      .   NOD2SP ,SOL2SPH ,SPH2SOL ,IXS      ,MS      ,
      .   PM     ,IADS    ,ADDCNE  ,FSKYD    ,DMSPH   ,
-     .   V      ,ICONTACT)
+     .   V      ,ICONTACT,SHOOT_STRUCT,INTBUF_TAB,NEWFRONT)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -48,6 +51,8 @@ C-----------------------------------------------
       USE ELBUFDEF_MOD         
       USE MESSAGE_MOD
       use element_mod , only : nixs
+      use shooting_node_mod , only : shooting_node_type
+      use intbufdef_mod , only : intbuf_struct_
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -74,6 +79,9 @@ C-----------------------------------------------
      .        IGROUNC(*), ITASK, IXSP(KVOISPH,*), NOD2SP(*), 
      .        SOL2SPH(2,*), SPH2SOL(*), IXS(NIXS,*),
      .        IADS(8,*), ADDCNE(*), ICONTACT(*)
+      INTEGER, INTENT(INOUT) :: NEWFRONT(*) !< contact resort flag per interface (set to -1 on a SOL2SPH wake-up)
+      TYPE(shooting_node_type), INTENT(INOUT) :: SHOOT_STRUCT !< reverse map + SOL2SPH dormant-contact state
+      TYPE(INTBUF_STRUCT_), DIMENSION(NINTER), INTENT(INOUT) :: INTBUF_TAB !< interface data (STFNS is restored on wake-up)
       my_real
      .        X(3,*), SPBUF(NSPBUF,*), MS(*), PM(NPROPM,*), FSKYD(*),
      .        DMSPH(*), V(3,*)
@@ -192,8 +200,11 @@ C                 Solid must have passed to deleted within THIS cycle !
                     KXSP(2,NP)        =ABS(KXSP(2,NP))
                     GBUFSP%OFF(NP-KFT)=ONE
                     SPH2SOL(NP)       =0
-C
                     INOD=KXSP(3,NP)
+C                   Reactivate contact for this just-woken SOL2SPH particle
+                    IF(NINTER>0)CALL SPH_DORMANT_CONTACT_WAKEUP(
+     .                INOD,NINTER,SHOOT_STRUCT,INTBUF_TAB,NEWFRONT)
+C    
                     VI2= V(1,INOD)*V(1,INOD)
      .                  +V(2,INOD)*V(2,INOD)
      .                  +V(3,INOD)*V(3,INOD)
@@ -324,8 +335,11 @@ C                 Solid must have passed to deleted within THIS cycle !
                     KXSP(2,NP)        =ABS(KXSP(2,NP))
                     GBUFSP%OFF(NP-KFT)=ONE
                     SPH2SOL(NP)       =0
-C
                     INOD=KXSP(3,NP)
+C                   Reactivate contact for this just-woken SOL2SPH particle
+                    IF(NINTER>0)CALL SPH_DORMANT_CONTACT_WAKEUP(
+     .                INOD,NINTER,SHOOT_STRUCT,INTBUF_TAB,NEWFRONT)
+C     
                     VI2= V(1,INOD)*V(1,INOD)
      .                  +V(2,INOD)*V(2,INOD)
      .                  +V(3,INOD)*V(3,INOD)

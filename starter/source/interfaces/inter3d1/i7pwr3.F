@@ -40,7 +40,8 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
      6                  X1 ,X2 ,X3 ,X4 ,Y1  ,
      7                  Y2 ,Y3 ,Y4 ,Z1 ,Z2  ,
      8                  Z3 ,Z4 ,XI ,YI ,ZI  ,
-     9                  N1 ,N2 ,N3 ,PENE)
+     9                  N1 ,N2 ,N3 ,PENE ,NOD2SP,
+     A                  KXSP,NISP,NUMSPH ,NSPHSOL)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -71,6 +72,9 @@ C-----------------------------------------------
       INTEGER ID,IDDLEVEL,IREMNODE
       CHARACTER(LEN=NCHARTITLE) :: TITR
       INTEGER, DIMENSION(MVSIZ), INTENT(IN) :: IX1,IX2,IX3,IX4,NSVG
+      INTEGER, INTENT(IN) :: NISP,NUMSPH,NSPHSOL
+      INTEGER, INTENT(IN) :: NOD2SP(NUMNOD)
+      INTEGER, INTENT(IN) :: KXSP(NISP,NUMSPH)
       my_real, DIMENSION(MVSIZ), INTENT(INOUT) :: X1,X2,X3,X4
       my_real, DIMENSION(MVSIZ), INTENT(INOUT) :: Y1,Y2,Y3,Y4
       my_real, DIMENSION(MVSIZ), INTENT(INOUT) :: Z1,Z2,Z3,Z4
@@ -88,7 +92,17 @@ C   S o u r c e   L i n e s
 C-----------------------------------------------
       JWARN = 0
       DO I=LFT,LLT                                                                                                           
-        TAGNOD = 0                                                                                                           
+        TAGNOD = 0  
+C                                                                                                                 
+C       Skip dormant SOL2SPH particles from inital contact detection
+        IF (NSPHSOL > 0) THEN
+          IF (NSVG(I) >= 1 .AND. NSVG(I) <= NUMNOD) THEN
+            IF (NOD2SP(NSVG(I)) > 0) THEN
+              IF(KXSP(2,NOD2SP(NSVG(I))) < 0) CYCLE
+            ENDIF
+          ENDIF
+        ENDIF
+C        
         IF(IREMNODE == 3)THEN                                                                                                
           K = KREMNODE(CAND_E(I))+1                                                                                          
           L = KREMNODE(CAND_E(I)+1)                                                                                          

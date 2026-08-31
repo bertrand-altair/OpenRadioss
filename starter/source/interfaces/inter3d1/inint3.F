@@ -145,7 +145,8 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
      H                  S_APPEND_ARRAY,X_APPEND            ,MASS_APPEND           ,N2D          ,FLAG_REMOVED_NODE,
      I                  NSPMD         ,INTER_TYPE2_NUMBER  ,ELEM_LINKED_TO_SEGMENT,SINSCR       ,SICODE  ,
      J                  SITAB         ,NIN25               ,FLAG_ELEM_INTER25     ,MULTI_FVM    ,IRESP   ,
-     L                  NIXX          ,S_NOD2EL1D          ,IINTTHICK             )
+     L                  NIXX          ,S_NOD2EL1D          ,IINTTHICK             ,NOD2SP       ,KXSP    ,
+     M                  NISP          ,NUMSPH              ,NSPHSOL)
 C-----------------------------------------------
 C   D e s c r i p t i o n
 C-----------------------------------------------
@@ -215,6 +216,9 @@ C-----------------------------------------------
      .   NREMNODE,KXX(*),IXX(*),IGEO(*),IWORKSH(*),NSN_MULTI_CONNEC,T2_ADD_CONNEC(*),
      .   T2_NB_CONNEC(*),T2_CONNEC(*)
       INTEGER NOM_OPT(LNOPT1,*)
+      INTEGER, INTENT(IN) :: NISP, NUMSPH, NSPHSOL
+      INTEGER, INTENT(IN) :: NOD2SP(NUMNOD)
+      INTEGER, INTENT(IN) :: KXSP(NISP,NUMSPH)
       INTEGER, INTENT(in) :: NSPMD !< number of mpi tasks
       INTEGER, INTENT(in) :: INTER_TYPE2_NUMBER !<number of interface type 2
       my_real
@@ -845,7 +849,8 @@ C
      6      X1  ,X2     ,X3     ,X4     ,Y1     ,
      7      Y2  ,Y3     ,Y4     ,Z1     ,Z2     ,
      8      Z3  ,Z4     ,XI     ,YI     ,ZI     ,
-     9      N11 ,N21    ,N31    ,PENE   )
+     9      N11 ,N21    ,N31    ,PENE   ,NOD2SP ,
+     A      KXSP   ,NISP  ,NUMSPH ,NSPHSOL)
          ENDIF
          IF(IWPENE/=0.AND.INACTI==3.OR.INACTI==4) IWRN = 1
         ENDDO
@@ -1040,7 +1045,8 @@ C
      6      X1 ,X2 ,X3 ,X4 ,Y1  ,
      7      Y2 ,Y3 ,Y4 ,Z1 ,Z2  ,
      8      Z3 ,Z4 ,XI ,YI ,ZI  ,
-     9      N11,N21,N31,PENE)
+     9      N11,N21,N31,PENE,NOD2SP,
+     A      KXSP   ,NISP  ,NUMSPH ,NSPHSOL)
         IF(IWPENE /= 0 .AND. INACTI == 3 .OR. INACTI == 4) IWRN = 1
        ENDDO
        CALL ANCMSG(MSGID=1164,MSGTYPE=MSGWARNING,ANMODE=ANINFO_BLIND_1,I1=ID,C1=TITR,PRMOD=MSG_PRINT)

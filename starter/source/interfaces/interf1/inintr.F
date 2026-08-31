@@ -63,7 +63,8 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
      G                  IPARTP    ,IPARTX    ,IPARTR            ,NSN_MULTI_CONNEC,T2_NB_CONNEC,
      H                  SICODE    ,ICODE     ,ISKEW             ,MULTI_FVM       ,S_NOD2ELS   ,
      I                  SITAB     ,SITABM1   ,FLAG_ELEM_INTER25 ,LIST_NIN25      ,IRESP       ,
-     J                  NIXX      ,S_NOD2EL1D)
+     J                  NIXX      ,S_NOD2EL1D,NOD2SP            ,KXSP            ,NISP        ,
+     K                  NUMSPH    ,NSPHSOL)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -121,7 +122,10 @@ C-----------------------------------------------
       INTEGER NOM_OPT(LNOPT1,*),KXX(*),IXX(*)
       INTEGER, INTENT(IN) :: LIST_NIN25(NINTER)
       INTEGER, INTENT(IN) :: FLAG_ELEM_INTER25(NINTER25,NUMELS)   
-      INTEGER , INTENT(IN) :: IRESP,S_NOD2EL1D
+      INTEGER, INTENT(IN) :: IRESP,S_NOD2EL1D
+      INTEGER, INTENT(IN) :: NISP, NUMSPH, NSPHSOL
+      INTEGER, INTENT(IN) :: NOD2SP(NUMNOD)
+      INTEGER, INTENT(IN) :: KXSP(NISP,NUMSPH)
       TYPE(INTERSURFP) :: INTERCEP(3,NINTER)
       TYPE(INTBUF_STRUCT_) INTBUF_TAB(*)
       TYPE(SCRATCH_STRUCT_) INSCR(*)
@@ -368,7 +372,8 @@ C---     Initial dimension of REMNODE arrays
      H               MULTI_FVM%S_APPEND_ARRAY, MULTI_FVM%X_APPEND    , MULTI_FVM%MASS_APPEND , N2D            , FLAG_REMOVED_NODE,
      I               NSPMD                   ,INTER_TYPE2_NUMBER     , ELEM_LINKED_TO_SEGMENT, INSCR(N)%SINSCR, SICODE           ,
      J               SITAB                   ,NIN25                  , FLAG_ELEM_INTER25     , MULTI_FVM      , IRESP            ,
-     K               NIXX                    ,S_NOD2EL1D             , IINTTHICK             )
+     K               NIXX                    ,S_NOD2EL1D             , IINTTHICK             , NOD2SP         ,KXSP             ,
+     L               NISP                    ,NUMSPH                 , NSPHSOL)
               IF( MULTI_FVM%IS_INT18_LAW151 ) THEN
                 CALL INT18_LAW151_NSV_SHIFT('-',0,1,MULTI_FVM,IPARI,INTBUF_TAB,npari,ninter,numnod,OPT_INT_ID=N)
               ENDIF

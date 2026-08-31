@@ -52,6 +52,7 @@
 !                                                   procedures
 ! ======================================================================================================================
 !! \brief Definition of the shooting node data structure
+        use precision_mod, only : WP
         implicit none
         type offset_elem_
           integer :: sol_up_bound !< upper bound for solid
@@ -95,6 +96,9 @@
           integer, dimension(:), allocatable :: shift_s_node ! shift to point to inter_sEC_node/SEC_node_ID arrays & number of interface per node
           integer, dimension(:), allocatable :: inter_sec_node ! list of interface of the nodes
           integer, dimension(:), allocatable :: SEC_node_ID ! ID of secondary nodes in each interface
+          ! Sol2sph dormant-contact state
+          real(kind=WP), dimension(:), allocatable :: sph_stfns_sav ! saved active secondary stiffness of a dormant SOL2SPH node
+          integer, dimension(:), allocatable :: sph_dormant         ! 1 if the SOL2SPH node is currently forced dormant (STFNS=0)
           ! ------------------------------
           ! main node array
           integer :: max_proc_nb      ! maximum number of processor
