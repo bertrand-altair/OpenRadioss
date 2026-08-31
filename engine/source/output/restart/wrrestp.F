@@ -62,6 +62,7 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
 !||    rthbufwrest                  ../engine/source/output/restart/wrrest.F
 !||    spmd_glob_dmin9              ../engine/source/mpi/fluid/spmd_cfd.F
 !||    spmd_glob_dsum9              ../engine/source/mpi/interfaces/spmd_th.F
+!||    sph_dormant_contact_restore  ../engine/source/interfaces/interf/sph_dormant_contact_restore.F90
 !||    spmd_savefi                  ../engine/source/mpi/interfaces/spmd_i7tool.F
 !||    spmd_savesph                 ../engine/source/mpi/sph/spmd_sptool.F
 !||    stack_wrest                  ../engine/source/output/restart/wrrest.F
@@ -143,6 +144,7 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
 !||    seatbelt_mod                 ../common_source/modules/seatbelt_mod.F
 !||    sensor_mod                   ../common_source/modules/sensor_mod.F90
 !||    sfem_mod                     ../common_source/modules/elements/sfem_mod.F90
+!||    shooting_node_mod            ../engine/share/modules/shooting_node_mod.F90
 !||    skew_mod                     ../common_source/modules/skew_mod.F90
 !||    sms_mod                      ../engine/share/modules/sms_mod.F
 !||    sph_mod                      ../engine/share/modules/sph_mod.F
@@ -168,7 +170,7 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
      .                   IMPBUF_TAB ,IMPL_S          ,IMPL_S0    ,MCP         ,TEMP             ,
      .                   FORNEQS    ,UNITAB          ,STACK      ,NDRAPE      ,DRAPE_SH3N       ,
      .                   DRAPE_SH4N ,DRAPEG          ,RESTSIZE   ,SKEWS       ,GLOB_THERM       ,
-     .                   PBLAST     ,RBE3            ,RWALL      ,SFEM )
+     .                   PBLAST     ,RBE3            ,RWALL      ,SFEM       ,SHOOT_STRUCT )
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -211,6 +213,7 @@ C-----------------------------------------------
       USE NAMES_AND_TITLES_MOD
       USE BCS_MOD , only : BCS
       USE SKEW_MOD
+      USE SHOOTING_NODE_MOD, ONLY : SHOOTING_NODE_TYPE
       USE IMPBUFDEF_MOD, only: IMPBUF_STRUCT_
       USE UNITAB_MOD, ONLY : UNIT_TYPE_
       USE STACK_MOD
@@ -281,6 +284,7 @@ c     TYPE (CLUSTER_) ,DIMENSION(NCLUSTER) :: CLUSTER
       TYPE(RBE3_)      ,INTENT(INOUT) :: RBE3
       TYPE(RWALL_)     ,INTENT(INOUT) :: RWALL
       TYPE(global_sfem_),INTENT(IN  ) :: SFEM
+      TYPE(SHOOTING_NODE_TYPE),INTENT(INOUT) :: SHOOT_STRUCT !< reverse map + SOL2SPH dormant-contact state
 C-----------------------------------------------
 C   C o m m o n   B l o c k s
 C-----------------------------------------------
@@ -754,6 +758,9 @@ c        CALL WRITE_I_C(INBUF,SINBUF)
 
         CALL W_BUFBRIC_22() !inter22
 
+        ! For dormant SOL2SPH nodes the live STFNS is 0; write the saved active stiffness instead so that on restart
+        IF(NSPHSOL>0) CALL SPH_DORMANT_CONTACT_RESTORE(.TRUE. ,NINTER,SHOOT_STRUCT,INTBUF_TAB)
+
         !write new structure INTBUF_TAB
         ! Ensure type10 distance is negative so next run triggers a sort
         ALLOCATE(DIST_SAV(NINTER))
@@ -773,6 +780,8 @@ c        CALL WRITE_I_C(INBUF,SINBUF)
           ENDIF
         ENDDO
         DEALLOCATE(DIST_SAV)
+
+        IF(NSPHSOL>0) CALL SPH_DORMANT_CONTACT_RESTORE(.FALSE.,NINTER,SHOOT_STRUCT,INTBUF_TAB)
 
         CALL WRITE_I_C(RWALL%NPRW,RWALL%NNPRW*RWALL%NRWALL)
 

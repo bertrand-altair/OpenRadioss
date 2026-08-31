@@ -74,7 +74,8 @@ Copyright>        https://www.siemens.com/en-us/products/simcenter/mechanical-si
      9    GAUGE   ,NGROUNC ,IGROUNC ,SOL2SPH ,SPH2SOL ,
      A    IXS     ,IADS    ,ADDCNE  ,FSKYD   ,DMSPH   ,
      B    WASPACT ,ICONTACT,OFF_SPH_R2R,WSMCOMP,IRUNN_BIS,
-     C    SPH_IORD1,SPH_WORK,WFEXT)
+     C    SPH_IORD1,SPH_WORK,WFEXT,
+     D    INTBUF_TAB,NEWFRONT,SHOOT_STRUCT)
 C-----------------------------------------------
 C   M o d u l e s
 C-----------------------------------------------
@@ -86,7 +87,9 @@ C-----------------------------------------------
       USE SPH_STRUCT_MOD
       USE spmd_mod
       USE sph_crit_voxel_mod
+      USE INTBUFDEF_MOD , ONLY : INTBUF_STRUCT_
       use element_mod , only : nixs
+      use shooting_node_mod , only : shooting_node_type
 C-----------------------------------------------
 C   I m p l i c i t   T y p e s
 C-----------------------------------------------
@@ -141,6 +144,9 @@ C     REAL
       TYPE (SURF_)   , DIMENSION(NSURF)   :: IGRSURF
       TYPE (SPH_WORK_)  :: SPH_WORK
       DOUBLE PRECISION,INTENT(INOUT) :: WFEXT
+      TYPE(INTBUF_STRUCT_), DIMENSION(NINTER), INTENT(INOUT) :: INTBUF_TAB
+      INTEGER, INTENT(INOUT) :: NEWFRONT(*)
+      TYPE(shooting_node_type), INTENT(INOUT) :: SHOOT_STRUCT !< reverse map (node -> interface/secondary) + SOL2SPH dormant-contact state
 C-----------------------------------------------
 C   L o c a l   V a r i a b l e s
 C-----------------------------------------------
@@ -172,7 +178,7 @@ C       Wake up particles from solids
      . IPARG  ,NGROUNC ,IGROUNC ,ELBUF_TAB,ITASK   ,
      . NOD2SP ,SOL2SPH ,SPH2SOL ,IXS      ,MS      ,
      . PM     ,IADS    ,ADDCNE  ,FSKYD    ,DMSPH   ,
-     . V      ,ICONTACT)
+     . V      ,ICONTACT,SHOOT_STRUCT,INTBUF_TAB,NEWFRONT)
 C      /---------------/      
         CALL MY_BARRIER
 C      /---------------/

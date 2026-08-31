@@ -1893,7 +1893,7 @@ C ---------------------
      .                               IXS,ELEMENT%SHELL%IXC,IXT,IXP,IXR,IXTG,
      .                               SIZE_ADDCNEL,SIZE_CNEL ,
      .                               numelsg,numelqg,numelcg,numeltrg,numelpg,
-     .                               numelrg,numeltgg ,IXS(L1))
+     .                               numelrg,numeltgg ,IXS(L1),NOD2SP,KXSP)
               ! -------------------------
               allocate(component(ninter))
               call inter_init_component(ninter,npari,numnod,ispmd,nspmd,ipari,nodes%x,interfaces%intbuf_tab,component)
@@ -4333,7 +4333,8 @@ C Init var parallel SMP
      9            GAUGE   ,NGROUNC ,IGROUNC ,SOL2SPH ,SPH2SOL   ,
      A            IXS     ,ELEMENT%PON%IADS    ,ELEMENT%PON%ADSKY   ,ELEMENT%PON%FSKYD   ,DMSPH(NDTSK),
      B            WASPH(KSPACTIV),ICONTACT_OLD,OFF_SPH_R2R,WSMCOMP,IRUNN_BIS,
-     C            SPH_IORD1,SPH_WORK,OUTPUT%TH%WFEXT)
+     C            SPH_IORD1,SPH_WORK,OUTPUT%TH%WFEXT,
+     D            INTERFACES%INTBUF_TAB,NEWFRONT,SHOOT_STRUCT)
 !$OMP END PARALLEL
               CALL PYTHON_END_OPENMP(PYTHON)
 
@@ -5372,7 +5373,7 @@ C            IF(NLOC_DMG%IMOD>0) THEN
      .                                IXS,ELEMENT%SHELL%IXC,IXT,IXP,IXR,IXTG,
      .                                SIZE_ADDCNEL,SIZE_CNEL ,
      .                                numelsg,numelqg,numelcg,numeltrg,numelpg,
-     .                                numelrg,numeltgg , IXS(L1))
+     .                                numelrg,numeltgg , IXS(L1),NOD2SP,KXSP)
 
 
                  IF(IDEL7NG>0.OR.IRAD2R>0.OR.ALEMUSCL_Param%IALEMUSCL>0.OR.PDEL>0) THEN
@@ -9523,7 +9524,7 @@ C--- //0 ----------------
      .                       IMPBUF_TAB ,IMPL_S          ,IMPL_S0        ,NODES%MCP             ,NODES%TEMP             ,
      .                       FORNEQS    ,UNITAB          ,STACK          ,NDRAPE          ,DRAPE_SH3N       ,
      .                       DRAPE_SH4N ,DRAPEG          ,RESTSIZE       ,SKEWS           ,GLOB_THERM       ,
-     .                       PBLAST     ,RBE3            ,RWALL          ,SFEM )
+     .                       PBLAST     ,RBE3            ,RWALL          ,SFEM            ,SHOOT_STRUCT )
 
                 ! Restart file size
                 IF (MULTIREST >0)THEN
